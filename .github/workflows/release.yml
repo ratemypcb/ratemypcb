@@ -53,7 +53,9 @@ jobs:
           Compress-Archive dist/ratemypcb.exe ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.zip
           $asset = "ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.zip"
           $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
-          Set-Content -NoNewline "$asset.sha256" "$hash  $asset"
+          $checksum = "${asset}.sha256"
+          Set-Content -NoNewline -Path $checksum -Value "$hash  $asset"
+          Get-Item $asset, $checksum
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: ratemypcb-${{ github.ref_name }}-*
