@@ -38,7 +38,12 @@ jobs:
           mkdir dist
           cp target/${{ matrix.target }}/release/ratemypcb dist/
           tar -C dist -czf ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz ratemypcb
-          sha256sum ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz > ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256
+          asset=ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$asset" > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" > "$asset.sha256"
+          fi
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
