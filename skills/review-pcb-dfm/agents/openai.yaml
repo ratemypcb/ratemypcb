@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review PCB DFM"
+  short_description: "Run a local PCB manufacturing preflight"
+  default_prompt: "Review this repository for PCB manufacturing risks with the RateMyPCB CLI and summarize only evidence-backed findings."

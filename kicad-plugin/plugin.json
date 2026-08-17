@@ -1,0 +1,21 @@
+{
+  "$schema": "https://go.kicad.org/api/schemas/v1",
+  "identifier": "com.ratemypcb.review-pcb-dfm",
+  "name": "RateMyPCB DFM Review",
+  "description": "Run a local manufacturing preflight for the active PCB",
+  "runtime": {
+    "type": "python",
+    "min_version": "3.9"
+  },
+  "actions": [
+    {
+      "identifier": "review-active-board",
+      "name": "Review PCB DFM",
+      "description": "Review the active saved board with the local RateMyPCB engine",
+      "show-button": true,
+      "scopes": ["pcb"],
+      "entrypoint": "review_action.py"
+    }
+  ]
+}
+

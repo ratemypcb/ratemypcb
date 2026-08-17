@@ -1,0 +1,57 @@
+name: Release binaries
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo test --all
+      - run: cargo build --release --target ${{ matrix.target }} -p ratemypcb-cli
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/ratemypcb dist/
+          tar -C dist -czf ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz ratemypcb
+          sha256sum ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz > ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist
+          Copy-Item target/${{ matrix.target }}/release/ratemypcb.exe dist/
+          Compress-Archive dist/ratemypcb.exe ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.zip
+          $asset = "ratemypcb-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+          Set-Content -NoNewline "$asset.sha256" "$hash  $asset"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ratemypcb-${{ github.ref_name }}-*
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ratemypcb-${{ github.ref_name }}-*

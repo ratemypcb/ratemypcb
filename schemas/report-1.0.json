@@ -1,0 +1,82 @@
+{
+  "$id": "https://ratemypcb.com/schemas/report-1.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {
+      "type": "array"
+    },
+    "confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "coverage": {
+      "type": "array"
+    },
+    "disclaimer": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array"
+    },
+    "input": {
+      "type": "object"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "nativeDrc": {
+      "type": "object"
+    },
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "score": {
+      "properties": {
+        "raw": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value": {
+          "maximum": 10,
+          "minimum": 0,
+          "type": "number"
+        },
+        "verdict": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "raw",
+        "verdict"
+      ],
+      "type": "object"
+    },
+    "tool": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "tool",
+    "input",
+    "artifacts",
+    "score",
+    "confidence",
+    "coverage",
+    "findings",
+    "nativeDrc",
+    "limitations",
+    "disclaimer"
+  ],
+  "title": "RateMyPCB report",
+  "type": "object"
+}

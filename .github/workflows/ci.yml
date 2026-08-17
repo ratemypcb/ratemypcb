@@ -1,0 +1,25 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+      - run: cargo run -q -p ratemypcb-cli -- schema --output /tmp/report-schema.json
+      - run: diff -u schemas/report-1.0.json /tmp/report-schema.json
+      - run: python3 -m py_compile kicad-plugin/review_action.py
+      - run: python3 -m py_compile skills/review-pcb-dfm/scripts/install.py
+      - run: python3 skills/review-pcb-dfm/scripts/install.py --version v0.1.0 --dry-run

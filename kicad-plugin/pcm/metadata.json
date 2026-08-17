@@ -1,0 +1,22 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v1",
+  "name": "RateMyPCB DFM Review",
+  "description": "Local PCB manufacturing preflight backed by the RateMyPCB engine",
+  "description_full": "Reviews the active saved KiCad board locally and displays an evidence-backed score, findings, coverage, and limitations.",
+  "identifier": "com.ratemypcb.review-pcb-dfm",
+  "type": "plugin",
+  "author": { "name": "RateMyPCB" },
+  "license": "Apache-2.0",
+  "resources": { "homepage": "https://github.com/ratemypcb/ratemypcb" },
+  "versions": [
+    {
+      "version": "0.1.0",
+      "status": "testing",
+      "kicad_version": "10.0",
+      "download_url": "https://github.com/ratemypcb/ratemypcb/releases/download/v0.1.0/ratemypcb-kicad-plugin-0.1.0.zip",
+      "download_sha256": "REPLACE_DURING_RELEASE",
+      "download_size": 0,
+      "install_size": 0
+    }
+  ]
+}
