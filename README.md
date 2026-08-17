@@ -1,37 +1,15 @@
 # RateMyPCB
 
-RateMyPCB is a local, deterministic PCB manufacturing preflight and DFM linter.
-It reviews KiCad source projects and fabrication ZIPs without uploading design
-data, then emits a human verdict or a stable JSON report for agents and CI.
+## Install the skill
 
 ```sh
-cargo run -p ratemypcb-cli -- review .
-cargo run -p ratemypcb-cli -- review board.kicad_pcb --format json
-cargo run -p ratemypcb-cli -- doctor
-cargo run -p ratemypcb-cli -- schema
+npx skills add ratemypcb/ratemypcb --skill review-pcb-dfm
 ```
 
-End users do not need Rust. Download the signed binary for your platform from
-GitHub Releases, or let the Agent Skill run its checksum-verifying user-local
-installer after you approve the download. Rust is needed only to build from
-source.
+Then open your PCB repository in Claude Code, Codex, Cursor, or another
+Agent Skills-compatible tool and ask:
 
-The standalone engine checks evidence it can prove locally. When a compatible
-`kicad-cli` is installed, `--native auto` adds KiCad's native DRC report. Without
-it, the review still completes and marks exact clearance, connectivity, custom
-rules, exclusions, and zone-refill checks as `not_run`.
+> Review this PCB for DFM before I send it to manufacturing.
 
-RateMyPCB is a release aid, not a compliance certificate. Safety-critical
-designs require qualified engineering review and fabricator validation.
-
-## Supported inputs
-
-- `.kicad_pcb` with coherent `.kicad_pro` and `.kicad_dru` sidecars
-- project directories containing one or more KiCad boards
-- fabrication ZIPs containing Gerber, drill, BOM, placement, and/or source files
-- Altium artifacts are inventoried; `.PcbDoc` source-aware DRC is not supported
-
-Use `--board relative/path.kicad_pcb` when a repository contains multiple boards.
-Use `--fail-on critical|high|medium|low|info|never` to make findings gate CI.
-
-Licensed under Apache-2.0. RateMyPCB trademarks remain reserved.
+The first time it runs, the skill asks permission to download the correct
+RateMyPCB tool for your operating system from this repository's releases.

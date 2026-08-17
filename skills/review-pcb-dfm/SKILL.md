@@ -15,8 +15,8 @@ manufacturing clearance, or checks that the report marks `not_run`.
    and ask before downloading anything. After consent, run
    `python3 scripts/install.py` from this skill directory, then use the installed
    path it prints. The installer selects only the current OS/architecture and
-   verifies its release SHA-256. Never install Rust, KiCad, or another system
-   dependency automatically. Never run the installer without explicit consent.
+   verifies its release SHA-256. Never install system dependencies automatically.
+   Never run the installer without explicit consent.
 3. Inspect candidate PCB paths without modifying them. If several KiCad boards
    exist, select one only when the request or repository structure is
    unambiguous; otherwise show the CLI's candidates and ask which board to use.

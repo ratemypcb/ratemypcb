@@ -2,6 +2,4 @@
 
 Do not open public issues for archive-handling, command-execution, or parser
 vulnerabilities. Report them privately through GitHub's security-advisory form.
-Include a minimal reproducer when it is safe to share one. No PCB design files
-are uploaded or retained by this software.
-
+Include a minimal reproducer when it is safe to share one.
