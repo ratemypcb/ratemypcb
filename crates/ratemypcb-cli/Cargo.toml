@@ -12,6 +12,7 @@ name = "ratemypcb"
 path = "src/main.rs"
 
 [dependencies]
+getrandom.workspace = true
 ratemypcb-core = { path = "../ratemypcb-core" }
 serde_json.workspace = true
-
+zip.workspace = true

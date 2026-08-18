@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>RateMyPCB local review</title>
+  <link rel="stylesheet" href="/local-viewer.css">
+</head>
+<body>
+  <header>
+    <div class="brand">RATE<span>/</span>MY<span>/</span>PCB</div>
+    <div class="local-badge">LOCAL SESSION · NOTHING UPLOADED</div>
+  </header>
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">LOCAL MANUFACTURING PREFLIGHT</p>
+        <h1 id="verdict">Loading review…</h1>
+        <p id="source" class="muted"></p>
+      </div>
+      <div class="score"><strong id="score">—</strong><span>/ 10</span></div>
+    </section>
+
+    <section class="viewer-card">
+      <div class="viewer-toolbar">
+        <div class="tabs">
+          <button id="board-tab" type="button">KiCad board</button>
+          <button id="gerber-tab" type="button">Gerbers</button>
+        </div>
+        <div class="controls">
+          <button id="fit" type="button">Fit</button>
+          <button id="zoom-out" type="button">−</button>
+          <button id="zoom-in" type="button">+</button>
+        </div>
+      </div>
+      <div class="viewer-layout">
+        <canvas id="board-canvas" aria-label="PCB viewer"></canvas>
+        <aside>
+          <h2>Layers</h2>
+          <div id="layers"></div>
+          <p id="viewer-note" class="muted"></p>
+        </aside>
+      </div>
+    </section>
+
+    <section class="report-grid">
+      <article>
+        <h2>Coverage</h2>
+        <div id="coverage"></div>
+      </article>
+      <article>
+        <h2>Findings</h2>
+        <div id="findings"></div>
+      </article>
+    </section>
+
+    <section class="limitations">
+      <h2>Limitations</h2>
+      <ul id="limitations"></ul>
+      <p id="disclaimer"></p>
+    </section>
+  </main>
+  <footer>
+    <span>This page and its PCB data were served by the RateMyPCB process on your computer.</span>
+    <a href="https://ratemypcb.com" target="_blank" rel="noopener noreferrer">RateMyPCB.com →</a>
+  </footer>
+  <script type="module" src="/local-viewer.js"></script>
+</body>
+</html>
