@@ -38,6 +38,7 @@ const KICAD_ROUNDRECT_MACRO = Object.freeze([
   "20,1,$1+$1,$6,$7,$8,$9,0",
   "20,1,$1+$1,$8,$9,$2,$3,0",
 ]);
+const MAX_VIEW_PRIMITIVES = 750_000;
 
 function gerberRole(key, detectedBy) {
   return { key, ...GERBER_ROLE_DEFINITIONS[key], detectedBy };
@@ -210,7 +211,7 @@ function finishModel(format, layers, warnings = [], fitLayer = null) {
   for (const layer of layers) {
     primitives += layer.strokes.length + layer.flashes.reduce((sum, flash) => sum + (flash.primitiveWeight || 1), 0) + layer.labels.length +
       (layer.polygons || []).reduce((sum, polygon) => sum + polygon.contours.reduce((count, contour) => count + Math.max(1, contour.length - 1), 0), 0);
-    if (primitives > 100_000) throw new Error(`${format} has more than 100,000 drawable primitives.`);
+    if (primitives > MAX_VIEW_PRIMITIVES) throw new Error(`${format} has more than ${MAX_VIEW_PRIMITIVES.toLocaleString()} drawable primitives.`);
   }
   collectBounds(fitLayer ? [fitLayer] : layers);
   if (fitLayer && (minX === maxX || minY === maxY)) collectBounds(layers);
@@ -299,8 +300,8 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
   if (typeof source !== "string" || source.length < 10) throw new Error(`${filename} is empty or unreadable.`);
   let commandSeparators = 0;
   for (let index = 0; index < source.length; index += 1) {
-    if (source.charCodeAt(index) === 42 && ++commandSeparators > 200_000) {
-      throw new Error(`${filename} exceeds the 200,000-command parser safety limit.`);
+    if (source.charCodeAt(index) === 42 && ++commandSeparators > 400_000) {
+      throw new Error(`${filename} exceeds the 400,000-command parser safety limit.`);
     }
   }
   const terminalSource = source.match(/(?:^|\*)\s*M02\*([\s\S]*)$/i);
@@ -329,25 +330,74 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
   for (const polarity of source.matchAll(/%TF\.FilePolarity,([^*%]+)\*%/gi)) {
     if (!/^\s*Positive\s*$/i.test(polarity[1])) throw new Error(`${filename} has an unsupported file-polarity attribute.`);
   }
-  const macroPattern = /%AM([^*%]+)\*([\s\S]*?)\*%/gi;
+  const macroPattern = /%AM([^*%]+)\*([\s\S]*?)\*\s*%/gi;
   const macroBlocks = [...source.matchAll(macroPattern)];
   const macroStarts = source.match(/%AM/gi)?.length || 0;
   let roundRectMacro = false;
   if (macroStarts !== macroBlocks.length) throw new Error(`${filename} contains a malformed aperture macro block.`);
+  if (macroBlocks.length > 128) throw new Error(`${filename} defines too many aperture macros.`);
+  const numericMacros = new Map();
   for (const block of macroBlocks) {
-    if (block[1] !== "RoundRect" || roundRectMacro) throw new Error(`${filename} uses unsupported aperture macros.`);
     const executable = block[2]
       .split("*")
       .map((line) => line.trim())
       .filter(Boolean)
       .filter((line) => !/^0(?:[\s,]|$)/.test(line))
       .map((line) => line.replace(/\s+/g, ""));
-    if (executable.length !== KICAD_ROUNDRECT_MACRO.length ||
-        executable.some((line, index) => line !== KICAD_ROUNDRECT_MACRO[index])) {
-      throw new Error(`${filename} uses an unsupported or modified RoundRect aperture macro.`);
+    if (block[1] === "RoundRect") {
+      if (roundRectMacro || executable.length !== KICAD_ROUNDRECT_MACRO.length ||
+          executable.some((line, index) => line !== KICAD_ROUNDRECT_MACRO[index])) {
+        throw new Error(`${filename} uses an unsupported or modified RoundRect aperture macro.`);
+      }
+      roundRectMacro = true;
+      continue;
     }
-    roundRectMacro = true;
+    if (!/^[A-Za-z_.$][\w.$-]{0,63}$/.test(block[1]) || numericMacros.has(block[1]) || executable.length > 64) {
+      throw new Error(`${filename} uses unsupported aperture macros.`);
+    }
+    const primitives = [];
+    let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+    const include = (x1, y1, x2, y2) => {
+      minX = Math.min(minX, x1); minY = Math.min(minY, y1);
+      maxX = Math.max(maxX, x2); maxY = Math.max(maxY, y2);
+    };
+    for (const line of executable) {
+      const parts = line.split(",");
+      if (!parts.every((part) => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(part))) {
+        throw new Error(`${filename} uses unsupported aperture macros.`);
+      }
+      const values = parts.map(Number);
+      if (values.some((value) => !Number.isFinite(value) || Math.abs(value * scale) > 1_000)) {
+        throw new Error(`${filename} uses unsupported aperture macros.`);
+      }
+      if (values[0] === 1 && [5, 6].includes(values.length) && values[1] === 1 && (values[5] || 0) === 0 && values[2] > 0) {
+        const radius = values[2] * scale / 2;
+        const x = values[3] * scale;
+        const y = -values[4] * scale;
+        primitives.push({ kind: "circle", x, y, radius });
+        include(x - radius, y - radius, x + radius, y + radius);
+      } else if (values[0] === 20 && values.length === 8 && values[1] === 1 && values[7] === 0 && values[2] > 0) {
+        const width = values[2] * scale;
+        const x1 = values[3] * scale; const y1 = -values[4] * scale;
+        const x2 = values[5] * scale; const y2 = -values[6] * scale;
+        primitives.push({ kind: "line", x1, y1, x2, y2, width });
+        include(Math.min(x1, x2) - width / 2, Math.min(y1, y2) - width / 2,
+          Math.max(x1, x2) + width / 2, Math.max(y1, y2) + width / 2);
+      } else {
+        throw new Error(`${filename} uses unsupported aperture macros.`);
+      }
+    }
+    if (!primitives.length || !Number.isFinite(minX)) throw new Error(`${filename} uses unsupported aperture macros.`);
+    numericMacros.set(block[1], {
+      shape: "Macro",
+      macroPrimitives: primitives,
+      w: maxX - minX,
+      h: maxY - minY,
+      boundsOffset: { minX, minY, maxX, maxY },
+      primitiveWeight: primitives.length,
+    });
   }
+  if (numericMacros.size) warnings.push("Bounded numeric circle/vector aperture macros were rendered.");
   if (/%ABD\d+\*%/i.test(source)) throw new Error(`${filename} uses unsupported aperture blocks.`);
   if (/%ADD\d+P/i.test(source)) throw new Error(`${filename} uses unsupported polygon apertures.`);
   if (/%(?:LM|LR|LS|SR)/i.test(source)) throw new Error(`${filename} uses unsupported transforms or step-repeat.`);
@@ -434,6 +484,13 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
       primitiveWeight: 9,
     });
   }
+  for (const match of source.matchAll(/%ADD(\d+)([^,*%]+)(?:,([^*%]*))?\*%/gi)) {
+    const macro = numericMacros.get(match[2]);
+    if (!macro) continue;
+    if ((match[3] || "").trim()) throw new Error(`${filename} uses unsupported parameterized aperture macros.`);
+    if (apertures.has(match[1])) throw new Error(`${filename} defines aperture D${match[1]} more than once.`);
+    apertures.set(match[1], macro);
+  }
   for (const match of source.matchAll(/%ADD(\d+)([^,*%]+)[^*%]*\*%/gi)) {
     if (!apertures.has(match[1])) throw new Error(`${filename} uses unsupported aperture D${match[1]} (${match[2]}).`);
   }
@@ -454,17 +511,17 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
   let x = null;
   let y = null;
   let aperture = null;
-  let interpolation = null;
+  let interpolation = "linear";
   let multiQuadrant = false;
   let modalOperation = null;
   let polarity = "dark";
   let renderOrder = 0;
   let allocatedPrimitives = 0;
-  const requestedPrimitiveLimit = options.maxPrimitives === undefined ? 100_000 : Number(options.maxPrimitives);
+  const requestedPrimitiveLimit = options.maxPrimitives === undefined ? MAX_VIEW_PRIMITIVES : Number(options.maxPrimitives);
   if (!Number.isFinite(requestedPrimitiveLimit) || requestedPrimitiveLimit < 1) {
     throw new Error(`${filename} cannot be parsed because the aggregate Gerber primitive budget is exhausted.`);
   }
-  const maximumPrimitives = Math.min(100_000, Math.floor(requestedPrimitiveLimit));
+  const maximumPrimitives = Math.min(MAX_VIEW_PRIMITIVES, Math.floor(requestedPrimitiveLimit));
   const addPrimitive = (collection, primitive, weight = 1) => {
     allocatedPrimitives += weight;
     if (allocatedPrimitives > maximumPrimitives) {
@@ -503,11 +560,6 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
       throw new Error(`${filename} contains a region contour that is not explicitly closed.`);
     }
     const rawPoints = contour.slice(0, -1);
-    for (let index = 0; index < rawPoints.length; index += 1) {
-      if (samePoint(rawPoints[index], rawPoints[(index + 1) % rawPoints.length])) {
-        throw new Error(`${filename} contains a zero-length region edge.`);
-      }
-    }
     const coordinateQuantum = Math.max(10 ** -xFormat[1], 10 ** -yFormat[1]) * scale;
     const topologyPoints = [];
     for (const point of rawPoints) {
@@ -545,7 +597,10 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
     if (leadingCollinear) points.splice(0, leadingCollinear);
     while (points.length >= 3 && orientation(points.at(-2), points.at(-1), points[0]) === 0 &&
            occurrences.get(pointKey(points.at(-1))) === 1) points.pop();
-    if (points.length < 3) throw new Error(`${filename} contains a zero-area region contour.`);
+    if (points.length < 3) {
+      quantizedRegionSpurs = true;
+      return { contour: null, selfTouching: false };
+    }
     const segments = points.map((point, index) => {
       const next = points[(index + 1) % points.length];
       return {
@@ -603,10 +658,15 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
             selfTouching = true;
             continue;
           }
+          const collinear = orientation(first.a, first.b, second.a) === 0 && orientation(first.a, first.b, second.b) === 0;
+          if (collinear) {
+            selfTouching = true;
+            continue;
+          }
           if (sameDirection || pointInside(first, second.a) || pointInside(first, second.b) ||
               pointInside(second, first.a) || pointInside(second, first.b)) {
-            const edge = ({ a, b }) => `(${a.x},${a.y})→(${b.x},${b.y})`;
-            throw new Error(`${filename} contains an overlapping region contour between edges ${first.index} ${edge(first)} and ${second.index} ${edge(second)}.`);
+            selfTouching = true;
+            continue;
           }
           const sharedEndpoint = samePoint(first.a, second.a) || samePoint(first.a, second.b) ||
             samePoint(first.b, second.a) || samePoint(first.b, second.b);
@@ -619,20 +679,25 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
       const next = points[(index + 1) % points.length];
       return sum + point.x * next.y - next.x * point.y;
     }, 0);
-    if (!Number.isFinite(twiceArea) || Math.abs(twiceArea) <= 1e-12) throw new Error(`${filename} contains a zero-area region contour.`);
+    if (!Number.isFinite(twiceArea)) throw new Error(`${filename} contains invalid region coordinates.`);
+    if (Math.abs(twiceArea) <= 1e-12) {
+      quantizedRegionSpurs = true;
+      return { contour: null, selfTouching: false };
+    }
     return { contour, selfTouching };
   };
   const closeRegionContour = () => {
     if (!region?.current?.length) return;
     const validated = validateRegionContour(region.current);
     cutInRegions ||= validated.selfTouching;
-    region.contours.push(validated.contour);
+    if (validated.contour) region.contours.push(validated.contour);
+    else region.degenerate = true;
     region.current = null;
   };
   const finishRegion = () => {
     if (!region) throw new Error(`${filename} ends a region that was not started.`);
     closeRegionContour();
-    if (!region.contours.length) throw new Error(`${filename} contains an empty region.`);
+    if (!region.contours.length && !region.degenerate) throw new Error(`${filename} contains an empty region.`);
     for (const contour of region.contours) layer.polygons.push({ contours: [contour], polarity: region.polarity, order: renderOrder++ });
     region = null;
     warnings.push("Filled regions were rendered from their bounded contours.");
@@ -676,7 +741,7 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
   };
   const flashAt = (flashX, flashY) => {
     if (!aperture) throw new Error(`${filename} draws or flashes before selecting a defined aperture.`);
-    const shape = aperture.shape === "C" ? "circle" : aperture.shape === "O" ? "oval" : aperture.shape === "RoundRect" ? "roundrect-macro" : "rect";
+    const shape = aperture.shape === "C" ? "circle" : aperture.shape === "O" ? "oval" : aperture.shape === "RoundRect" ? "roundrect-macro" : aperture.shape === "Macro" ? "numeric-macro" : "rect";
     addPrimitive(layer.flashes, {
       x: flashX,
       y: flashY,
@@ -689,6 +754,10 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
       ...(shape === "roundrect-macro" ? {
         points: aperture.points,
         radius: aperture.radius,
+        boundsOffset: aperture.boundsOffset,
+        primitiveWeight: aperture.primitiveWeight,
+      } : shape === "numeric-macro" ? {
+        macroPrimitives: aperture.macroPrimitives,
         boundsOffset: aperture.boundsOffset,
         primitiveWeight: aperture.primitiveWeight,
       } : {}),
@@ -737,7 +806,7 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
     if (/^G75$/i.test(command)) { multiQuadrant = true; continue; }
     if (/^G36$/i.test(command)) {
       if (region) throw new Error(`${filename} starts a nested region.`);
-      region = { contours: [], current: null, polarity };
+      region = { contours: [], current: null, polarity, degenerate: false };
       continue;
     }
     if (/^G37$/i.test(command)) { finishRegion(); continue; }
@@ -819,7 +888,6 @@ export function parseGerber(source, filename = "layer.gbr", options = {}) {
       if (!interpolation) throw new Error(`${filename} uses D01 before declaring G01, G02, or G03 plot mode.`);
       if (region && !region.current) throw new Error(`${filename} starts a region contour without an explicit D02 move.`);
       if (x === null || y === null) throw new Error(`${filename} draws from an undefined current point; use D02 to establish it first.`);
-      if (region && interpolation !== "linear") throw new Error(`${filename} uses an arc inside a region; this bounded viewer accepts linear region contours only.`);
       if (!region && aperture.shape !== "C") {
         throw new Error(`${filename} strokes with a non-circular aperture; that Minkowski geometry is not supported by this bounded viewer.`);
       }
@@ -1183,6 +1251,23 @@ export function createBoardViewer(canvas) {
               layerContext.beginPath();
               layerContext.arc(point.x, point.y, Math.max(1, item.radius * scale), 0, Math.PI * 2);
               layerContext.fill();
+            }
+            layerContext.restore();
+            continue;
+          }
+          if (item.shape === "numeric-macro") {
+            for (const primitive of item.macroPrimitives) {
+              layerContext.beginPath();
+              if (primitive.kind === "circle") {
+                layerContext.arc(primitive.x * scale, primitive.y * scale, Math.max(1, primitive.radius * scale), 0, Math.PI * 2);
+                layerContext.fill();
+              } else {
+                layerContext.moveTo(primitive.x1 * scale, primitive.y1 * scale);
+                layerContext.lineTo(primitive.x2 * scale, primitive.y2 * scale);
+                layerContext.lineWidth = Math.max(1, primitive.width * scale);
+                layerContext.lineCap = "butt";
+                layerContext.stroke();
+              }
             }
             layerContext.restore();
             continue;

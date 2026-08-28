@@ -1,0 +1,20 @@
+{
+  "$id": "https://ratemypcb.com/schemas/assessment-1.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RateMyPCB engineering assessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assessmentSchemaVersion", "reportDigest", "rating", "disposition", "verdict", "verdictEvidenceRefs", "rationale", "categorySummaries", "actions", "questions"],
+  "properties": {
+    "assessmentSchemaVersion": { "const": "1.0" },
+    "reportDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "rating": { "type": "integer", "minimum": 0, "maximum": 10 },
+    "disposition": { "enum": ["approve", "revise", "blocked"] },
+    "verdict": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "verdictEvidenceRefs": { "type": "array", "items": { "type": "string" } },
+    "rationale": { "type": "string" },
+    "categorySummaries": { "type": "array" },
+    "actions": { "type": "array" },
+    "questions": { "type": "array", "items": { "type": "string" } }
+  }
+}

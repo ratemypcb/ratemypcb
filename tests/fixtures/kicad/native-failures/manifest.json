@@ -1,0 +1,43 @@
+{
+  "boundedContract": {
+    "diagnosticBytes": 16384,
+    "itemsPerMarker": 64,
+    "markers": 250,
+    "reportBytes": 4194304,
+    "timeoutSeconds": 120
+  },
+  "cases": {
+    "erc-exclusions-9.json": [
+      "excluded-true-retained",
+      "absent-excluded-remains-unknown"
+    ],
+    "malformed.json": [
+      "wrong-field-shape"
+    ],
+    "runner": [
+      "unavailable-executable",
+      "spawn-failure",
+      "timeout-kill-and-wait",
+      "non-0-or-5-exit",
+      "missing-report",
+      "oversized-report",
+      "report-major-mismatch"
+    ],
+    "truncated.json": [
+      "truncated-json"
+    ],
+    "versions.json": [
+      "supported-8-9-10",
+      "unsupported-7-11",
+      "unparseable"
+    ]
+  },
+  "fixture": "ratemypcb-native-failure-contract-v1",
+  "redistribution": "Project-authored synthetic malformed and exclusion cases; no external data.",
+  "sha256": {
+    "erc-exclusions-9.json": "772a1d49c04fbe68a833523a26a97c25b7e81e5a4408b553b30b2705d869f6c0",
+    "malformed.json": "e7622003e221b23b2ef7e862e40b911f3c4a842745acf3bb287137fb94c6c500",
+    "truncated.json": "e7dca5e8aafb683695c3cf6e0b0be74932698a92615d13af0caca24faa641ecb",
+    "versions.json": "f04615212a849a40746a7bdf4b650946de1154a67b609f5f26376def0f1a74c6"
+  }
+}

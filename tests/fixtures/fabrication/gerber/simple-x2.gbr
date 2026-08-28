@@ -1,0 +1,9 @@
+G04 RateMyPCB project-authored sanitized X2 fixture*
+%FSLAX46Y46*%
+%MOMM*%
+%TF.FileFunction,Copper,L1,Top*%
+%ADD10C,0.200*%
+D10*
+X000000Y000000D02*
+X100000Y000000D01*
+M02*

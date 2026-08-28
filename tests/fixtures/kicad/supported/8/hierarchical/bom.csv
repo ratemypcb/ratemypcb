@@ -1,0 +1,5 @@
+Reference,Value,Footprint,Fields,Population
+"U1A,U1B",Synthetic Dual Unit,Package_DIP:DIP-8,"fixture_role=multi-unit",Fitted
+R1,10k,Resistor_SMD:R_0603_1608Metric,"fixture_role=passive",Fitted
+R2,100k,Resistor_SMD:R_0603_1608Metric,"fixture_role=dnp",DNP
+#PWR01,PWR_FLAG,,"fixture_role=power-flag",Fitted

@@ -1,70 +1,275 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="referrer" content="no-referrer">
-  <title>RateMyPCB local review</title>
-  <link rel="stylesheet" href="/local-viewer.css">
-</head>
-<body>
-  <header>
-    <div class="brand">RATE<span>/</span>MY<span>/</span>PCB</div>
-    <div class="local-badge">LOCAL SESSION · NOTHING UPLOADED</div>
-  </header>
-  <main>
-    <section class="hero">
-      <div>
-        <p class="eyebrow">LOCAL MANUFACTURING PREFLIGHT</p>
-        <h1 id="verdict">Loading review…</h1>
-        <p id="source" class="muted"></p>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>RateMyPCB manufacturing release review</title>
+    <link rel="stylesheet" href="/local-viewer.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">RATE<span>/</span>MY<span>/</span>PCB</div>
+      <div class="local-badge">LOCAL SESSION · NOTHING UPLOADED</div>
+    </header>
+    <main>
+      <div class="masthead">
+        <h1>Manufacturing Release Review</h1>
+        <p>Independent design, fabrication &amp; assembly preflight</p>
       </div>
-      <div class="score"><strong id="score">—</strong><span>/ 10</span></div>
-    </section>
 
-    <section class="viewer-card">
-      <div class="viewer-toolbar">
-        <div class="tabs">
-          <button id="board-tab" type="button">KiCad board</button>
-          <button id="gerber-tab" type="button">Gerbers</button>
+      <section
+        id="release-decision"
+        class="release-decision"
+        aria-labelledby="release-decision-heading"
+        data-report-landmark="release-decision"
+      >
+        <p class="eyebrow">Release decision</p>
+        <h2 id="release-decision-heading">
+          <strong id="disposition">Loading…</strong> <span id="verdict"></span>
+        </h2>
+        <dl class="decision-meta">
+          <div>
+            <dt>Scope</dt>
+            <dd id="scope">—</dd>
+          </div>
+          <div>
+            <dt>Selected artifact / revision</dt>
+            <dd id="source">—</dd>
+          </div>
+          <div>
+            <dt>Evidence freshness / observed time</dt>
+            <dd id="evidence-time">—</dd>
+          </div>
+        </dl>
+        <div class="decision-reason">
+          <h3>Why</h3>
+          <p id="assessment-note">No engineering assessment was supplied.</p>
+          <div id="verdict-refs" class="evidence-refs"></div>
         </div>
-        <div class="controls">
-          <button id="fit" type="button">Fit</button>
-          <button id="zoom-out" type="button">−</button>
-          <button id="zoom-in" type="button">+</button>
+        <div id="actions-card" hidden>
+          <h3>Top actions</h3>
+          <div id="actions"></div>
         </div>
-      </div>
-      <div class="viewer-layout">
-        <canvas id="board-canvas" aria-label="PCB viewer"></canvas>
-        <aside>
-          <h2>Layers</h2>
-          <div id="layers"></div>
-          <p id="viewer-note" class="muted"></p>
-        </aside>
-      </div>
-    </section>
+        <div id="questions-card" hidden>
+          <h3>Open questions</h3>
+          <div id="questions"></div>
+        </div>
+      </section>
 
-    <section class="report-grid">
-      <article>
-        <h2>Coverage</h2>
-        <div id="coverage"></div>
-      </article>
-      <article>
-        <h2>Findings</h2>
-        <div id="findings"></div>
-      </article>
-    </section>
+      <section
+        id="evidence-completeness"
+        class="report-card"
+        aria-labelledby="completeness-heading"
+        data-report-landmark="completeness"
+      >
+        <h2 id="completeness-heading">
+          Required evidence completeness &amp; freshness
+        </h2>
+        <div id="completeness-summary" class="completeness-summary"></div>
+        <div id="required-evidence"></div>
+      </section>
 
-    <section class="limitations">
-      <h2>Limitations</h2>
-      <ul id="limitations"></ul>
-      <p id="disclaimer"></p>
-    </section>
-  </main>
-  <footer>
-    <span>This page and its PCB data were served by the RateMyPCB process on your computer.</span>
-    <a href="https://ratemypcb.com" target="_blank" rel="noopener noreferrer">RateMyPCB.com →</a>
-  </footer>
-  <script type="module" src="/local-viewer.js"></script>
-</body>
+      <section
+        id="score-summary"
+        class="score-strip"
+        aria-label="Secondary scores"
+        data-report-landmark="scores"
+      >
+        <div>
+          <small>Engineering assessment</small
+          ><strong id="assessment-score">Not assessed</strong>
+        </div>
+        <div>
+          <small>Deterministic evidence score</small
+          ><strong id="evidence-score">—</strong>
+        </div>
+        <div><small>Approval gate</small><strong id="approval">—</strong></div>
+      </section>
+
+      <nav class="report-tabs" aria-label="Report sections" role="tablist">
+        <button
+          id="overview-tab"
+          class="active"
+          type="button"
+          role="tab"
+          aria-controls="overview-panel"
+          aria-selected="true"
+          tabindex="0"
+        >
+          Evidence
+        </button>
+        <button
+          id="bom-tab"
+          type="button"
+          role="tab"
+          aria-controls="bom-panel"
+          aria-selected="false"
+          tabindex="-1"
+        >
+          Bill of materials <span id="bom-tab-count"></span>
+        </button>
+      </nav>
+
+      <div
+        id="overview-panel"
+        class="report-panel"
+        role="tabpanel"
+        aria-labelledby="overview-tab"
+      >
+        <section id="assessment-categories-card" class="report-card" hidden>
+          <h2>Assessment category summaries</h2>
+          <div id="assessment-categories"></div>
+        </section>
+
+        <section class="report-card">
+          <h2>Review ledger</h2>
+          <div id="categories"></div>
+        </section>
+
+        <section
+          class="report-card evidence-details"
+          aria-labelledby="evidence-details-heading"
+        >
+          <h2 id="evidence-details-heading">Evidence details</h2>
+          <p id="evidence-results" role="status" aria-live="polite"></p>
+          <div id="evidence-records"></div>
+          <button id="evidence-more" type="button" hidden>
+            Load 100 more evidence records
+          </button>
+        </section>
+
+        <section class="evidence-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Supporting material</p>
+              <h2>Visual evidence</h2>
+            </div>
+            <p>Inspect the source board and manufacturing layers.</p>
+          </div>
+          <div class="viewer-card">
+            <div class="viewer-toolbar">
+              <div class="tabs">
+                <button id="board-tab" type="button" aria-pressed="false">
+                  KiCad board
+                </button>
+                <button id="gerber-tab" type="button" aria-pressed="false">
+                  Gerbers
+                </button>
+              </div>
+              <div class="controls">
+                <button id="fit" type="button" aria-label="Fit board to view">Fit</button>
+                <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+                <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+              </div>
+            </div>
+            <div class="viewer-layout">
+              <div>
+                <canvas
+                  id="board-canvas"
+                  aria-label="PCB viewer"
+                  aria-describedby="viewer-fallback"
+                >PCB geometry is summarized in the text immediately after this canvas.</canvas>
+                <p id="viewer-fallback" class="canvas-fallback">
+                  No viewable board geometry was included. Layer names, drawable counts,
+                  source warnings, and parser status will appear here when available.
+                </p>
+              </div>
+              <aside>
+                <h3>Layers</h3>
+                <div id="layers"></div>
+                <p id="viewer-note" class="muted"></p>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <details class="limitations">
+          <summary>Scope &amp; limitations</summary>
+          <ul id="limitations"></ul>
+          <p id="disclaimer"></p>
+        </details>
+      </div>
+
+      <div
+        id="bom-panel"
+        class="report-panel"
+        role="tabpanel"
+        aria-labelledby="bom-tab"
+        hidden
+      >
+        <section class="bom-heading">
+          <div>
+            <p class="eyebrow">Bill of materials</p>
+            <h2>Component register</h2>
+            <p id="bom-note">No BOM was included in this review.</p>
+          </div>
+          <div class="bom-grade">
+            <small>Core status</small>
+            <strong id="bom-status">Not provided</strong>
+          </div>
+        </section>
+        <section class="bom-summary" aria-label="BOM summary">
+          <div><small>Lines</small><strong id="bom-lines">0</strong></div>
+        </section>
+        <form id="bom-controls" class="bom-controls" role="search">
+          <label>
+            Search BOM
+            <input id="bom-search" type="search" autocomplete="off" />
+          </label>
+          <label>
+            Release-impact state
+            <select id="bom-filter">
+              <option value="all">All states</option>
+              <option value="attention">Attention</option>
+              <option value="not-checked">Not checked</option>
+              <option value="pass">Pass</option>
+            </select>
+          </label>
+          <label>
+            Sort
+            <select id="bom-sort">
+              <option value="release-impact">Release impact</option>
+              <option value="source-order">Source order</option>
+            </select>
+          </label>
+        </form>
+        <p id="bom-results" class="bom-results" role="status" aria-live="polite"></p>
+        <div class="bom-table-wrap" role="region" aria-label="BOM risk matrix" tabindex="0">
+          <table class="bom-table">
+            <caption>Bill of materials release-impact risk matrix</caption>
+            <thead>
+              <tr>
+                <th>Refs / value</th>
+                <th>Identity</th>
+                <th>Sourceability</th>
+                <th>Lifecycle</th>
+                <th>Stock</th>
+                <th>Price</th>
+                <th>Alternatives</th>
+                <th>Release impact</th>
+              </tr>
+            </thead>
+            <tbody id="bom-rows"></tbody>
+          </table>
+        </div>
+        <button id="bom-more" class="bom-more" type="button" hidden>Load 100 more rows</button>
+        <p class="bom-footnote">
+          Supplier data is a point-in-time aid, not a purchasing guarantee. “Not
+          checked” means this report contained no current evidence for that
+          field.
+        </p>
+      </div>
+    </main>
+    <footer>
+      <span
+        >This page and its PCB data were served by the RateMyPCB process on your
+        computer.</span
+      >
+      <a href="https://ratemypcb.com" target="_blank" rel="noopener noreferrer"
+        >RateMyPCB.com →</a
+      >
+    </footer>
+    <script type="module" src="/local-viewer.js"></script>
+  </body>
 </html>

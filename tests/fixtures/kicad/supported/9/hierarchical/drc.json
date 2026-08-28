@@ -1,0 +1,136 @@
+{
+  "$schema": "https://schemas.kicad.org/drc.v1.json",
+  "coordinate_units": "mm",
+  "date": "2026-08-27T00:00:00",
+  "ignored_checks": [
+    {
+      "description": "Footprint has no courtyard defined",
+      "key": "missing_courtyard"
+    },
+    {
+      "description": "Track endpoint not centered on via",
+      "key": "track_not_centered_on_via"
+    },
+    {
+      "description": "Tuning profile track geometries",
+      "key": "tuning_profile_track_geometries"
+    },
+    {
+      "description": "Footprint doesn't match symbol's footprint filters",
+      "key": "footprint_filters_mismatch"
+    },
+    {
+      "description": "Footprint component type doesn't match footprint pads",
+      "key": "footprint_type_mismatch"
+    }
+  ],
+  "included_severities": [
+    "error",
+    "warning",
+    "exclusion"
+  ],
+  "kicad_version": "9.0.6",
+  "schematic_parity": [],
+  "source": "root.kicad_pcb",
+  "unconnected_items": [],
+  "violations": [
+    {
+      "description": "Hole size out of range (board setup constraints min hole 0.3000 mm; actual 0.2000 mm)",
+      "items": [
+        {
+          "description": "Via [GND] on F.Cu - B.Cu",
+          "pos": {
+            "x": 6.0,
+            "y": 5.0
+          },
+          "uuid": "be2e223a-c756-4761-b603-b8038a84ed90"
+        }
+      ],
+      "severity": "error",
+      "type": "drill_out_of_range"
+    },
+    {
+      "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1000 mm)",
+      "items": [
+        {
+          "description": "Track [GND] on F.Cu, length 2.0000 mm",
+          "pos": {
+            "x": 5.0,
+            "y": 5.0
+          },
+          "uuid": "d961e909-c1e8-4fc7-b6c4-5573d0b8b630"
+        }
+      ],
+      "severity": "error",
+      "type": "track_width"
+    },
+    {
+      "description": "Via diameter (board setup constraints min diameter 0.5000 mm; actual 0.4000 mm)",
+      "items": [
+        {
+          "description": "Via [GND] on F.Cu - B.Cu",
+          "pos": {
+            "x": 6.0,
+            "y": 5.0
+          },
+          "uuid": "be2e223a-c756-4761-b603-b8038a84ed90"
+        }
+      ],
+      "severity": "error",
+      "type": "via_diameter"
+    },
+    {
+      "description": "Via is not connected or connected on only one layer",
+      "items": [
+        {
+          "description": "Via [GND] on F.Cu - B.Cu",
+          "pos": {
+            "x": 6.0,
+            "y": 5.0
+          },
+          "uuid": "be2e223a-c756-4761-b603-b8038a84ed90"
+        }
+      ],
+      "severity": "warning",
+      "type": "via_dangling"
+    },
+    {
+      "description": "Footprint 'R_0603_1608Metric' does not match copy in library 'Resistor_SMD'",
+      "items": [
+        {
+          "description": "Footprint R1",
+          "pos": {
+            "x": 5.0,
+            "y": 5.0
+          },
+          "uuid": "fb8075f6-db0b-4d3d-8a8f-7b8cd7b346f1"
+        }
+      ],
+      "severity": "warning",
+      "type": "lib_footprint_mismatch"
+    },
+    {
+      "description": "Silkscreen clipped by solder mask",
+      "items": [
+        {
+          "description": "Reference field of R1",
+          "pos": {
+            "x": 5.0,
+            "y": 5.0
+          },
+          "uuid": "bcbc3920-762d-43b3-9731-95bbb868fa59"
+        },
+        {
+          "description": "Pad 1 [GND] of R1 on F.Cu",
+          "pos": {
+            "x": 5.0,
+            "y": 5.0
+          },
+          "uuid": "bb6c13ad-790b-4b52-a719-4dc17d021991"
+        }
+      ],
+      "severity": "warning",
+      "type": "silk_over_copper"
+    }
+  ]
+}

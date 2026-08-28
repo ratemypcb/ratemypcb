@@ -1,0 +1,14 @@
+{
+  "mutations": [
+    "reference-uuid",
+    "value",
+    "footprint",
+    "fitted-dnp",
+    "pin-pad",
+    "net",
+    "quantity",
+    "placement",
+    "revision"
+  ],
+  "gateImpact": "evidence_only"
+}

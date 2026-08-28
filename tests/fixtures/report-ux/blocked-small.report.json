@@ -1,0 +1,729 @@
+{
+  "schemaVersion": "2.0",
+  "tool": {
+    "name": "ratemypcb",
+    "version": "0.2.0-synthetic"
+  },
+  "input": {
+    "path": "fixtures/synthetic-board.kicad_pcb",
+    "kind": "kicad-board",
+    "selectedBoard": "synthetic-board.kicad_pcb"
+  },
+  "artifacts": [
+    {
+      "path": "synthetic-board.kicad_pcb",
+      "kind": "board",
+      "format": "kicad",
+      "selected": true
+    }
+  ],
+  "score": {
+    "value": 5.0,
+    "raw": 50,
+    "verdict": "Synthetic control"
+  },
+  "observedRisk": {
+    "scoreRaw": 50,
+    "highestSeverity": "medium"
+  },
+  "confidence": "low",
+  "evidenceConfidence": "unknown",
+  "freshness": "unknown",
+  "requiredEvidence": [
+    {
+      "checkId": "source-structure",
+      "evidenceId": "ev-0000000000000000000000000000000000000000000000000000000000000001",
+      "execution": "completed",
+      "result": "pass",
+      "freshness": "current",
+      "confidence": "unknown"
+    },
+    {
+      "checkId": "native-drc",
+      "evidenceId": "ev-0000000000000000000000000000000000000000000000000000000000000002",
+      "execution": "completed",
+      "result": "attention",
+      "freshness": "current",
+      "confidence": "unknown"
+    },
+    {
+      "checkId": "package-gerbers",
+      "evidenceId": "ev-0000000000000000000000000000000000000000000000000000000000000003",
+      "execution": "not_run",
+      "result": "unknown",
+      "freshness": "unknown",
+      "confidence": "unknown"
+    },
+    {
+      "checkId": "supply-snapshot",
+      "evidenceId": "ev-0000000000000000000000000000000000000000000000000000000000000004",
+      "execution": "not_provided",
+      "result": "unknown",
+      "freshness": "unknown",
+      "confidence": "unknown"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000001",
+      "checkId": "source-structure",
+      "kind": "coverage",
+      "provenance": {
+        "artifactId": "artifact-synthetic-board",
+        "artifactDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "producer": {
+          "kind": "tool",
+          "name": "synthetic-evaluator",
+          "version": "1.0"
+        },
+        "location": {
+          "kind": "fixture",
+          "value": "source-structure"
+        },
+        "evidenceClass": "synthetic-contract",
+        "confidence": "high",
+        "freshness": "current",
+        "observedAt": "2026-08-26T12:00:00Z"
+      }
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000002",
+      "checkId": "native-drc",
+      "kind": "coverage",
+      "provenance": {
+        "artifactId": "artifact-synthetic-board",
+        "artifactDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "producer": {
+          "kind": "tool",
+          "name": "synthetic-evaluator",
+          "version": "1.0"
+        },
+        "location": {
+          "kind": "fixture",
+          "value": "native-drc"
+        },
+        "evidenceClass": "synthetic-contract",
+        "confidence": "high",
+        "freshness": "current",
+        "observedAt": "2026-08-26T12:00:00Z"
+      }
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000003",
+      "checkId": "package-gerbers",
+      "kind": "coverage",
+      "provenance": {
+        "artifactId": "artifact-synthetic-board",
+        "artifactDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "producer": {
+          "kind": "tool",
+          "name": "synthetic-evaluator",
+          "version": "1.0"
+        },
+        "location": {
+          "kind": "fixture",
+          "value": "package-gerbers"
+        },
+        "evidenceClass": "synthetic-contract",
+        "confidence": "high",
+        "freshness": "current",
+        "observedAt": "2026-08-26T12:00:00Z"
+      }
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000004",
+      "checkId": "supply-snapshot",
+      "kind": "coverage",
+      "provenance": {
+        "artifactId": "artifact-synthetic-board",
+        "artifactDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "producer": {
+          "kind": "tool",
+          "name": "synthetic-evaluator",
+          "version": "1.0"
+        },
+        "location": {
+          "kind": "fixture",
+          "value": "supply-snapshot"
+        },
+        "evidenceClass": "synthetic-contract",
+        "confidence": "high",
+        "freshness": "current",
+        "observedAt": "2026-08-26T12:00:00Z"
+      }
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000005",
+      "checkId": "finding-1",
+      "kind": "finding",
+      "provenance": {
+        "artifactId": "artifact-synthetic-board",
+        "artifactDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "producer": {
+          "kind": "tool",
+          "name": "synthetic-evaluator",
+          "version": "1.0"
+        },
+        "location": {
+          "kind": "fixture",
+          "value": "finding-1"
+        },
+        "evidenceClass": "synthetic-contract",
+        "confidence": "high",
+        "freshness": "current",
+        "observedAt": "2026-08-26T12:00:00Z"
+      }
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000006",
+      "checkId": "finding-2",
+      "kind": "finding",
+      "provenance": {
+        "artifactId": "artifact-synthetic-board",
+        "artifactDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "producer": {
+          "kind": "tool",
+          "name": "synthetic-evaluator",
+          "version": "1.0"
+        },
+        "location": {
+          "kind": "fixture",
+          "value": "finding-2"
+        },
+        "evidenceClass": "synthetic-contract",
+        "confidence": "high",
+        "freshness": "current",
+        "observedAt": "2026-08-26T12:00:00Z"
+      }
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000007",
+      "checkId": "finding-3",
+      "kind": "finding",
+      "provenance": {
+        "artifactId": "artifact-synthetic-board",
+        "artifactDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "producer": {
+          "kind": "tool",
+          "name": "synthetic-evaluator",
+          "version": "1.0"
+        },
+        "location": {
+          "kind": "fixture",
+          "value": "finding-3"
+        },
+        "evidenceClass": "synthetic-contract",
+        "confidence": "high",
+        "freshness": "current",
+        "observedAt": "2026-08-26T12:00:00Z"
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000001",
+      "label": "source-structure",
+      "status": "passed",
+      "evidence": "Synthetic source-structure evidence."
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000002",
+      "label": "native-drc",
+      "status": "attention",
+      "evidence": "Synthetic native-drc evidence."
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000003",
+      "label": "package-gerbers",
+      "status": "not_run",
+      "evidence": "Synthetic package-gerbers evidence."
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000004",
+      "label": "supply-snapshot",
+      "status": "not_provided",
+      "evidence": "Synthetic supply-snapshot evidence."
+    }
+  ],
+  "findings": [
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000005",
+      "severity": "medium",
+      "category": "BOM",
+      "title": "Synthetic finding 1",
+      "evidence": "Synthetic evidence text.",
+      "recommendation": "Review synthetic source.",
+      "location": "line:1",
+      "source": "synthetic"
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000006",
+      "severity": "low",
+      "category": "BOM",
+      "title": "Synthetic finding 2",
+      "evidence": "Synthetic evidence text.",
+      "recommendation": "Review synthetic source.",
+      "location": "line:2",
+      "source": "synthetic"
+    },
+    {
+      "id": "ev-0000000000000000000000000000000000000000000000000000000000000007",
+      "severity": "low",
+      "category": "BOM",
+      "title": "Synthetic finding 3",
+      "evidence": "Synthetic evidence text.",
+      "recommendation": "Review synthetic source.",
+      "location": "line:3",
+      "source": "synthetic"
+    }
+  ],
+  "nativeDrc": {
+    "status": "not-run",
+    "tool": "kicad-cli",
+    "version": null,
+    "findingCount": 0,
+    "note": "Synthetic native evidence.",
+    "violations": []
+  },
+  "profileDrc": null,
+  "reviewScope": "full",
+  "categories": [],
+  "approvalEligible": false,
+  "profile": null,
+  "bom": {
+    "status": "attention",
+    "lineCount": 10,
+    "lines": [
+      {
+        "lineNumber": 2,
+        "references": [
+          "R1"
+        ],
+        "quantity": 1,
+        "value": "1k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0001",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "attention",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "attention",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "pass",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "attention",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": null,
+        "moq": 1,
+        "unitPrice": null,
+        "currency": null,
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 3,
+        "references": [
+          "R2"
+        ],
+        "quantity": 1,
+        "value": "2k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0002",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "not-checked",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "not-checked",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "not-checked",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "not-checked",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": null,
+        "moq": 1,
+        "unitPrice": null,
+        "currency": null,
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 4,
+        "references": [
+          "R3"
+        ],
+        "quantity": 1,
+        "value": "3k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0003",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "pass",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "pass",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "pass",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "pass",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": 100,
+        "moq": 1,
+        "unitPrice": 0.1,
+        "currency": "USD",
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 5,
+        "references": [
+          "R4"
+        ],
+        "quantity": 1,
+        "value": "4k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0004",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "not-checked",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "not-checked",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "not-checked",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "not-checked",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": null,
+        "moq": 1,
+        "unitPrice": null,
+        "currency": null,
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 6,
+        "references": [
+          "R5"
+        ],
+        "quantity": 1,
+        "value": "5k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0005",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "attention",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "attention",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "pass",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "attention",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": null,
+        "moq": 1,
+        "unitPrice": null,
+        "currency": null,
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 7,
+        "references": [
+          "R6"
+        ],
+        "quantity": 1,
+        "value": "6k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0006",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "pass",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "pass",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "pass",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "pass",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": 100,
+        "moq": 1,
+        "unitPrice": 0.1,
+        "currency": "USD",
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 8,
+        "references": [
+          "R7"
+        ],
+        "quantity": 1,
+        "value": "7k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0007",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "not-checked",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "not-checked",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "not-checked",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "not-checked",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": null,
+        "moq": 1,
+        "unitPrice": null,
+        "currency": null,
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 9,
+        "references": [
+          "R8"
+        ],
+        "quantity": 1,
+        "value": "8k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0008",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "pass",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "pass",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "pass",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "pass",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": 100,
+        "moq": 1,
+        "unitPrice": 0.1,
+        "currency": "USD",
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 10,
+        "references": [
+          "R9"
+        ],
+        "quantity": 1,
+        "value": "9k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0009",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "attention",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "attention",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "pass",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "attention",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": null,
+        "moq": 1,
+        "unitPrice": null,
+        "currency": null,
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      },
+      {
+        "lineNumber": 11,
+        "references": [
+          "R10"
+        ],
+        "quantity": 1,
+        "value": "10k",
+        "footprint": "0603",
+        "manufacturer": "Synthetic Parts",
+        "mpn": "SYN-0010",
+        "identity": {
+          "status": "pass",
+          "detail": "Exact synthetic identity."
+        },
+        "lifecycle": {
+          "status": "not-checked",
+          "detail": "Synthetic lifecycle state."
+        },
+        "sourceability": {
+          "status": "not-checked",
+          "detail": "Synthetic availability state."
+        },
+        "pricing": {
+          "status": "not-checked",
+          "detail": "Synthetic commercial state."
+        },
+        "alternatives": {
+          "status": "not-checked",
+          "detail": "No alternate qualification supplied."
+        },
+        "releaseImpact": {
+          "status": "not-checked",
+          "detail": "Authoritative synthetic release-impact state."
+        },
+        "stock": null,
+        "moq": 1,
+        "unitPrice": null,
+        "currency": null,
+        "priceEstimate": false,
+        "distributors": [],
+        "alternateMpns": []
+      }
+    ]
+  },
+  "stackup": null,
+  "limitations": [
+    "Synthetic fixture does not represent a production design."
+  ],
+  "limitationEvidenceRefs": [
+    [
+      "ev-0000000000000000000000000000000000000000000000000000000000000001"
+    ]
+  ],
+  "disclaimer": "Project-authored synthetic fixture; not a manufacturing approval."
+}

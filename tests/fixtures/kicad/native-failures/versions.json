@@ -1,0 +1,5 @@
+{
+  "supported": ["8.0.9", "KiCad 9.0.6", "10.0.5"],
+  "unsupported": ["7.0.11", "11.0.0", "future 12.1"],
+  "unparseable": ["unknown", "", "KiCad development build"]
+}

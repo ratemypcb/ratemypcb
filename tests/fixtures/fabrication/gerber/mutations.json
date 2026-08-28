@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "ratemypcb-gerber-mutations-v1",
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "mutations": [
+    {"id": "insert-unknown-at-every-boundary", "expected": "parser-failed"},
+    {"id": "truncate-at-every-command", "expected": "framing-or-parser-failed"},
+    {"id": "route-plus-sibling-error", "expected": "parser-failed-with-route-retained"},
+    {"id": "invalid-byte-in-extended-command", "expected": "invalid-byte"},
+    {"id": "invalid-byte-in-standard-comment", "expected": "invalid-byte"},
+    {"id": "control-byte-in-comment", "expected": "invalid-byte"},
+    {"id": "unclosed-extended-command", "expected": "framing-failed"},
+    {"id": "undefined-aperture", "expected": "semantic-failed"},
+    {"id": "undefined-modal-operation", "expected": "parser-failed"},
+    {"id": "open-region", "expected": "semantic-failed"},
+    {"id": "data-after-m02", "expected": "semantic-failed"},
+    {"id": "step-repeat-expansion-bomb", "expected": "resource-failed"}
+  ]
+}

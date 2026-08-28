@@ -1,28 +1,55 @@
 use ratemypcb_core::{
-    CoverageStatus, NativeMode, Preset, ReviewOptions, Severity, report_schema, review,
+    ASSESSMENT_SCHEMA_VERSION, Assessment, CoverageStatus, GateImpact, NativeMode, Preset,
+    ReviewOptions, ReviewScope, Severity, report_schema, review, validate_assessment,
+    validate_report, validate_report_supply_retention,
 };
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 mod viewer;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_REPORT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_ASSESSMENT_BYTES: u64 = 2 * 1024 * 1024;
+
+fn read_bounded(path: &Path, label: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
+    let size = fs::metadata(path)
+        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
+        .len();
+    if size > max_bytes {
+        return Err(format!(
+            "{label} exceeds the {} MB limit",
+            max_bytes / 1024 / 1024
+        ));
+    }
+    fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
+}
 
 fn help() {
     println!(
         r#"RateMyPCB — local PCB manufacturing preflight
 
 USAGE:
-  ratemypcb review [PATH] [--board PATH] [--format terminal|json]
+  ratemypcb review [PATH] [--board PATH] [--schematic PATH]
+                   [--format terminal|json] [--bom PATH]
+                   [--placement PATH] [--supply-snapshot PATH]
+                   [--scope design|fabrication|assembly|full]
+                   [--profile eurocircuits|aisler|jlcpcb|pcbway]
                    [--output FILE] [--preset standard|compact|relaxed]
                    [--fail-on critical|high|medium|low|info|never]
                    [--native auto|off|required] [--open]
   ratemypcb doctor
+  ratemypcb profiles [list|show NAME]
+  ratemypcb digest REPORT.json
+  ratemypcb render --report FILE [--assessment FILE] --output FILE
   ratemypcb schema [--output FILE]
   ratemypcb version
 
-The review never modifies or uploads PCB data. Native DRC is optional.
+The review never modifies or uploads PCB data. Native checks are optional.
+--schematic resolves only ambiguous automatic roots inside the reviewed project.
 --open launches a short-lived, offline viewer on 127.0.0.1."#
     );
 }
@@ -36,12 +63,18 @@ enum OutputFormat {
 struct ReviewArgs {
     path: PathBuf,
     board: Option<String>,
+    schematic: Option<String>,
+    bom: Option<PathBuf>,
+    placement: Option<PathBuf>,
+    supply_snapshot: Option<PathBuf>,
     format: OutputFormat,
     output: Option<PathBuf>,
     preset: Preset,
     fail_on: Option<Severity>,
     native: NativeMode,
     open: bool,
+    scope: ReviewScope,
+    profile: Option<String>,
 }
 
 fn value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
@@ -55,18 +88,39 @@ fn parse_review(args: &[String]) -> Result<ReviewArgs, String> {
     let mut parsed = ReviewArgs {
         path: PathBuf::from("."),
         board: None,
+        schematic: None,
+        bom: None,
+        placement: None,
+        supply_snapshot: None,
         format: OutputFormat::Terminal,
         output: None,
         preset: Preset::named("standard").unwrap(),
         fail_on: None,
         native: NativeMode::Auto,
         open: false,
+        scope: ReviewScope::Full,
+        profile: None,
     };
     let mut path_set = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--board" => parsed.board = Some(value(args, &mut i, "--board")?),
+            "--schematic" => parsed.schematic = Some(value(args, &mut i, "--schematic")?),
+            "--bom" => parsed.bom = Some(PathBuf::from(value(args, &mut i, "--bom")?)),
+            "--placement" => {
+                parsed.placement = Some(PathBuf::from(value(args, &mut i, "--placement")?))
+            }
+            "--supply-snapshot" => {
+                parsed.supply_snapshot =
+                    Some(PathBuf::from(value(args, &mut i, "--supply-snapshot")?))
+            }
+            "--scope" => {
+                let scope = value(args, &mut i, "--scope")?;
+                parsed.scope = ReviewScope::parse(&scope)
+                    .ok_or_else(|| format!("Unsupported review scope: {scope}"))?;
+            }
+            "--profile" => parsed.profile = Some(value(args, &mut i, "--profile")?),
             "--format" => {
                 parsed.format = match value(args, &mut i, "--format")?.as_str() {
                     "terminal" => OutputFormat::Terminal,
@@ -249,6 +303,10 @@ fn render_terminal(report: &ratemypcb_core::Report, color: bool) -> String {
             CoverageStatus::Attention => ("!", "ATTENTION", ORANGE),
             CoverageStatus::NotRun => ("–", "NOT RUN", DIM),
             CoverageStatus::NotProvided => ("○", "NOT PROVIDED", DIM),
+            CoverageStatus::Failed => ("×", "FAILED", RED),
+            CoverageStatus::Unsupported => ("–", "UNSUPPORTED", DIM),
+            CoverageStatus::Stale => ("!", "STALE", ORANGE),
+            CoverageStatus::Unknown => ("?", "UNKNOWN", DIM),
         };
         out.push_str(&format!(
             "  {}  {}  {}\n",
@@ -359,9 +417,15 @@ fn run_review(args: &[String]) -> i32 {
         &parsed.path,
         ReviewOptions {
             board: parsed.board,
+            schematic: parsed.schematic,
+            bom: parsed.bom,
+            placement: parsed.placement,
+            supply_snapshot: parsed.supply_snapshot,
             preset: parsed.preset,
             native: parsed.native,
             tool_version: VERSION.into(),
+            scope: parsed.scope,
+            profile: parsed.profile,
         },
     ) {
         Ok(v) => v,
@@ -391,10 +455,9 @@ fn run_review(args: &[String]) -> i32 {
         }
     }
     if parsed.fail_on.is_some_and(|threshold| {
-        report
-            .findings
-            .iter()
-            .any(|finding| finding.severity >= threshold)
+        report.findings.iter().any(|finding| {
+            finding.gate_impact == GateImpact::Blocking && finding.severity >= threshold
+        })
     }) {
         1
     } else {
@@ -402,19 +465,216 @@ fn run_review(args: &[String]) -> i32 {
     }
 }
 
-fn doctor() -> i32 {
-    let native = std::process::Command::new("kicad-cli")
+fn doctor(args: &[String]) -> i32 {
+    let version = std::process::Command::new("kicad-cli")
         .arg("version")
         .output()
         .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    println!(
-        "RateMyPCB {VERSION}\nReport schema: {}\nStandalone review: ready\nKiCad source: supported\nFabrication ZIP: supported\nAltium source DRC: unsupported\nkicad-cli: {}",
-        ratemypcb_core::SCHEMA_VERSION,
-        native.as_deref().unwrap_or("not found (optional)")
-    );
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    let major = version.as_deref().and_then(|version| {
+        version
+            .split(|character: char| !character.is_ascii_digit())
+            .find(|part| !part.is_empty())?
+            .parse::<u32>()
+            .ok()
+    });
+    let supported = major.is_some_and(|major| [8, 9, 10].contains(&major));
+    let capabilities = serde_json::json!({
+        "pcbDrc": { "native": supported, "requires": "local KiCad CLI 8, 9, or 10 and an intact project" },
+        "schematicErc": { "native": supported, "requires": "local KiCad CLI 8, 9, or 10 and a bounded schematic root" },
+        "coherentProjectParity": { "native": supported, "requires": "one matching board, schematic root, and .kicad_pro basename" },
+        "limitations": {
+            "zipNativeChecks": false,
+            "altiumNativeChecks": false,
+            "genericNetlistNativeChecks": false,
+            "note": "ZIP, Altium .SchDoc, and generic netlist inputs remain inventory or explicit-field evidence only."
+        }
+    });
+    if args == ["--json"] {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "tool": "ratemypcb", "version": VERSION,
+                "reportSchemaVersion": ratemypcb_core::SCHEMA_VERSION,
+                "assessmentSchemaVersion": ASSESSMENT_SCHEMA_VERSION,
+                "kicadCli": {
+                    "detected": version.is_some(), "version": version, "major": major,
+                    "supported": supported, "supportedMajors": [8, 9, 10]
+                },
+                "capabilities": capabilities,
+                "profiles": ["eurocircuits", "aisler", "jlcpcb", "pcbway"],
+                "nexarCredentials": std::env::var_os("NEXAR_CLIENT_ID").is_some() && std::env::var_os("NEXAR_CLIENT_SECRET").is_some()
+            }))
+            .unwrap()
+        );
+    } else if args.is_empty() {
+        println!(
+            "RateMyPCB {VERSION}\nReport schema: {}\nKiCad CLI: {}\nDetected major: {} ({})\nSupported majors: 8, 9, 10\nNative PCB DRC: {}\nNative schematic ERC: {}\nCoherent-project parity: {}\nZIP native checks: disabled\nAltium .SchDoc: inventory only; no native checks\nGeneric netlists: explicit fields only; no native checks",
+            ratemypcb_core::SCHEMA_VERSION,
+            version.as_deref().unwrap_or("not detected"),
+            major.map_or_else(|| "unknown".into(), |major| major.to_string()),
+            if supported {
+                "supported"
+            } else {
+                "unsupported"
+            },
+            if supported {
+                "available"
+            } else {
+                "not available"
+            },
+            if supported {
+                "available"
+            } else {
+                "not available"
+            },
+            if supported {
+                "available for coherent projects"
+            } else {
+                "not available"
+            },
+        );
+    } else {
+        eprintln!("ratemypcb: unknown doctor option {}", args[0]);
+        return 2;
+    }
     0
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn digest_command(args: &[String]) -> i32 {
+    let Some(path) = args.first() else {
+        eprintln!("ratemypcb: digest requires a report file");
+        return 2;
+    };
+    match fs::read(path) {
+        Ok(bytes) => {
+            println!("{}", digest_bytes(&bytes));
+            0
+        }
+        Err(error) => {
+            eprintln!("ratemypcb: cannot read {path}: {error}");
+            2
+        }
+    }
+}
+
+fn profiles(args: &[String]) -> i32 {
+    let names = ["eurocircuits", "aisler", "jlcpcb", "pcbway"];
+    if args.is_empty() || args == ["list"] {
+        for name in names {
+            println!("{name}");
+        }
+        return 0;
+    }
+    if args.len() == 2 && args[0] == "show" {
+        if let Some((preset, profile)) = Preset::profile(&args[1]) {
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                "id": profile.id, "name": profile.name, "sourceUrl": profile.source_url,
+                "sourceRetrieved": profile.source_retrieved,
+                "minimumsMm": { "track": preset.track, "viaDiameter": preset.via, "drill": preset.drill, "annularRing": preset.annular }
+            })).unwrap());
+            return 0;
+        }
+    }
+    eprintln!(
+        "ratemypcb: use profiles list or profiles show <{}>",
+        names.join("|")
+    );
+    2
+}
+
+fn render_snapshot(args: &[String]) -> i32 {
+    let (mut report_path, mut assessment_path, mut output) = (None, None, None);
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].clone();
+        let target = match flag.as_str() {
+            "--report" => &mut report_path,
+            "--assessment" => &mut assessment_path,
+            "--output" => &mut output,
+            other => {
+                eprintln!("ratemypcb: unknown render option {other}");
+                return 2;
+            }
+        };
+        match value(args, &mut i, &flag) {
+            Ok(value) => *target = Some(PathBuf::from(value)),
+            Err(error) => {
+                eprintln!("ratemypcb: {error}");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+    let (Some(report_path), Some(output)) = (report_path, output) else {
+        eprintln!("ratemypcb: render requires --report FILE and --output FILE");
+        return 2;
+    };
+    let report_bytes = match read_bounded(&report_path, "Report", MAX_REPORT_BYTES) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("ratemypcb: {error}");
+            return 2;
+        }
+    };
+    let report: ratemypcb_core::Report = match serde_json::from_slice(&report_bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("ratemypcb: invalid report JSON: {error}");
+            return 2;
+        }
+    };
+    if let Err(error) = validate_report(&report) {
+        eprintln!("ratemypcb: invalid report: {error}");
+        return 2;
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs();
+    if let Err(error) = validate_report_supply_retention(&report, now) {
+        eprintln!("ratemypcb: invalid report: {error}");
+        return 2;
+    }
+    let assessment: Option<Assessment> = match assessment_path {
+        Some(path) => match read_bounded(&path, "Assessment", MAX_ASSESSMENT_BYTES)
+            .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|error| error.to_string()))
+        {
+            Ok(value) => Some(value),
+            Err(error) => {
+                eprintln!(
+                    "ratemypcb: cannot read assessment {}: {error}",
+                    path.display()
+                );
+                return 2;
+            }
+        },
+        None => None,
+    };
+    if let Some(assessment) = assessment.as_ref() {
+        if assessment.report_digest != digest_bytes(&report_bytes) {
+            eprintln!("ratemypcb: assessment reportDigest does not match the report file");
+            return 2;
+        }
+        if let Err(error) = validate_assessment(&report, assessment) {
+            eprintln!("ratemypcb: {error}");
+            return 2;
+        }
+    }
+    match viewer::snapshot(&report, assessment.as_ref())
+        .and_then(|html| fs::write(&output, html).map_err(|error| error.to_string()))
+    {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("ratemypcb: cannot write {}: {error}", output.display());
+            3
+        }
+    }
 }
 
 fn schema(args: &[String]) -> i32 {
@@ -451,7 +711,10 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
         Some("review") => run_review(&args[1..]),
-        Some("doctor") => doctor(),
+        Some("doctor") => doctor(&args[1..]),
+        Some("profiles") => profiles(&args[1..]),
+        Some("digest") => digest_command(&args[1..]),
+        Some("render") => render_snapshot(&args[1..]),
         Some("schema") => schema(&args[1..]),
         Some("version" | "--version" | "-V") => {
             println!(
@@ -485,9 +748,15 @@ mod tests {
             )),
             ReviewOptions {
                 board: None,
+                schematic: None,
+                bom: None,
+                placement: None,
+                supply_snapshot: None,
                 preset: Preset::named("standard").unwrap(),
                 native: NativeMode::Off,
                 tool_version: "test".into(),
+                scope: ReviewScope::Full,
+                profile: None,
             },
         )
         .unwrap()
@@ -520,6 +789,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_explicit_bom() {
+        let args = parse_review(&[
+            "board.kicad_pcb".into(),
+            "--bom".into(),
+            "assembly.csv".into(),
+        ])
+        .unwrap();
+        assert_eq!(args.bom.as_deref(), Some(Path::new("assembly.csv")));
+    }
+
+    #[test]
     fn plain_terminal_report_is_structured_and_escape_free() {
         let output = render_terminal(&fixture_report(), false);
         assert!(output.contains("RATEMYPCB / LOCAL MANUFACTURING PREFLIGHT"));
@@ -535,5 +815,31 @@ mod tests {
         let output = render_terminal(&fixture_report(), true);
         assert!(output.contains("\x1b[38;5;"));
         assert!(output.contains(RESET));
+    }
+
+    #[test]
+    fn render_snapshot_rejects_invalid_report_before_rendering() {
+        let mut report = fixture_report();
+        report.evidence[1].id = report.evidence[0].id.clone();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ratemypcb-render-boundary-{nonce}"));
+        fs::create_dir(&root).unwrap();
+        let report_path = root.join("report.json");
+        let output = root.join("report.html");
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert_eq!(
+            render_snapshot(&[
+                "--report".into(),
+                report_path.to_string_lossy().into_owned(),
+                "--output".into(),
+                output.to_string_lossy().into_owned(),
+            ]),
+            2
+        );
+        assert!(!output.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "2.0",
+  "tool": {
+    "name": "ratemypcb",
+    "version": "0.2.0-test"
+  },
+  "input": {
+    "path": "fixtures/sanitized-board.kicad_pcb",
+    "kind": "kicad-board",
+    "selectedBoard": "sanitized-board.kicad_pcb"
+  },
+  "artifacts": [
+    {
+      "path": "sanitized-board.kicad_pcb",
+      "kind": "board",
+      "format": "kicad",
+      "selected": true
+    }
+  ],
+  "score": {
+    "value": 8.0,
+    "raw": 80,
+    "verdict": "Evidence incomplete"
+  },
+  "observedRisk": {
+    "scoreRaw": 80,
+    "highestSeverity": null
+  },
+  "confidence": "low",
+  "evidenceConfidence": "unknown",
+  "freshness": "unknown",
+  "requiredEvidence": [
+    {
+      "checkId": "native-drc",
+      "evidenceId": "ev-2222222222222222222222222222222222222222222222222222222222222222",
+      "execution": "not_provided",
+      "result": "unknown",
+      "freshness": "unknown",
+      "confidence": "unknown"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-2222222222222222222222222222222222222222222222222222222222222222",
+      "checkId": "native-drc",
+      "kind": "coverage",
+      "provenance": {
+        "artifactId": "artifact-sanitized-board",
+        "artifactDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "producer": {
+          "kind": "tool",
+          "name": "kicad-cli",
+          "version": "not-run"
+        },
+        "location": {
+          "kind": "artifact",
+          "value": "selected-board"
+        },
+        "evidenceClass": "execution-state",
+        "confidence": "unknown",
+        "freshness": "unknown",
+        "observedAt": null
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "id": "ev-2222222222222222222222222222222222222222222222222222222222222222",
+      "label": "Native DRC",
+      "status": "not_run",
+      "evidence": "Native DRC evidence was not supplied."
+    }
+  ],
+  "findings": [],
+  "nativeDrc": {
+    "status": "not-run",
+    "tool": "kicad-cli",
+    "version": null,
+    "findingCount": 0,
+    "note": "Native DRC did not run.",
+    "violations": []
+  },
+  "profileDrc": null,
+  "reviewScope": "full",
+  "categories": [],
+  "approvalEligible": false,
+  "profile": null,
+  "bom": {
+    "status": "not-provided",
+    "lineCount": 0,
+    "lines": []
+  },
+  "stackup": null,
+  "limitations": [
+    "Native DRC evidence is unavailable."
+  ],
+  "disclaimer": "Sanitized contract fixture; not a manufacturing approval.",
+  "limitationEvidenceRefs": [
+    [
+      "ev-2222222222222222222222222222222222222222222222222222222222222222"
+    ]
+  ]
+}

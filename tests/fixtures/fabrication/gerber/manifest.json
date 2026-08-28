@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "ratemypcb-gerber-production-fixtures-v1",
+  "originPolicy": "No Ucamco, customer, provider, or ambiguous third-party bytes are included.",
+  "fixtures": [
+    {
+      "path": "simple-x2.gbr",
+      "origin": "project-authored",
+      "license": "MIT OR Apache-2.0",
+      "sha256": "d0bb714b7a5482f517db3025c90706e83854d246c1b14f59685205c618b56618",
+      "subset": "MO/FS, circular aperture, modal axes, D02/D01, retained X2 FileFunction, M02",
+      "expectedParserRecords": 9,
+      "expectedParserErrors": 0,
+      "expectedResolvedErrors": 0,
+      "expectedNormalizationWarnings": 0,
+      "expectedProductionResult": "complete-semantics"
+    },
+    {
+      "path": "modal-arcs-regions.gbr",
+      "origin": "project-authored",
+      "license": "MIT OR Apache-2.0",
+      "sha256": "145b8e3dbdc5908aa058896946ff174c7fcd9a7548001a9ced667e4112cfeb17",
+      "subset": "C/R/O/P apertures, D01/D02/D03, CW/CCW multi-quadrant arcs, closed region",
+      "expectedParserRecords": 32,
+      "expectedParserErrors": 0,
+      "expectedResolvedErrors": 0,
+      "expectedNormalizationWarnings": 0,
+      "expectedProductionResult": "complete-semantics"
+    },
+    {
+      "path": "transforms-step-repeat.gbr",
+      "origin": "project-authored",
+      "license": "MIT OR Apache-2.0",
+      "sha256": "e8a9c35e4bc010f9545c1a4472261614f840c4e89e53926511470d36d1c50564",
+      "subset": "macro variable/expression/primitive, aperture block, LM/LR/LS, bounded SR",
+      "expectedParserRecords": 24,
+      "expectedParserErrors": 0,
+      "expectedResolvedErrors": 0,
+      "expectedNormalizationWarnings": 0,
+      "expectedProductionResult": "complete-compact-semantics"
+    },
+    {
+      "path": "route-file-function.gbr",
+      "origin": "project-authored",
+      "license": "MIT OR Apache-2.0",
+      "sha256": "d70f820ca17801d7f7822adbfccbe9cd280cbe2c898d2370e0de9eefec53cb27",
+      "subset": "exact X2 NonPlated 1 4 NPTH Route compatibility record",
+      "expectedParserRecords": 9,
+      "expectedParserErrors": 1,
+      "expectedResolvedErrors": 1,
+      "expectedRouteFields": ["TF.FileFunction", "NonPlated", "1", "4", "NPTH", "Route"],
+      "expectedNormalizationWarnings": 0,
+      "expectedProductionResult": "complete-with-exact-route-evidence"
+    },
+    {
+      "path": "invalid-comment-bytes.gbr",
+      "origin": "project-authored",
+      "license": "MIT OR Apache-2.0",
+      "sha256": "88dc39dd905ed4849c0bcd8254fec8a8e7e5993f4fcff24b4550f494cd4d44a4",
+      "subset": "one CP-1252 byte in an ordinary nonsemantic G04 comment",
+      "expectedParserRecords": 8,
+      "expectedParserErrors": 0,
+      "expectedResolvedErrors": 0,
+      "expectedNormalizationWarnings": 1,
+      "expectedWarningSpans": [[39, 40]],
+      "expectedProductionResult": "complete-with-normalization-warning"
+    },
+    {
+      "path": "unsupported-semantic.gbr",
+      "origin": "project-authored",
+      "license": "MIT OR Apache-2.0",
+      "sha256": "c759ee3480c5af7cb540ab759bcbac5cd990b5074be2d438e21fb8e60587c77b",
+      "subset": "unsupported X2 FileFunction hard negative",
+      "expectedParserRecords": 5,
+      "expectedParserErrors": 1,
+      "expectedResolvedErrors": 0,
+      "expectedNormalizationWarnings": 0,
+      "expectedProductionResult": "parser-failed"
+    }
+  ],
+  "mutations": "mutations.json"
+}

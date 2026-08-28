@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ratemypcb.com/schemas/assessment-2.0.json",
+  "title": "RateMyPCB engineering assessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assessmentSchemaVersion",
+    "reportDigest",
+    "rating",
+    "disposition",
+    "verdict",
+    "verdictEvidenceRefs",
+    "rationale",
+    "categorySummaries",
+    "actions",
+    "questions"
+  ],
+  "properties": {
+    "assessmentSchemaVersion": {
+      "const": "2.0"
+    },
+    "reportDigest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rating": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Secondary rating; disposition is authoritative."
+    },
+    "disposition": {
+      "enum": [
+        "approve",
+        "revise",
+        "blocked"
+      ]
+    },
+    "verdict": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "verdictEvidenceRefs": {
+      "$ref": "#/$defs/evidenceRefs"
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "categorySummaries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "categoryId",
+          "summary",
+          "evidenceRefs"
+        ]
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "priority",
+          "title",
+          "rationale",
+          "evidenceRefs"
+        ]
+      }
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "question",
+          "evidenceRefs"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "evidenceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^ev-[0-9a-f]{64}$"
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+(export (version "E")
+  (design (source "root.kicad_sch") (date "2026-08-27"))
+  (components
+    (comp (ref "U1") (value "Synthetic Dual Unit") (footprint "Package_DIP:DIP-8") (fields (field (name "units") "A,B")))
+    (comp (ref "R1") (value "10k") (footprint "Resistor_SMD:R_0603_1608Metric"))
+    (comp (ref "R2") (value "100k") (footprint "Resistor_SMD:R_0603_1608Metric") (property (name "dnp") (value "true")))
+    (comp (ref "#PWR01") (value "PWR_FLAG")))
+  (nets (net (code "1") (name "GND") (node (ref "U1") (pin "4")) (node (ref "R1") (pin "1")))))

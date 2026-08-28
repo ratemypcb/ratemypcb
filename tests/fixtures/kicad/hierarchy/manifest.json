@@ -1,0 +1,13 @@
+{
+  "provenance": "Project-authored synthetic hierarchy fixtures; no customer or third-party design data.",
+  "cases": {
+    "missing-child": "missing-child",
+    "unresolved-variable": "unresolved-variable",
+    "resolved-variable": "completed",
+    "ambiguous-roots": "ambiguous",
+    "broken-instance-path": "broken-instance-path",
+    "duplicate-instance-path": "duplicate-instance-path",
+    "reused-child": "completed",
+    "cycle": "cycle"
+  }
+}

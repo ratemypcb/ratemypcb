@@ -1,0 +1,22 @@
+{
+  "assessmentSchemaVersion": "2.0",
+  "reportDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "rating": 9,
+  "disposition": "approve",
+  "verdict": "Release evidence is complete",
+  "verdictEvidenceRefs": [
+    "ev-0000000000000000000000000000000000000000000000000000000000000001"
+  ],
+  "rationale": "Synthetic approval control.",
+  "categorySummaries": [
+    {
+      "categoryId": "evidence-coverage",
+      "summary": "Synthetic evidence summary.",
+      "evidenceRefs": [
+        "ev-0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    }
+  ],
+  "actions": [],
+  "questions": []
+}

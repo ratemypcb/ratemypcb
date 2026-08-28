@@ -1,0 +1,34 @@
+{
+  "license": "CC0-1.0",
+  "source": "Project-authored synthetic data",
+  "fixtures": [
+    {
+      "path": "blocked-small.report.json",
+      "sha256": "33eb860a122917ae4b839195b53d7b3e6a3e37077929f9b2ad3a0a7f3c1eb68e",
+      "expectedDisposition": null,
+      "expectedEvidenceIds": 7,
+      "expectedFirstAction": null
+    },
+    {
+      "path": "blocked-small.assessment.json",
+      "sha256": "8769a42794ed7a4966d0170f457a9c0dbf30c53da5560052b912e5867941f7f0",
+      "expectedDisposition": "blocked",
+      "expectedEvidenceIds": 0,
+      "expectedFirstAction": "Run native DRC"
+    },
+    {
+      "path": "approved-small.report.json",
+      "sha256": "9fbab794db3008fbd607e674ef11ab9f81810894c78ab7e781e9c5d5e43d79d4",
+      "expectedDisposition": null,
+      "expectedEvidenceIds": 7,
+      "expectedFirstAction": null
+    },
+    {
+      "path": "approved-small.assessment.json",
+      "sha256": "6483997e9d7cccf3f41d8a5256e25c7d85a1820984c7588a98f604827ee680a6",
+      "expectedDisposition": "approve",
+      "expectedEvidenceIds": 0,
+      "expectedFirstAction": null
+    }
+  ]
+}

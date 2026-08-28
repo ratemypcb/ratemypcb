@@ -1,0 +1,9 @@
+G04 RateMyPCB project-authored exact Route compatibility fixture*
+%FSLAX46Y46*%
+%MOMM*%
+%TF.FileFunction,NonPlated,1,4,NPTH,Route*%
+%ADD10C,0.200*%
+D10*
+X000000Y000000D02*
+X100000Y000000D01*
+M02*

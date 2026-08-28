@@ -1,0 +1,24 @@
+G04 RateMyPCB project-authored macro, block, transform, and step-repeat fixture*
+%FSLAX46Y46*%
+%MOMM*%
+%AMRM*$3=$1x2*1,1,$3,0,0*%
+%ADD10RM,0.100*%
+%ADD11C,0.100*%
+%ABD20*%
+D11*
+X0Y0D03*
+X100000Y0D03*
+%AB*%
+%LMX*%
+%LR90*%
+%LS2*%
+D10*
+%SRX2Y2I1.000J1.000*%
+X500000Y500000D03*
+%SR*%
+%LMN*%
+%LR0*%
+%LS1*%
+D20*
+X2000000Y2000000D03*
+M02*

@@ -1,0 +1,8 @@
+{
+  "provenance": "Project-authored synthetic clean reconciliation control.",
+  "root": "root.kicad_sch",
+  "board": "root.kicad_pcb",
+  "bom": "root-bom.csv",
+  "placement": "root-positions.csv",
+  "netlist": "root.net"
+}

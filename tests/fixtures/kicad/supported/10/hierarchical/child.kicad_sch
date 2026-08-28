@@ -1,0 +1,12 @@
+(kicad_sch
+  (version 20250114)
+  (generator "ratemypcb-fixture")
+  (generator_version "10.0")
+  (uuid "22222222-2222-4222-8222-222222222222")
+  (paper "A4")
+  (lib_symbols)
+  (sheet_instances
+    (path "/" (page "1"))
+  )
+  (embedded_fonts no)
+)

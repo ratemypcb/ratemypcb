@@ -10,5 +10,7 @@ rust-version.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 zip.workspace = true
+gerber_parser = { git = "https://github.com/ratemypcb/gerber-parser.git", rev = "54004bc52c11699b49cd287a49135380feee86b3" }
 

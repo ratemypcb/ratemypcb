@@ -1,0 +1,106 @@
+{
+  "verdict": "ACCEPT",
+  "exact_hashes": {
+    "fabrication.rs": "65e9021643a9ef69b2168c0d91d12667e1c376db2e66c2d9067b84e403d8822e",
+    "fabrication_release.rs": "50a2d17591b3d69397ddca01304f1e53c32b969e3983e2d62db24c86113d8dd2",
+    "schema": "48c6ac1efc78aa411a51ffcd6d09938aaf378e6ff50b661907942ee02cbf5266",
+    "dependency": "54004bc52c11699b49cd287a49135380feee86b3"
+  },
+  "historical_findings": [
+    {
+      "id": "exact-parser-frame-result-accounting",
+      "status": "PASS"
+    },
+    {
+      "id": "newline-insensitive-bounded-framing",
+      "status": "PASS"
+    },
+    {
+      "id": "lm-lr-ls-aperture-only-semantics",
+      "status": "PASS"
+    },
+    {
+      "id": "recursive-block-and-step-repeat-weight-accounting",
+      "status": "PASS"
+    },
+    {
+      "id": "declared-resource-and-mutation-coverage",
+      "status": "PASS"
+    },
+    {
+      "id": "route-mutation-expectation-is-exact-and-drift-sensitive",
+      "status": "PASS"
+    },
+    {
+      "id": "reachable-allocation-consistent-419425-boundary",
+      "status": "PASS"
+    },
+    {
+      "id": "inventory-parse-once-shared-effective-deadline",
+      "status": "PASS"
+    },
+    {
+      "id": "production-read-only-authority-and-sibling-immutability",
+      "status": "PASS"
+    },
+    {
+      "id": "accepted-aperture-parameters-are-dropped-from-the-canonical-model",
+      "status": "RESOLVED",
+      "evidence": "ApertureDefinition now retains polygonVertices, polygonRotationMicrodegrees, and exact macroArguments as CanonicalRational values (fabrication.rs:976-992). Focused tests verify polygon vertices/rotation, dimensions and holes, exact 5/4 and 3/1 macro arguments, and digest sensitivity (fabrication_release.rs:2699-2776)."
+    },
+    {
+      "id": "final-aperture-validation-and-schema",
+      "status": "PASS",
+      "evidence": "Shape-specific fields, positive denominators, canonical numerator form and gcd reduction are structurally validated; aperture data participates in identity/model digest, allocation limits, and generated schema. Schema byte-equality passed."
+    },
+    {
+      "id": "trusted-finalization-performance",
+      "status": "PASS",
+      "evidence": "Public validate behavior remains unchanged. finalize_trusted performs the same limits and identity/reference structural checks once before digest and allocation finalization (fabrication.rs:1744-1756,6040-6054). HashSets are validation-only and output-neutral. serialized_len uses serde_json::to_vec(...).len(), exactly matching compact JSON byte length (fabrication.rs:2693-2718,2806-2809). Manufacturing limits remain unchanged."
+    }
+  ],
+  "p0": [],
+  "p1": [],
+  "p2": [],
+  "commands": {
+    "status": "PASS",
+    "summary": {
+      "authority_and_read_only_checks": "PASS",
+      "internal": "6 passed, 0 failed",
+      "semantics": "10 passed, 0 failed",
+      "hostile": "8 passed, 0 failed",
+      "corpus": "2 passed, 0 failed; all manifest mutations executed",
+      "official_regression": "1 passed, 0 failed",
+      "full_rust": "169 passed, 0 failed",
+      "node": "29 passed, 0 failed, 0 skipped",
+      "format": "PASS",
+      "clippy": "PASS with -D warnings",
+      "schema_byte_equality": "PASS",
+      "summary_validation": "PASS",
+      "diff_check": "PASS",
+      "index_clean": "PASS"
+    }
+  },
+  "official_corpus_totals": {
+    "files": 32,
+    "parser_results": 102909,
+    "parser_successes": 102908,
+    "parser_errors": 1,
+    "resolved_routes": 1,
+    "unaccounted_errors": 0,
+    "normalization_warnings": 32,
+    "features": 83570,
+    "lines": 54578,
+    "arcs": 78,
+    "regions": 23,
+    "flashes": 28891,
+    "macros": 6,
+    "direct_verified_zip_buffers": true
+  },
+  "residual_risks": [
+    "The advertised 2026 Ucamco ZIP remains unavailable and is not claimed.",
+    "Dependency authority and remote protection/signature evidence are point-in-time observations.",
+    "The broad pre-existing modified/untracked checkout baseline remains, with verifier evidence showing no review-time source mutation."
+  ],
+  "next_action": "Accept RateMyPCB Plan 05-03 and proceed with the planned completion/update workflow."
+}

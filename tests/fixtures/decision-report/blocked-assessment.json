@@ -1,0 +1,38 @@
+{
+  "assessmentSchemaVersion": "2.0",
+  "reportDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "rating": 4,
+  "disposition": "blocked",
+  "verdict": "Run native DRC before release",
+  "verdictEvidenceRefs": [
+    "ev-2222222222222222222222222222222222222222222222222222222222222222"
+  ],
+  "rationale": "Required native DRC evidence is unavailable, so approval remains closed.",
+  "categorySummaries": [
+    {
+      "categoryId": "evidence-coverage",
+      "summary": "Native DRC completeness and freshness are unknown.",
+      "evidenceRefs": [
+        "ev-2222222222222222222222222222222222222222222222222222222222222222"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "priority": 1,
+      "title": "Run native DRC",
+      "rationale": "Capture current DRC evidence before making a release decision.",
+      "evidenceRefs": [
+        "ev-2222222222222222222222222222222222222222222222222222222222222222"
+      ]
+    }
+  ],
+  "questions": [
+    {
+      "question": "Which supported KiCad version should produce the DRC evidence?",
+      "evidenceRefs": [
+        "ev-2222222222222222222222222222222222222222222222222222222222222222"
+      ]
+    }
+  ]
+}

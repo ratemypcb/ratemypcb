@@ -1,0 +1,1 @@
+(kicad_sch (version 20250114) (uuid "aaaaaaaa-0000-4000-8000-000000000001") (symbol (uuid "bbbbbbbb-0000-4000-8000-000000000001") (property "Reference" "R1") (property "Value" "10k") (property "Footprint" "Resistor:R_0603") (unit 1) (in_bom yes) (on_board yes) (dnp no) (pin "1" (net "GND"))))

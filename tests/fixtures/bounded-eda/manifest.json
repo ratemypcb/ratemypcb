@@ -1,0 +1,9 @@
+{
+  "provenance": "Project-authored synthetic capability fixtures.",
+  "expectations": {
+    "minimal.SchDoc": "inventory_only",
+    "components-nets.net": "explicit_fields_only",
+    "components-nets.xml": "explicit_fields_only",
+    "unknown.net": "unsupported"
+  }
+}

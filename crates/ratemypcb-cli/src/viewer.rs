@@ -1,4 +1,4 @@
-use ratemypcb_core::Report;
+use ratemypcb_core::{Assessment, Report};
 use serde_json::{Value, json};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -12,8 +12,9 @@ const INDEX: &[u8] = include_bytes!("../assets/local-viewer.html");
 const STYLE: &[u8] = include_bytes!("../assets/local-viewer.css");
 const APP: &[u8] = include_bytes!("../assets/local-viewer.js");
 const BOARD_VIEW: &[u8] = include_bytes!("../assets/board-view.js");
+const REPORT_VIEW_MODEL: &[u8] = include_bytes!("../assets/report-view-model.mjs");
 const MAX_BOARD_BYTES: usize = 64 * 1024 * 1024;
-const MAX_GERBER_BYTES: usize = 4 * 1024 * 1024;
+const MAX_GERBER_BYTES: usize = 8 * 1024 * 1024;
 const MAX_GERBER_TOTAL_BYTES: usize = 20 * 1024 * 1024;
 const MAX_GERBERS: usize = 20;
 
@@ -70,7 +71,11 @@ fn push_gerber(
     }
 }
 
-fn payload_from_zip(path: &Path, report: &Report) -> Result<Value, String> {
+fn payload_from_zip(
+    path: &Path,
+    report: &Report,
+    assessment: Option<&Assessment>,
+) -> Result<Value, String> {
     let file =
         File::open(path).map_err(|error| format!("Cannot open {}: {error}", path.display()))?;
     let mut archive =
@@ -97,10 +102,16 @@ fn payload_from_zip(path: &Path, report: &Report) -> Result<Value, String> {
             .and_then(|entry| read_limited(entry, MAX_GERBER_BYTES, name));
         push_gerber(&mut gerbers, &mut failures, &mut total, name, source);
     }
-    Ok(json!({ "report": report, "board": board, "gerbers": gerbers, "failures": failures }))
+    Ok(
+        json!({ "report": report, "assessment": assessment, "board": board, "gerbers": gerbers, "failures": failures }),
+    )
 }
 
-fn payload_from_filesystem(path: &Path, report: &Report) -> Result<Value, String> {
+fn payload_from_filesystem(
+    path: &Path,
+    report: &Report,
+    assessment: Option<&Assessment>,
+) -> Result<Value, String> {
     let root = if path.is_dir() {
         path
     } else {
@@ -134,18 +145,24 @@ fn payload_from_filesystem(path: &Path, report: &Report) -> Result<Value, String
             .and_then(|file| read_limited(file, MAX_GERBER_BYTES, name));
         push_gerber(&mut gerbers, &mut failures, &mut total, name, source);
     }
-    Ok(json!({ "report": report, "board": board, "gerbers": gerbers, "failures": failures }))
+    Ok(
+        json!({ "report": report, "assessment": assessment, "board": board, "gerbers": gerbers, "failures": failures }),
+    )
 }
 
-fn viewer_payload(path: &Path, report: &Report) -> Result<Vec<u8>, String> {
+fn viewer_payload(
+    path: &Path,
+    report: &Report,
+    assessment: Option<&Assessment>,
+) -> Result<Vec<u8>, String> {
     let value = if path
         .extension()
         .and_then(|value| value.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
     {
-        payload_from_zip(path, report)?
+        payload_from_zip(path, report, assessment)?
     } else {
-        payload_from_filesystem(path, report)?
+        payload_from_filesystem(path, report, assessment)?
     };
     serde_json::to_vec(&value)
         .map_err(|error| format!("Cannot encode local viewer session: {error}"))
@@ -201,6 +218,9 @@ fn response(
 
 fn handle(mut stream: TcpStream, port: u16, token: &str, payload: &[u8]) -> Result<bool, String> {
     stream
+        .set_nonblocking(false)
+        .map_err(|error| error.to_string())?;
+    stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|error| error.to_string())?;
     let mut request = [0_u8; 16 * 1024];
@@ -236,6 +256,12 @@ fn handle(mut stream: TcpStream, port: u16, token: &str, payload: &[u8]) -> Resu
             BOARD_VIEW,
             false,
         ),
+        Some("/report-view-model.mjs") => (
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            REPORT_VIEW_MODEL,
+            false,
+        ),
         Some("/session") => {
             let supplied = lines.find_map(|line| {
                 let (name, value) = line.split_once(':')?;
@@ -265,7 +291,7 @@ fn handle(mut stream: TcpStream, port: u16, token: &str, payload: &[u8]) -> Resu
 }
 
 pub fn open(path: &Path, report: &Report) -> Result<(), String> {
-    let payload = viewer_payload(path, report)?;
+    let payload = viewer_payload(path, report, None)?;
     let token = capability_token()?;
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .map_err(|error| format!("Cannot bind the loopback viewer: {error}"))?;
@@ -296,6 +322,72 @@ pub fn open(path: &Path, report: &Report) -> Result<(), String> {
     Err("Timed out waiting for the browser to load the local review.".into())
 }
 
+pub fn snapshot(report: &Report, assessment: Option<&Assessment>) -> Result<String, String> {
+    // A saved report is untrusted metadata, not authority to reopen local design files.
+    let payload = serde_json::to_vec(&json!({
+        "report": report,
+        "assessment": assessment,
+        "board": null,
+        "gerbers": [],
+        "failures": []
+    }))
+    .expect("serializing a report cannot fail");
+    let payload = String::from_utf8(payload)
+        .map_err(|_| "Cannot encode snapshot payload.".to_string())?
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026");
+    let html = std::str::from_utf8(INDEX).map_err(|error| error.to_string())?;
+    let title = assessment
+        .map(|assessment| {
+            format!(
+                "{} — {}",
+                assessment.disposition.to_uppercase(),
+                assessment.verdict
+            )
+        })
+        .unwrap_or_else(|| "UNASSESSED — RateMyPCB manufacturing release review".into())
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    let html = html
+        .replace(
+            "<title>RateMyPCB manufacturing release review</title>",
+            &format!("<title>{title}</title>"),
+        )
+        .replace(
+            "    <link rel=\"stylesheet\" href=\"/local-viewer.css\" />",
+            &format!("    <style>{}</style>", String::from_utf8_lossy(STYLE)),
+        )
+        .replace(
+            "    <script type=\"module\" src=\"/local-viewer.js\"></script>",
+            "__RATEMYPCB_SCRIPTS__",
+        )
+        .replace(
+            "LOCAL SESSION · NOTHING UPLOADED",
+            "OFFLINE SNAPSHOT · NOTHING UPLOADED",
+        )
+        .replace(
+            "This page and its PCB data were served by the RateMyPCB process on your computer.",
+            "This self-contained report keeps its PCB data in this HTML file.",
+        );
+    let board = String::from_utf8_lossy(BOARD_VIEW).replace("export ", "");
+    let model = String::from_utf8_lossy(REPORT_VIEW_MODEL).replace("export ", "");
+    let app = String::from_utf8_lossy(APP)
+        .replace(
+            "import {\n  combineGerbers,\n  createBoardViewer,\n  parseGerber,\n  parseKiCadView,\n} from \"/board-view.js\";\n",
+            "",
+        )
+        .replace(
+            "import {\n  filterAndSortBomLines,\n  normalizedStatus,\n  schematicEvidenceRefs,\n  supplyDetailGroups,\n} from \"/report-view-model.mjs\";\n",
+            "",
+        );
+    Ok(html.replace(
+        "__RATEMYPCB_SCRIPTS__",
+        &format!("  <script>globalThis.RATEMYPCB_PAYLOAD={payload};</script>\n  <script>{board}\n{model}\n{app}</script>"),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +407,54 @@ mod tests {
         let app = std::str::from_utf8(APP).unwrap();
         assert!(!app.contains("/api/"));
         assert!(app.contains("fetch(\"/session\""));
+        assert!(app.contains("function evidenceAnchor(publicId)"));
+        assert!(app.contains("link.href = `#${evidenceAnchor(publicId)}`"));
+        assert!(app.contains("node.id = evidenceAnchor(record.id)"));
+        assert!(app.contains("function renderBom(report)"));
+        assert!(app.contains("let bomVisible = 100"));
+        assert!(app.contains("let evidenceVisible = 100"));
+        assert!(app.contains("navigator.clipboard?.writeText"));
+        assert!(app.contains("event.key === \"Home\""));
+        assert!(app.contains("event.key === \"End\""));
+        let model = std::str::from_utf8(REPORT_VIEW_MODEL).unwrap();
+        assert!(model.contains("line.releaseImpact.status"));
+        assert!(model.contains("function filterAndSortBomLines"));
+        for policy in [
+            "checksRating",
+            "categoryRating",
+            "bomLineRating",
+            "combinedBomJudgment",
+            "No findings",
+        ] {
+            assert!(
+                !app.contains(policy),
+                "viewer must not own policy: {policy}"
+            );
+        }
+        let html = std::str::from_utf8(INDEX).unwrap();
+        let decision = html
+            .find("data-report-landmark=\"release-decision\"")
+            .unwrap();
+        let completeness = html.find("data-report-landmark=\"completeness\"").unwrap();
+        let scores = html.find("data-report-landmark=\"scores\"").unwrap();
+        assert!(decision < completeness && completeness < scores);
+        assert_eq!(
+            html.matches("data-report-landmark=\"release-decision\"")
+                .count(),
+            1
+        );
+        assert!(html.contains("role=\"tablist\""));
+        assert!(html.contains("id=\"bom-panel\""));
+        assert!(html.contains("id=\"bom-rows\""));
+        assert!(html.contains("Sourceability"));
+        assert!(html.contains("Lifecycle"));
+        assert!(html.contains("Alternatives"));
+        assert!(html.contains("Release impact"));
+        assert!(html.contains("<caption>Bill of materials release-impact risk matrix</caption>"));
+        assert!(html.contains("aria-describedby=\"viewer-fallback\""));
+        let style = std::str::from_utf8(STYLE).unwrap();
+        assert!(style.contains(":focus-visible"));
+        assert!(style.contains("@media print"));
     }
 
     #[test]
@@ -341,7 +481,7 @@ mod tests {
         archive.finish().unwrap();
 
         let report: Report = serde_json::from_value(json!({
-            "schemaVersion": "1.0",
+            "schemaVersion": "2.0",
             "tool": { "name": "ratemypcb", "version": "test" },
             "input": { "path": path.display().to_string(), "kind": "fabrication-zip", "selectedBoard": "main.kicad_pcb" },
             "artifacts": [
@@ -349,16 +489,28 @@ mod tests {
                 { "path": "main-F_Cu.gbr", "kind": "gerber", "format": "rs-274x", "selected": false }
             ],
             "score": { "value": 10.0, "raw": 100, "verdict": "test" },
+            "observedRisk": { "scoreRaw": 100, "highestSeverity": null },
             "confidence": "medium",
+            "evidenceConfidence": "unknown",
+            "freshness": "unknown",
+            "requiredEvidence": [],
+            "evidence": [],
             "coverage": [],
             "findings": [],
-            "nativeDrc": { "status": "not-run", "tool": "kicad-cli", "version": null, "findingCount": 0, "note": "test" },
+            "nativeDrc": { "status": "not-run", "tool": "kicad-cli", "version": null, "findingCount": 0, "note": "test", "violations": [] },
+            "profileDrc": null,
+            "reviewScope": "full",
+            "categories": [],
+            "approvalEligible": false,
+            "profile": null,
+            "bom": { "status": "not-provided", "lineCount": 0, "lines": [] },
+            "stackup": null,
             "limitations": [],
             "disclaimer": "test"
         }))
         .unwrap();
         let payload: Value =
-            serde_json::from_slice(&viewer_payload(&path, &report).unwrap()).unwrap();
+            serde_json::from_slice(&viewer_payload(&path, &report, None).unwrap()).unwrap();
         assert_eq!(payload["board"]["path"], "main.kicad_pcb");
         assert!(
             payload["board"]["source"]
@@ -367,6 +519,15 @@ mod tests {
                 .starts_with("(kicad_pcb")
         );
         assert_eq!(payload["gerbers"][0]["path"], "main-F_Cu.gbr");
+        let snapshot = snapshot(&report, None).unwrap();
+        assert!(!snapshot.contains("(kicad_pcb (version 20240108))"));
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn synthetic_large_layer_fits_the_viewer_file_limit() {
+        let layer = vec![b'X'; 4 * 1024 * 1024 + 1];
+        assert!(layer.len() > 4 * 1024 * 1024);
+        assert!(read_limited(std::io::Cursor::new(layer), MAX_GERBER_BYTES, "board.gbo").is_ok());
     }
 }

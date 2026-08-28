@@ -1,0 +1,66 @@
+{
+  "attestation": "documentation/schema-attested; no KiCad 8 binary was executed in this checkout",
+  "commands": {
+    "drc": [
+      "kicad-cli",
+      "pcb",
+      "drc",
+      "--format",
+      "json",
+      "--severity-all",
+      "--exit-code-violations",
+      "--output",
+      "drc.json",
+      "root.kicad_pcb"
+    ],
+    "erc": [
+      "kicad-cli",
+      "sch",
+      "erc",
+      "--format",
+      "json",
+      "--severity-all",
+      "--exit-code-violations",
+      "--output",
+      "erc.json",
+      "root.kicad_sch"
+    ]
+  },
+  "designFeatures": [
+    "reused-child-sheet",
+    "multi-unit-symbol-export",
+    "power-flag-export",
+    "fitted-and-dnp-export",
+    "bom",
+    "placement",
+    "native-netlist",
+    "erc",
+    "drc"
+  ],
+  "expectedExit": {
+    "drc": "0-or-5-per-documented-report",
+    "erc": "0-or-5-per-documented-report"
+  },
+  "fixture": "ratemypcb-synthetic-hierarchical-v1",
+  "locallyExecuted": false,
+  "major": 8,
+  "producerVersion": "8.0.9",
+  "redistribution": "Project-authored synthetic design; no customer, provider, credential, or restricted data.",
+  "sanitization": "Stable synthetic UUIDs and generic component/export data; timestamps retained only as fixture capture metadata.",
+  "schemas": {
+    "drc": "https://gitlab.com/kicad/code/kicad/-/raw/8.0/resources/schemas/drc.v1.json",
+    "erc": "https://gitlab.com/kicad/code/kicad/-/raw/8.0/resources/schemas/erc.v1.json"
+  },
+  "sha256": {
+    "bom.csv": "6bf0d6a0106e81c363597ff16a9247182a623ec5a101ecf86bad6ce33cc4201d",
+    "child.kicad_sch": "bd9188a295c35c15132a7692ca7b71f9d4434c8ba6665fecceac65f3d1a3cad3",
+    "drc.json": "4a53d8776801b9d43616adeade2772d0b9601ac3a3a5836f56cc50740a71bb35",
+    "erc.json": "b55f564534550563928ee55217949f7a3a6c3bc0d09f63c2458c3fb668143e01",
+    "netlist.net": "8fe5d743def96205b2889359e1f4544d001e562e0d1e98dc30dfda6c59417703",
+    "positions.csv": "7a9ecc36663bac956bcda04000d95b2d3c7a9a9bc6abb98f18790480a6af1d2d",
+    "root.kicad_pcb": "f458f4c09141c0e2572aad3f5682e34b020a05495559c580e8fb9f6f76b4134a",
+    "root.kicad_pro": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "root.kicad_sch": "0a35e2cf2055aa0e8caf044d446faa905aa3346092d10c6b0c68668e04f87c5e",
+    "version.txt": "d9422561e4e28fcd7f510a5a002b3f396659ced70061434dfedb5d71aff7b12e"
+  }
+}

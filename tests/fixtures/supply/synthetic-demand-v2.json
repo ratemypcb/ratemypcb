@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "2.0",
+  "generatedAtUnix": 1,
+  "expiresAtUnix": 86401,
+  "legalExpiresAtUnix": 86401,
+  "demand": {
+    "buildQuantity": 10,
+    "attritionBps": 1000,
+    "spares": 1,
+    "region": "US",
+    "currency": "USD",
+    "packaging": "reel"
+  },
+  "terms": [
+    {"provider":"mouser","decision":"synthetic-test-data","query":"forbidden","memoryRetention":"permitted","diskRetention":"permitted","htmlEmbedding":"permitted","sharing":"permitted"},
+    {"provider":"digikey","decision":"synthetic-test-data","query":"forbidden","memoryRetention":"unknown","diskRetention":"forbidden","htmlEmbedding":"forbidden","sharing":"forbidden"},
+    {"provider":"lcsc","decision":"not-approved","query":"forbidden","memoryRetention":"unknown","diskRetention":"forbidden","htmlEmbedding":"forbidden","sharing":"forbidden"}
+  ],
+  "parts": [{
+    "identity": {"manufacturer":"Acme Semiconductor","mpn":"ABC-123"},
+    "matchStatus": "exact",
+    "lifecycleAssertions": [
+      {"provider":"mouser","raw":"Active","normalized":"active","observedAtUnix":1,"provenance":{"source":"project-authored synthetic fixture","artifactDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","location":"lifecycle/0","synthetic":true}}
+    ],
+    "providerChecks": [
+      {"provider":"mouser","status":"checked","retrievedAtUnix":1,"upstreamAtUnix":1,"provenance":{"source":"project-authored synthetic fixture","artifactDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","location":"checks/mouser","synthetic":true}},
+      {"provider":"digikey","status":"error","errorKind":"quota","retrievedAtUnix":1,"upstreamAtUnix":null,"provenance":{"source":"project-authored synthetic fixture","artifactDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","location":"checks/digikey","synthetic":true}},
+      {"provider":"lcsc","status":"not-checked","errorKind":null,"retrievedAtUnix":null,"upstreamAtUnix":null,"provenance":null}
+    ],
+    "offers": [{
+      "observationId":"synthetic-offer-1",
+      "provider":"mouser",
+      "seller":"Synthetic Mouser",
+      "sellerOriginal":"Synthetic Mouser",
+      "authorization":"authorized",
+      "sku":"SYN-ABC-123",
+      "packaging":"reel",
+      "region":"US",
+      "stockStatus":"in-stock",
+      "stock":100,
+      "moq":25,
+      "orderMultiple":10,
+      "factoryLeadTimeDays":14,
+      "priceBreaks":[
+        {"quantity":1,"unitPrice":"1.0000","currency":"USD"},
+        {"quantity":25,"unitPrice":"0.7500","currency":"USD"}
+      ],
+      "retrievedAtUnix":1,
+      "upstreamAtUnix":1,
+      "legalExpiresAtUnix":86401,
+      "provenance":{"source":"project-authored synthetic fixture","artifactDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","location":"offers/0","synthetic":true}
+    }],
+    "alternateCandidates":[{"identity":{"manufacturer":"Acme Semiconductor","mpn":"ABC-124"},"source":"mouser","evidenceId":"synthetic-alternate-1","provenance":{"source":"project-authored synthetic fixture","artifactDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","location":"alternates/0","synthetic":true}}],
+    "approvedAlternates":[]
+  }]
+}

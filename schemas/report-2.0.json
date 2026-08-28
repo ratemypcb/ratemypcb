@@ -1,0 +1,3703 @@
+{
+  "$defs": {
+    "alternateCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "evidenceId": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "manufacturer": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "mpn": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "provenance": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "manufacturer",
+        "mpn",
+        "source",
+        "evidenceId",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "apertureBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "featureIds": {
+          "items": {
+            "$ref": "#/$defs/featureId"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^block-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "featureIds",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "apertureDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "dimensions": {
+          "items": {
+            "$ref": "#/$defs/positivePicometres"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "id": {
+          "pattern": "^aperture-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "macroArguments": {
+          "items": {
+            "$ref": "#/$defs/canonicalRational"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "macroId": {
+          "pattern": "^macro-v1-[0-9a-f]{64}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "polygonRotationMicrodegrees": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "polygonVertices": {
+          "maximum": 12,
+          "minimum": 3,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "shape": {
+          "enum": [
+            "circle",
+            "rectangle",
+            "obround",
+            "polygon",
+            "macro",
+            "block",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "shape",
+        "dimensions",
+        "polygonVertices",
+        "polygonRotationMicrodegrees",
+        "macroId",
+        "macroArguments",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "approvedAlternate": {
+      "additionalProperties": false,
+      "properties": {
+        "approvedAtUnix": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "authority": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "authorityKind": {
+          "enum": [
+            "engineering",
+            "user"
+          ]
+        },
+        "evidenceRefs": {
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "manufacturer": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "mpn": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "manufacturer",
+        "mpn",
+        "authorityKind",
+        "authority",
+        "approvedAtUnix",
+        "evidenceRefs"
+      ],
+      "type": "object"
+    },
+    "assemblyEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "maskLayerIds": {
+          "items": {
+            "$ref": "#/$defs/layerId"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "pasteLayerIds": {
+          "items": {
+            "$ref": "#/$defs/layerId"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "placements": {
+          "items": {
+            "$ref": "#/$defs/assemblyPlacement"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        }
+      },
+      "required": [
+        "placements",
+        "maskLayerIds",
+        "pasteLayerIds"
+      ],
+      "type": "object"
+    },
+    "assemblyPlacement": {
+      "additionalProperties": false,
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "reference": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "rotationMicrodegrees": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": "integer"
+        },
+        "side": {
+          "enum": [
+            "top",
+            "bottom",
+            "inner",
+            "both",
+            "not_applicable",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "reference",
+        "side",
+        "position",
+        "rotationMicrodegrees",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "authority": {
+      "enum": [
+        "native_source",
+        "explicit",
+        "x2",
+        "file_content",
+        "filename_inference",
+        "unknown"
+      ]
+    },
+    "boardProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "contourFeatureIds": {
+          "items": {
+            "$ref": "#/$defs/featureId"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "cutoutFeatureIds": {
+          "items": {
+            "$ref": "#/$defs/featureId"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "extents": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/extent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/manufacturingProvenance"
+          },
+          "maxItems": 419425,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "contourFeatureIds",
+        "cutoutFeatureIds",
+        "extents",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "bomJudgment": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "attention",
+            "not-checked"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "bomLine": {
+      "additionalProperties": false,
+      "properties": {
+        "alternateCandidates": {
+          "items": {
+            "$ref": "#/$defs/alternateCandidate"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "alternateMpns": {
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "alternatives": {
+          "$ref": "#/$defs/bomJudgment"
+        },
+        "approvedAlternates": {
+          "items": {
+            "$ref": "#/$defs/approvedAlternate"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "distributors": {
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "footprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identity": {
+          "$ref": "#/$defs/bomJudgment"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/bomJudgment"
+        },
+        "lifecycleAssertions": {
+          "items": {
+            "$ref": "#/$defs/lifecycleReview"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "lifecycleConflict": {
+          "type": "boolean"
+        },
+        "lineNumber": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "manufacturer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "moq": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mpn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offers": {
+          "items": {
+            "$ref": "#/$defs/supplyOffer"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "priceEstimate": {
+          "type": "boolean"
+        },
+        "pricing": {
+          "$ref": "#/$defs/bomJudgment"
+        },
+        "providerChecks": {
+          "items": {
+            "$ref": "#/$defs/providerCheck"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
+        "quantity": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "references": {
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "releaseImpact": {
+          "$ref": "#/$defs/bomJudgment"
+        },
+        "requiredQuantity": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sourceability": {
+          "$ref": "#/$defs/bomJudgment"
+        },
+        "stock": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "unitPrice": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "unitPriceDecimal": {
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "lineNumber",
+        "references",
+        "quantity",
+        "value",
+        "footprint",
+        "manufacturer",
+        "mpn",
+        "identity",
+        "lifecycle",
+        "sourceability",
+        "pricing",
+        "alternatives",
+        "releaseImpact",
+        "stock",
+        "moq",
+        "unitPrice",
+        "unitPriceDecimal",
+        "currency",
+        "priceEstimate",
+        "distributors",
+        "alternateMpns",
+        "requiredQuantity",
+        "providerChecks",
+        "offers",
+        "lifecycleConflict",
+        "lifecycleAssertions",
+        "alternateCandidates",
+        "approvedAlternates"
+      ],
+      "type": "object"
+    },
+    "bomReport": {
+      "additionalProperties": false,
+      "properties": {
+        "lineCount": {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/bomLine"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "not-provided",
+            "pass",
+            "attention"
+          ]
+        },
+        "supplyLegalExpiresAtUnix": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "lineCount",
+        "lines",
+        "supplyLegalExpiresAtUnix"
+      ],
+      "type": "object"
+    },
+    "canonicalArc": {
+      "additionalProperties": false,
+      "properties": {
+        "center": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "direction": {
+          "enum": [
+            "clockwise",
+            "counter_clockwise"
+          ]
+        },
+        "end": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "quadrant": {
+          "enum": [
+            "single",
+            "multi",
+            "unknown"
+          ]
+        },
+        "sourceResolution": {
+          "$ref": "#/$defs/positivePicometres"
+        },
+        "start": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "width": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positivePicometres"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "center",
+        "direction",
+        "quadrant",
+        "width",
+        "sourceResolution"
+      ],
+      "type": "object"
+    },
+    "canonicalContour": {
+      "additionalProperties": false,
+      "properties": {
+        "closed": {
+          "type": "boolean"
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/contourSegment"
+          },
+          "maxItems": 1000000,
+          "type": "array"
+        }
+      },
+      "required": [
+        "segments",
+        "closed"
+      ],
+      "type": "object"
+    },
+    "canonicalFlash": {
+      "additionalProperties": false,
+      "properties": {
+        "apertureId": {
+          "pattern": "^aperture-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/canonicalPoint"
+        }
+      },
+      "required": [
+        "position",
+        "apertureId"
+      ],
+      "type": "object"
+    },
+    "canonicalLine": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "start": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "width": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positivePicometres"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "width"
+      ],
+      "type": "object"
+    },
+    "canonicalPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/picometres"
+        },
+        "y": {
+          "$ref": "#/$defs/picometres"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "canonicalRational": {
+      "additionalProperties": false,
+      "properties": {
+        "denominator": {
+          "maximum": 1000000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "numerator": {
+          "maxLength": 40,
+          "pattern": "^(0|-?[1-9][0-9]*)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator"
+      ],
+      "type": "object"
+    },
+    "canonicalRegion": {
+      "additionalProperties": false,
+      "properties": {
+        "contours": {
+          "items": {
+            "$ref": "#/$defs/canonicalContour"
+          },
+          "maxItems": 1000000,
+          "type": "array"
+        }
+      },
+      "required": [
+        "contours"
+      ],
+      "type": "object"
+    },
+    "capabilityId": {
+      "enum": [
+        "product_identity",
+        "document_syntax",
+        "units_and_format",
+        "layer_roles",
+        "layer_order",
+        "geometry_points",
+        "geometry_lines",
+        "geometry_arcs",
+        "geometry_regions",
+        "geometry_flashes",
+        "geometry_expanded",
+        "polarity",
+        "transforms",
+        "repetition",
+        "apertures",
+        "macros",
+        "profile",
+        "extents",
+        "drills",
+        "routes",
+        "slots",
+        "tools",
+        "plating",
+        "layer_spans",
+        "x2_file_attributes",
+        "x2_aperture_attributes",
+        "x2_object_attributes",
+        "connectivity",
+        "components",
+        "pins",
+        "assembly",
+        "construction",
+        "constraints",
+        "native_kicad_facts",
+        "package_completeness",
+        "package_reconciliation",
+        "legacy-filename-screening",
+        "legacy-token-screening"
+      ]
+    },
+    "capabilityLedger": {
+      "additionalProperties": false,
+      "properties": {
+        "records": {
+          "items": {
+            "$ref": "#/$defs/capabilityRecord"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        }
+      },
+      "required": [
+        "records"
+      ],
+      "type": "object"
+    },
+    "capabilityRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "detail": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "documentIds": {
+          "items": {
+            "$ref": "#/$defs/documentId"
+          },
+          "maxItems": 256,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/manufacturingProvenance"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "complete",
+            "partial",
+            "not_provided",
+            "unsupported",
+            "failed",
+            "stale",
+            "omitted"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "authority",
+        "documentIds",
+        "provenance",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "conflictFact": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "canonicalValue": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        }
+      },
+      "required": [
+        "canonicalValue",
+        "authority",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "constructionEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "finish": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "layers": {
+          "items": {
+            "$ref": "#/$defs/constructionLayer"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "totalThickness": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positivePicometres"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "layers",
+        "totalThickness",
+        "finish"
+      ],
+      "type": "object"
+    },
+    "constructionLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "layerId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/layerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "material": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "thickness": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positivePicometres"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "layerId",
+        "material",
+        "thickness",
+        "authority",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "contourSegment": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "line"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalLine"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "arc"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalArc"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "documentId": {
+      "pattern": "^document-v1-[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "documentMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "lexicalTokens": {
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxApertureNesting": {
+          "maximum": 16,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxLineBytes": {
+          "maximum": 16384,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxNesting": {
+          "maximum": 32,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxNumericBytes": {
+          "maximum": 64,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxTextBytes": {
+          "maximum": 4096,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "metadataBytes": {
+          "maximum": 65536,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rawBytes": {
+          "maximum": 4194304,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records": {
+          "maximum": 400000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rawBytes",
+        "records",
+        "lexicalTokens",
+        "metadataBytes",
+        "maxLineBytes",
+        "maxTextBytes",
+        "maxNumericBytes",
+        "maxNesting",
+        "maxApertureNesting"
+      ],
+      "type": "object"
+    },
+    "drillFeature": {
+      "additionalProperties": false,
+      "properties": {
+        "diameter": {
+          "$ref": "#/$defs/positivePicometres"
+        },
+        "position": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "toolId": {
+          "$ref": "#/$defs/toolId"
+        }
+      },
+      "required": [
+        "position",
+        "diameter",
+        "toolId"
+      ],
+      "type": "object"
+    },
+    "evidenceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "checkId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^ev-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "finding",
+            "coverage"
+          ]
+        },
+        "provenance": {
+          "required": [
+            "artifactId",
+            "artifactDigest",
+            "producer",
+            "location",
+            "evidenceClass",
+            "confidence",
+            "freshness",
+            "observedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "checkId",
+        "kind",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "extent": {
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "min": {
+          "$ref": "#/$defs/canonicalPoint"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
+    "fabricationReview": {
+      "additionalProperties": false,
+      "properties": {
+        "apertures": {
+          "items": {
+            "$ref": "#/$defs/apertureDefinition"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "assembly": {
+          "$ref": "#/$defs/assemblyEvidence"
+        },
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/apertureBlock"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/capabilityLedger"
+        },
+        "conflicts": {
+          "items": {
+            "$ref": "#/$defs/manufacturingConflict"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "connectivity": {
+          "items": {
+            "$ref": "#/$defs/objectSemantics"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "$ref": "#/$defs/manufacturingConstraint"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "construction": {
+          "$ref": "#/$defs/constructionEvidence"
+        },
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/manufacturingDocument"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "estimatedAllocationBytes": {
+          "maximum": 268435456,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "features": {
+          "items": {
+            "$ref": "#/$defs/manufacturingFeature"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "inputOutcomes": {
+          "items": {
+            "$ref": "#/$defs/manufacturingInputOutcome"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
+        "layers": {
+          "items": {
+            "$ref": "#/$defs/manufacturingLayer"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "limits": {
+          "$ref": "#/$defs/manufacturingLimits"
+        },
+        "macros": {
+          "items": {
+            "$ref": "#/$defs/macroDefinition"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "modelDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "omissions": {
+          "items": {
+            "$ref": "#/$defs/manufacturingOmission"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "packageId": {
+          "pattern": "^package-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "product": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/productIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/boardProfile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repetitions": {
+          "items": {
+            "$ref": "#/$defs/stepRepeat"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "not_provided",
+            "partial",
+            "complete",
+            "failed"
+          ]
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/manufacturingTool"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/$defs/manufacturingWarning"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        }
+      },
+      "required": [
+        "status",
+        "packageId",
+        "modelDigest",
+        "inputOutcomes",
+        "product",
+        "documents",
+        "layers",
+        "tools",
+        "apertures",
+        "macros",
+        "blocks",
+        "repetitions",
+        "features",
+        "profile",
+        "connectivity",
+        "assembly",
+        "construction",
+        "constraints",
+        "capabilities",
+        "omissions",
+        "conflicts",
+        "warnings",
+        "limits",
+        "estimatedAllocationBytes"
+      ],
+      "type": "object"
+    },
+    "featureId": {
+      "pattern": "^feature-v1-[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "finding": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "evidence": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "gateImpact": {
+          "default": "blocking",
+          "description": "Authoritative release-gate disposition. Phase 4 schematic families are evidence_only. Existing findings default to blocking when importing older JSON.",
+          "enum": [
+            "blocking",
+            "evidence_only"
+          ]
+        },
+        "id": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "location": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "recommendation": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "source": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "severity",
+        "category",
+        "title",
+        "evidence",
+        "recommendation",
+        "location",
+        "source",
+        "gateImpact"
+      ],
+      "type": "object"
+    },
+    "geometry": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "point"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalPoint"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "line"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalLine"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "arc"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalArc"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "contour"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalContour"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "region"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalRegion"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "flash"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalFlash"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "drill"
+            },
+            "value": {
+              "$ref": "#/$defs/drillFeature"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "route"
+            },
+            "value": {
+              "$ref": "#/$defs/routeFeature"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "slot"
+            },
+            "value": {
+              "$ref": "#/$defs/slotFeature"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "layerId": {
+      "pattern": "^layer-v1-[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "layerPolarity": {
+      "enum": [
+        "positive",
+        "negative",
+        "dark",
+        "clear",
+        "unknown"
+      ]
+    },
+    "layerSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "fromLayerId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/layerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "toLayerId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/layerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "fromLayerId",
+        "toLayerId"
+      ],
+      "type": "object"
+    },
+    "lifecycleReview": {
+      "additionalProperties": false,
+      "properties": {
+        "normalized": {
+          "enum": [
+            "active",
+            "new",
+            "nrnd",
+            "last-time-buy",
+            "eol",
+            "obsolete",
+            "unknown"
+          ]
+        },
+        "observedAtUnix": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provenance": {
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "mouser",
+            "digikey",
+            "lcsc"
+          ]
+        },
+        "raw": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "raw",
+        "normalized",
+        "observedAtUnix",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "macroDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "id": {
+          "pattern": "^macro-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 4096,
+          "type": "array"
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "variables": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "name",
+        "variables",
+        "operations",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "manufacturingConflict": {
+      "additionalProperties": false,
+      "properties": {
+        "affectedCapabilities": {
+          "items": {
+            "$ref": "#/$defs/capabilityId"
+          },
+          "maxItems": 419425,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "product_identity",
+            "layer_role",
+            "layer_order",
+            "plating",
+            "layer_span",
+            "profile",
+            "extent",
+            "connectivity",
+            "construction",
+            "constraint",
+            "other"
+          ]
+        },
+        "left": {
+          "$ref": "#/$defs/conflictFact"
+        },
+        "right": {
+          "$ref": "#/$defs/conflictFact"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "affectedCapabilities",
+        "left",
+        "right"
+      ],
+      "type": "object"
+    },
+    "manufacturingConstraint": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "declaredValue": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "pattern": "^constraint-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "minimum_track_width",
+            "minimum_clearance",
+            "minimum_drill",
+            "minimum_annular_ring",
+            "copper_weight",
+            "finished_thickness",
+            "impedance",
+            "material",
+            "finish",
+            "special_process",
+            "other",
+            "unknown"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "value": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positivePicometres"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "value",
+        "declaredValue",
+        "authority",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "manufacturingDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "adapterVersion": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "artifactDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "gerber",
+            "excellon",
+            "kicad_pcb",
+            "unknown"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/documentId"
+        },
+        "metrics": {
+          "$ref": "#/$defs/documentMetrics"
+        },
+        "numericFormat": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sourceNumericFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parseStatus": {
+          "enum": [
+            "complete",
+            "partial",
+            "failed",
+            "unsupported",
+            "not_provided"
+          ]
+        },
+        "virtualPath": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "virtualPath",
+        "artifactDigest",
+        "format",
+        "adapter",
+        "adapterVersion",
+        "parseStatus",
+        "numericFormat",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "manufacturingFeature": {
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "geometry": {
+          "$ref": "#/$defs/geometry"
+        },
+        "id": {
+          "pattern": "^feature-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "layerId": {
+          "$ref": "#/$defs/layerId"
+        },
+        "polarity": {
+          "$ref": "#/$defs/layerPolarity"
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "toolId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/toolId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transforms": {
+          "$ref": "#/$defs/transformChain"
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "layerId",
+        "toolId",
+        "polarity",
+        "geometry",
+        "transforms",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "manufacturingInputOutcome": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "artifactDigest": {
+                "type": "null"
+              },
+              "reason": {
+                "enum": [
+                  "recognized_file_limit",
+                  "per_file_byte_limit",
+                  "aggregate_byte_limit",
+                  "read_failure"
+                ]
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "state": {
+                "const": "retained"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "artifactDigest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "reason": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "artifactDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "pattern": "^input-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "kindCandidate": {
+          "enum": [
+            "gerber",
+            "excellon"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "recognized_file_limit",
+            "per_file_byte_limit",
+            "aggregate_byte_limit",
+            "read_failure",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "retained",
+            "omitted",
+            "failed"
+          ]
+        },
+        "virtualPath": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "virtualPath",
+        "artifactDigest",
+        "kindCandidate",
+        "size",
+        "state",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "manufacturingLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "context": {
+          "enum": [
+            "board",
+            "coupon",
+            "panel",
+            "component",
+            "other",
+            "unknown"
+          ]
+        },
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "id": {
+          "$ref": "#/$defs/layerId"
+        },
+        "name": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "order": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "polarity": {
+          "$ref": "#/$defs/layerPolarity"
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "role": {
+          "enum": [
+            "copper",
+            "solder_mask",
+            "paste",
+            "legend",
+            "profile",
+            "drill_map",
+            "route",
+            "assembly",
+            "fabrication_drawing",
+            "other",
+            "unknown"
+          ]
+        },
+        "side": {
+          "enum": [
+            "top",
+            "bottom",
+            "inner",
+            "both",
+            "not_applicable",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "name",
+        "role",
+        "side",
+        "context",
+        "polarity",
+        "order",
+        "authority",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "manufacturingLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregateTimeoutMs": {
+          "const": 30000
+        },
+        "apertures": {
+          "const": 10000
+        },
+        "archiveCompressedBytes": {
+          "const": 94371840
+        },
+        "archiveEntries": {
+          "const": 2000
+        },
+        "archiveExpandedBytes": {
+          "const": 268435456
+        },
+        "canonicalAllocationBytes": {
+          "const": 268435456
+        },
+        "contourVertices": {
+          "const": 1000000
+        },
+        "directoryDepth": {
+          "const": 12
+        },
+        "drillRouteFeatures": {
+          "const": 100000
+        },
+        "fileTimeoutMs": {
+          "const": 5000
+        },
+        "geometryFeatures": {
+          "const": 419425
+        },
+        "lexicalTokensAggregate": {
+          "const": 2000000
+        },
+        "lexicalTokensPerFile": {
+          "const": 1000000
+        },
+        "macroVariables": {
+          "const": 1024
+        },
+        "macros": {
+          "const": 1024
+        },
+        "maxApertureNesting": {
+          "const": 16
+        },
+        "maxCoordinatePm": {
+          "const": 10000000000000
+        },
+        "maxDecimalPlaces": {
+          "const": 9
+        },
+        "maxLineBytes": {
+          "const": 16384
+        },
+        "maxNesting": {
+          "const": 32
+        },
+        "maxNumericBytes": {
+          "const": 64
+        },
+        "maxTextBytes": {
+          "const": 4096
+        },
+        "metadataBytesPerFile": {
+          "const": 65536
+        },
+        "normalizedPathBytes": {
+          "const": 512
+        },
+        "operationsPerMacro": {
+          "const": 4096
+        },
+        "rawBytesAggregate": {
+          "const": 20971520
+        },
+        "rawBytesPerFile": {
+          "const": 4194304
+        },
+        "recognizedFiles": {
+          "const": 256
+        },
+        "recordsAggregate": {
+          "const": 1000000
+        },
+        "recordsPerFile": {
+          "const": 400000
+        },
+        "repeatFactor": {
+          "const": 1000
+        },
+        "strictToolMax": {
+          "const": 99
+        }
+      },
+      "required": [
+        "recognizedFiles",
+        "rawBytesPerFile",
+        "rawBytesAggregate",
+        "recordsPerFile",
+        "recordsAggregate",
+        "lexicalTokensPerFile",
+        "lexicalTokensAggregate",
+        "maxLineBytes",
+        "maxTextBytes",
+        "metadataBytesPerFile",
+        "maxNumericBytes",
+        "maxDecimalPlaces",
+        "maxCoordinatePm",
+        "maxNesting",
+        "maxApertureNesting",
+        "apertures",
+        "macros",
+        "macroVariables",
+        "operationsPerMacro",
+        "strictToolMax",
+        "geometryFeatures",
+        "contourVertices",
+        "drillRouteFeatures",
+        "repeatFactor",
+        "canonicalAllocationBytes",
+        "fileTimeoutMs",
+        "aggregateTimeoutMs",
+        "archiveCompressedBytes",
+        "archiveExpandedBytes",
+        "archiveEntries",
+        "normalizedPathBytes",
+        "directoryDepth"
+      ],
+      "type": "object"
+    },
+    "manufacturingOmission": {
+      "additionalProperties": false,
+      "properties": {
+        "affectedCapabilities": {
+          "items": {
+            "$ref": "#/$defs/capabilityId"
+          },
+          "maxItems": 419425,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "detail": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "missing_record",
+            "missing_semantic_record",
+            "unsupported_record",
+            "resource_limit",
+            "invalid_record",
+            "unknown"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "affectedCapabilities",
+        "provenance",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "manufacturingProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "artifactDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "location": {
+          "$ref": "#/$defs/structuralLocation"
+        },
+        "producer": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "producerVersion": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "sourceLexeme": {
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "documentId",
+        "artifactDigest",
+        "producer",
+        "producerVersion",
+        "location",
+        "sourceLexeme"
+      ],
+      "type": "object"
+    },
+    "manufacturingTool": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "diameter": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positivePicometres"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "id": {
+          "$ref": "#/$defs/toolId"
+        },
+        "kind": {
+          "enum": [
+            "aperture",
+            "drill",
+            "route",
+            "composite",
+            "unknown"
+          ]
+        },
+        "plating": {
+          "enum": [
+            "plated",
+            "non_plated",
+            "mixed",
+            "unknown"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "span": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/layerSpan"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "code",
+        "kind",
+        "diameter",
+        "plating",
+        "span",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "manufacturingWarning": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "provenance": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/manufacturingProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "nativeMarker": {
+      "additionalProperties": false,
+      "properties": {
+        "comment": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "excluded": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "group": {
+          "enum": [
+            "violations",
+            "unconnected_items",
+            "schematic_parity",
+            "erc"
+          ]
+        },
+        "id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "items": {
+          "maxItems": 64,
+          "type": "array"
+        },
+        "severity": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "sheetPath": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sheetUuidPath": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "structuralLocation": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "violationType": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "group",
+        "violationType",
+        "severity",
+        "description",
+        "items",
+        "excluded",
+        "comment",
+        "sheetPath",
+        "sheetUuidPath",
+        "structuralLocation"
+      ],
+      "type": "object"
+    },
+    "nativeReport": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "excludedCount": {
+          "maximum": 250,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "findingCount": {
+          "maximum": 250,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ignoredChecks": {
+          "maxItems": 256,
+          "type": "array"
+        },
+        "includedSeverities": {
+          "maxItems": 256,
+          "type": "array"
+        },
+        "note": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "reportVersion": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "not_run",
+            "disabled"
+          ]
+        },
+        "tool": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "unknownExclusionCount": {
+          "maximum": 250,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "violations": {
+          "items": {
+            "$ref": "#/$defs/nativeMarker"
+          },
+          "maxItems": 250,
+          "type": "array"
+        }
+      },
+      "required": [
+        "status",
+        "tool",
+        "version",
+        "reportVersion",
+        "findingCount",
+        "excludedCount",
+        "unknownExclusionCount",
+        "note",
+        "source",
+        "date",
+        "includedSeverities",
+        "ignoredChecks",
+        "violations"
+      ],
+      "type": "object"
+    },
+    "objectSemantics": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "featureId": {
+          "$ref": "#/$defs/featureId"
+        },
+        "net": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pin": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        }
+      },
+      "required": [
+        "featureId",
+        "net",
+        "component",
+        "pin",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "picometres": {
+      "maximum": 10000000000000,
+      "minimum": -10000000000000,
+      "type": "integer"
+    },
+    "positivePicometres": {
+      "maximum": 10000000000000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "productIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "name": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "partNumber": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/manufacturingProvenance"
+          },
+          "maxItems": 419425,
+          "minItems": 1,
+          "type": "array"
+        },
+        "revision": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "revision",
+        "partNumber",
+        "authority",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "providerCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "errorKind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "enum": [
+            "mouser",
+            "digikey",
+            "lcsc"
+          ]
+        },
+        "retrievedAtUnix": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "checked",
+            "not-found",
+            "error",
+            "not-checked"
+          ]
+        },
+        "upstreamAtUnix": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "status",
+        "errorKind",
+        "retrievedAtUnix",
+        "upstreamAtUnix",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "requiredEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "checkId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "unknown"
+          ]
+        },
+        "evidenceId": {
+          "pattern": "^ev-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "execution": {
+          "enum": [
+            "completed",
+            "not_run",
+            "not_provided",
+            "failed",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "freshness": {
+          "enum": [
+            "current",
+            "stale",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "result": {
+          "enum": [
+            "pass",
+            "attention",
+            "fail",
+            "unknown",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "checkId",
+        "evidenceId",
+        "execution",
+        "result",
+        "freshness",
+        "confidence"
+      ],
+      "type": "object"
+    },
+    "routeFeature": {
+      "additionalProperties": false,
+      "properties": {
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/contourSegment"
+          },
+          "maxItems": 1000000,
+          "type": "array"
+        },
+        "toolId": {
+          "$ref": "#/$defs/toolId"
+        }
+      },
+      "required": [
+        "segments",
+        "toolId"
+      ],
+      "type": "object"
+    },
+    "schematicCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "evidenceClass": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "producer": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "status": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "producer",
+        "evidenceClass",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "schematicFact": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low",
+            "unknown"
+          ]
+        },
+        "evidenceClass": {
+          "enum": [
+            "explicit-source-fact",
+            "explicit-export-facts"
+          ]
+        },
+        "name": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "producer": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "sourcePath": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value",
+        "producer",
+        "evidenceClass",
+        "sourcePath",
+        "confidence"
+      ],
+      "type": "object"
+    },
+    "schematicMismatch": {
+      "additionalProperties": false,
+      "properties": {
+        "actual": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "checkId": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low",
+            "unknown"
+          ]
+        },
+        "expected": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "field": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "gateImpact": {
+          "const": "evidence_only"
+        },
+        "join": {
+          "enum": [
+            "occurrence-uuid",
+            "board-uuid-path",
+            "reference-fallback",
+            "unmatched",
+            "artifact-revision"
+          ]
+        },
+        "location": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "checkId",
+        "field",
+        "expected",
+        "actual",
+        "join",
+        "confidence",
+        "gateImpact",
+        "location"
+      ],
+      "type": "object"
+    },
+    "schematicOccurrence": {
+      "additionalProperties": false,
+      "properties": {
+        "facts": {
+          "items": {
+            "$ref": "#/$defs/schematicFact"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "itemUuid": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "key": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "projectIdentity": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "reference": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rootDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sheetUuidPath": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "sourcePath": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "unit": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "projectIdentity",
+        "rootDigest",
+        "sheetUuidPath",
+        "itemUuid",
+        "sourcePath",
+        "reference",
+        "unit",
+        "facts"
+      ],
+      "type": "object"
+    },
+    "schematicReview": {
+      "additionalProperties": false,
+      "properties": {
+        "artifactDigests": {
+          "additionalProperties": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "maxProperties": 2000,
+          "type": "object"
+        },
+        "boardDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "boardPath": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/schematicCapability"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "declaredRevisions": {
+          "additionalProperties": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxProperties": 2000,
+          "type": "object"
+        },
+        "limitations": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "mismatches": {
+          "items": {
+            "$ref": "#/$defs/schematicMismatch"
+          },
+          "maxItems": 20000,
+          "type": "array"
+        },
+        "nativeErc": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/nativeReport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nativeParity": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/nativeReport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occurrenceCount": {
+          "maximum": 20000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "occurrences": {
+          "items": {
+            "$ref": "#/$defs/schematicOccurrence"
+          },
+          "maxItems": 20000,
+          "type": "array"
+        },
+        "projectIdentity": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rootDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rootPath": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourcePair": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/schematicSourcePair"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "projectIdentity",
+        "rootPath",
+        "rootDigest",
+        "boardPath",
+        "boardDigest",
+        "sourcePair",
+        "artifactDigests",
+        "declaredRevisions",
+        "occurrenceCount",
+        "occurrences",
+        "capabilities",
+        "mismatches",
+        "nativeErc",
+        "nativeParity",
+        "limitations"
+      ],
+      "type": "object"
+    },
+    "schematicSourcePair": {
+      "additionalProperties": false,
+      "properties": {
+        "boardDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "boardPath": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "projectIdentity": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "schematicDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "schematicPath": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectIdentity",
+        "schematicPath",
+        "schematicDigest",
+        "boardPath",
+        "boardDigest"
+      ],
+      "type": "object"
+    },
+    "slotFeature": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "start": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "toolId": {
+          "$ref": "#/$defs/toolId"
+        },
+        "width": {
+          "$ref": "#/$defs/positivePicometres"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "width",
+        "toolId"
+      ],
+      "type": "object"
+    },
+    "sourceNumericFormat": {
+      "additionalProperties": false,
+      "properties": {
+        "decimalDigits": {
+          "maximum": 9,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "integerDigits": {
+          "maximum": 255,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "resolution": {
+          "$ref": "#/$defs/picometres"
+        },
+        "unit": {
+          "enum": [
+            "millimetre",
+            "inch"
+          ]
+        }
+      },
+      "required": [
+        "unit",
+        "integerDigits",
+        "decimalDigits",
+        "resolution"
+      ],
+      "type": "object"
+    },
+    "stepRepeat": {
+      "additionalProperties": false,
+      "description": "xCount/yCount include an offset-zero instance. A feature's first repeat reuses its one global original; later references charge full grids.",
+      "properties": {
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "featureIds": {
+          "items": {
+            "$ref": "#/$defs/featureId"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^repeat-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "xCount": {
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "xStep": {
+          "$ref": "#/$defs/picometres"
+        },
+        "yCount": {
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "yStep": {
+          "$ref": "#/$defs/picometres"
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "featureIds",
+        "xCount",
+        "yCount",
+        "xStep",
+        "yStep",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "structuralLocation": {
+      "additionalProperties": false,
+      "properties": {
+        "byteEnd": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "byteStart": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "record": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subrecord": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "record",
+        "subrecord",
+        "byteStart",
+        "byteEnd"
+      ],
+      "type": "object"
+    },
+    "supplyOffer": {
+      "additionalProperties": false,
+      "properties": {
+        "applicableUnitPrice": {
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authorization": {
+          "enum": [
+            "authorized",
+            "unauthorized",
+            "unknown"
+          ]
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "factoryLeadTimeDays": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "legalExpiresAtUnix": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "moq": {
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "observationId": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "orderMultiple": {
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "packaging": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "provenance": {
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "mouser",
+            "digikey",
+            "lcsc"
+          ]
+        },
+        "purchasableQuantity": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "region": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "retrievedAtUnix": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seller": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "sellerOriginal": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "sku": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "stock": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stockStatus": {
+          "enum": [
+            "in-stock",
+            "out-of-stock",
+            "unknown"
+          ]
+        },
+        "upstreamAtUnix": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "usable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "observationId",
+        "provider",
+        "seller",
+        "sellerOriginal",
+        "authorization",
+        "sku",
+        "packaging",
+        "region",
+        "stockStatus",
+        "stock",
+        "moq",
+        "orderMultiple",
+        "factoryLeadTimeDays",
+        "purchasableQuantity",
+        "applicableUnitPrice",
+        "currency",
+        "retrievedAtUnix",
+        "upstreamAtUnix",
+        "legalExpiresAtUnix",
+        "usable",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "toolId": {
+      "pattern": "^tool-v1-[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "transformChain": {
+      "additionalProperties": false,
+      "properties": {
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/transformOperation"
+          },
+          "maxItems": 32,
+          "type": "array"
+        }
+      },
+      "required": [
+        "operations"
+      ],
+      "type": "object"
+    },
+    "transformOperation": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "const": "mirror"
+            },
+            "x": {
+              "type": "boolean"
+            },
+            "y": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "operation",
+            "x",
+            "y"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "microdegrees": {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            },
+            "operation": {
+              "const": "rotate"
+            }
+          },
+          "required": [
+            "operation",
+            "microdegrees"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "denominator": {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "not": {
+                "const": 0
+              },
+              "type": "integer"
+            },
+            "numerator": {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "not": {
+                "const": 0
+              },
+              "type": "integer"
+            },
+            "operation": {
+              "const": "scale"
+            }
+          },
+          "required": [
+            "operation",
+            "numerator",
+            "denominator"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "const": "translate"
+            },
+            "x": {
+              "$ref": "#/$defs/picometres"
+            },
+            "y": {
+              "$ref": "#/$defs/picometres"
+            }
+          },
+          "required": [
+            "operation",
+            "x",
+            "y"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$id": "https://ratemypcb.com/schemas/report-2.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "approvalEligible": {
+      "type": "boolean"
+    },
+    "artifacts": {
+      "type": "array"
+    },
+    "bom": {
+      "$ref": "#/$defs/bomReport"
+    },
+    "categories": {
+      "type": "array"
+    },
+    "confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "coverage": {
+      "type": "array"
+    },
+    "disclaimer": {
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/evidenceRecord"
+      },
+      "type": "array"
+    },
+    "evidenceConfidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "unknown"
+      ]
+    },
+    "fabrication": {
+      "$ref": "#/$defs/fabricationReview"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/finding"
+      },
+      "type": "array"
+    },
+    "freshness": {
+      "enum": [
+        "current",
+        "stale",
+        "unknown",
+        "not_applicable"
+      ]
+    },
+    "input": {
+      "type": "object"
+    },
+    "limitationEvidenceRefs": {
+      "items": {
+        "items": {
+          "pattern": "^ev-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "minItems": 1,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "nativeDrc": {
+      "$ref": "#/$defs/nativeReport"
+    },
+    "observedRisk": {
+      "required": [
+        "scoreRaw",
+        "highestSeverity"
+      ],
+      "type": "object"
+    },
+    "profile": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "profileDrc": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/nativeReport"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "requiredEvidence": {
+      "items": {
+        "$ref": "#/$defs/requiredEvidence"
+      },
+      "type": "array"
+    },
+    "reviewScope": {
+      "enum": [
+        "design",
+        "fabrication",
+        "assembly",
+        "full"
+      ]
+    },
+    "schemaVersion": {
+      "const": "2.0"
+    },
+    "schematic": {
+      "$ref": "#/$defs/schematicReview"
+    },
+    "score": {
+      "description": "Secondary score metadata; never a release disposition.",
+      "type": "object"
+    },
+    "stackup": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "tool": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "tool",
+    "input",
+    "artifacts",
+    "score",
+    "observedRisk",
+    "confidence",
+    "evidenceConfidence",
+    "freshness",
+    "requiredEvidence",
+    "evidence",
+    "coverage",
+    "findings",
+    "nativeDrc",
+    "profileDrc",
+    "schematic",
+    "fabrication",
+    "reviewScope",
+    "categories",
+    "approvalEligible",
+    "profile",
+    "bom",
+    "stackup",
+    "limitations",
+    "disclaimer"
+  ],
+  "title": "RateMyPCB decision-grade report",
+  "type": "object"
+}

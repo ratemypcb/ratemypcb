@@ -1,0 +1,54 @@
+{
+  "assessmentSchemaVersion": "2.0",
+  "reportDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "rating": 4,
+  "disposition": "blocked",
+  "verdict": "Run missing release checks",
+  "verdictEvidenceRefs": [
+    "ev-0000000000000000000000000000000000000000000000000000000000000001"
+  ],
+  "rationale": "Synthetic missing evidence blocks release.",
+  "categorySummaries": [
+    {
+      "categoryId": "evidence-coverage",
+      "summary": "Synthetic evidence summary.",
+      "evidenceRefs": [
+        "ev-0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "priority": 1,
+      "title": "Run native DRC",
+      "rationale": "Capture current synthetic evidence.",
+      "evidenceRefs": [
+        "ev-0000000000000000000000000000000000000000000000000000000000000003"
+      ]
+    },
+    {
+      "priority": 2,
+      "title": "Provide supply snapshot",
+      "rationale": "Resolve not checked supply state.",
+      "evidenceRefs": [
+        "ev-0000000000000000000000000000000000000000000000000000000000000004"
+      ]
+    },
+    {
+      "priority": 3,
+      "title": "Review BOM finding",
+      "rationale": "Resolve release-impact attention.",
+      "evidenceRefs": [
+        "ev-0000000000000000000000000000000000000000000000000000000000000005"
+      ]
+    }
+  ],
+  "questions": [
+    {
+      "question": "Which release evidence source is authoritative?",
+      "evidenceRefs": [
+        "ev-0000000000000000000000000000000000000000000000000000000000000004"
+      ]
+    }
+  ]
+}
