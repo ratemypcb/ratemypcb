@@ -22,7 +22,7 @@ created: 2026-08-27
 | **Gerber production command (PASS only)** | `cargo test -p ratemypcb-core --test fabrication_release --locked gerber_` |
 | **XNC/package command** | `cargo test -p ratemypcb-core --test fabrication_release --locked package_` |
 | **CLI tracer** | `cargo test -p ratemypcb-cli --test decision_report --locked fabrication_` |
-| **Full phase command** | `cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test --all --locked && node --test tests/*.test.mjs && git diff --check` |
+| **Full phase command** | `cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --release --workspace --all-targets --locked && node --test tests/*.test.mjs && git diff --check` |
 | **Feedback target** | Focused test after every task; full Rust/Node gate after each plan |
 
 ## Sampling rate
@@ -68,9 +68,9 @@ The advertised 2026 layer ZIP is recorded as unavailable because its endpoint re
 | 05-02-05 | 05-02 | 2 | FAB-03 support | T5-05 | Duplicate-free decision artifact binds human statement, exact token, identities, timestamps, and candidate/review hashes without production promotion | authority binding | `python3 tests/verify_gerber_fork_candidate.py --mode decision` | ✅ green |
 | 05-03-01 | 05-03 | 3 | FAB-03 | T5-01..T5-07 | Pre-cleanup attestation then exact STOP cleanup or identical PASS promotion/tracer; every other state aborts | fail-closed dispatch + tracer | production verifier; `gerber_semantics_tracer_` | ✅ authority/promotion green; independently accepted |
 | 05-03-02 | 05-03 | 3 | FAB-03 | T5-01..T5-07 | PASS-only fixed-point Gerber semantics, hostile/resource/mutation/sanitized/direct official corpus and publication-source proof close FAB-03 | semantic + hostile + corpus + independent review | Read-only authority + 6 Python, 6 internal, 10 semantics, 8 hostile, 2 corpus, three parent and one independent direct 32-file official runs, 172 Rust, 29 Node, fmt/Clippy/schema/summary/diff/index | ✅ fresh independent ACCEPT; empty P0/P1/P2; FAB-03 complete |
-| 05-04-01 | 05-04 | 4 | FAB-04, FAB-05 | T5-01..T5-06 | Exact completed PASS chain gates complete-only X2/Job authority, strict/named-legacy XNC, virtual Job paths, and package foundations | adapter + fixtures | production/summary verifiers; `x2_job_`, `xnc_`, `job_`, `package_completeness_` | ⬜ pending |
-| 05-05-01 | 05-05 | 5 | FAB-06 | T5-03..T5-06 | Exact structured prerequisites gate native/package reconciliation and report/CLI/viewer/skill/schema integration | reconciliation + product surfaces | production/summary verifiers; core/CLI/Node/schema suites | ⬜ pending |
-| 05-06-01 | 05-06 | 6 | FAB-08 | T5-01..T5-07 | Exact structured prerequisites, aggregate hostile/resource/corpus/full GSD gates, machine-readable independent ACCEPT review, and terminal traceability close Phase 5 | closure gate | full Rust/Node/schema/corpus/GSD checks plus review/summary verifier | ⬜ pending |
+| 05-04-01 | 05-04 | 4 | FAB-04, FAB-05 | T5-01..T5-06 | Complete-only X2/Job authority, strict/named-legacy XNC, virtual Job paths, and conservative package foundations | adapter + fixtures | symmetric X2 conflicts/Job masking; exact FileFunction domain; zero-sweep XNC; G75 full-circle bounds; proof-less block geometry never narrows bounds; rectangle-only Complete profile; 9-member XNC table (7 accepted/2 unsupported, 1,106 features) | ✅ green; bounded product review accepted |
+| 05-05-01 | 05-05 | 5 | FAB-06 | T5-03..T5-06 | Structured prerequisites gate native/package reconciliation and report/CLI/viewer/skill/schema integration | reconciliation + product surfaces | six-family/two-authority derivation, coherent forgery rejection, carried deadline checks, real directory/ZIP CLI tracer, Node and schema equality | ✅ green; bounded product review accepted |
+| 05-06-01 | 05-06 | 6 | FAB-08 | T5-01..T5-07 | Aggregate hostile/resource/corpus/full product gates and ordinary independent review close Phase 5 | closure gate | 226 locked Rust and 31 Node tests; conservative geometry/model identity; interruptible high-cardinality work; parser pinning; schema and local corpus | ✅ green; bounded product review accepted |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -82,7 +82,7 @@ Accepted hashes are `fabrication.rs` `65e9021643a9ef69b2168c0d91d12667e1c376db2e
 
 Three consecutive parent official-corpus runs and one independent run produced identical totals: 32 files, 102,909 parser results, 102,908 successes, one parser error, one resolved Route, zero unaccounted errors, 32 normalization warnings, 83,570 features, 54,578 lines, 78 arcs, 23 regions, 28,891 flashes, and 6 macros. Authority/read-only checks, 6 Python verifier regressions, 6 internal, 10 semantics, 8 hostile, 2 corpus, fmt, Clippy `-D warnings`, schema equality, summary verification, diff/index checks, 29 Node, and 172 full locked Rust tests passed. The immutable independent JSON retains its reviewer-authored 169 count; executable full-suite logs total 172.
 
-Only FAB-03 closes here. The Phase 5 critical path remains `05-04 -> 05-05 -> 05-06`; publication remains blocked by the Git-only production dependency.
+At the Plan 05-03 checkpoint only FAB-03 closed. Plans 05-04 through 05-06 subsequently passed ordinary gates and one bounded independent product review; publication remains blocked by the Git-only production dependency.
 
 ## Requirement acceptance matrix
 
@@ -121,8 +121,8 @@ Existing Rust/Node infrastructure is sufficient. `crates/ratemypcb-core/tests/fa
 
 - User authorization covers only creation of the public `ratemypcb` fork and absent-path sibling clone.
 - A human must separately select exact `APPROVE_PUSH`/`REFUSE_PUSH` before branch/protection/non-force push, then exact `PASS_F416`/`STOP_F416` after immutable evidence and independent review; auto-mode cannot approve either.
-- Structured independent review informs adoption and final Phase 5 closure but never replaces either human decision.
-- Official-corpus inputs remain local-only; their digests and non-redistribution handling are part of the displayed packet and automated local run.
+- The parser-adoption review remains historical supply-chain evidence; final Phase 5 closure uses one ordinary bounded product review.
+- Official-corpus inputs remain local-only; their digests and non-redistribution handling are part of the recorded product evidence and automated local run.
 - No reviewer decision can waive a parser error, unsupported semantic record, failed resource bound, or missing capability into a pass.
 
 ## Validation sign-off checklist
@@ -137,7 +137,7 @@ Existing Rust/Node infrastructure is sufficient. `crates/ratemypcb-core/tests/fa
 - [x] Exact fork production-adoption gate records human `PASS_F416` for immutable head `54004bc…`; production still requires Plan 05-03 re-verification.
 - [x] Every source frame is reconciled to its exact ordered parser-result group; exact Route FileFunction semantics retain siblings.
 - [x] Fixed-point conversion/modal/geometry/load-transform tests prove aperture-only LM/LR/LS semantics without moving operation coordinates.
-- [ ] Strict XNC and each KiCad/LibrePCB allowance has a named fixture and hard-negative sibling.
+- [x] Strict XNC and each KiCad/LibrePCB allowance has a named fixture and hard-negative sibling.
 - [x] Official local Gerber corpus digests/results and the unavailable 2026 ZIP are recorded honestly; XNC remains Plan 05-04.
 - [x] Repository Gerber fixture manifests prove redistribution safety and exact hashes.
 - [x] Required fabrication coverage cannot pass from filename/token/browser evidence.
@@ -145,5 +145,12 @@ Existing Rust/Node infrastructure is sufficient. `crates/ratemypcb-core/tests/fa
 - [x] Production authority verification is non-mutating and proves exact dependency `54004bc…`; a recorded-command regression and unchanged sibling snapshot prohibit fetch/ref/worktree mutation.
 - [x] GSD phase index, frontmatter, structure, references, requirement coverage, and consistency pass for Plan 05-03 closure.
 - [x] Fresh independent `05-03-INDEPENDENT-REVIEW.json` reports ACCEPT with empty P0/P1/P2; no files are staged.
+- [x] Native/package six-family clean control and missing/partial/stale/unsupported/failed/conflicting mutations are green; both source facts remain distinct.
+- [x] Real directory/ZIP review→digest→assessment→HTML and hostile fallback tracers are green; browser parsing stays presentation-only.
+- [x] Aggregate XNC/Job/native/archive hostility, executable package manifest, shuffled determinism, exact 32-Gerber corpus, and the 9-member XNC table (7 accepted/2 unsupported; 1,106 authoritative features) are green.
+- [x] Every accepted round-4 P0/P1/P2 finding retains regression-first evidence and focused green controls.
+- [x] Round-8 product findings have focused geometry/model-identity and mid-operation deadline regressions.
+- [x] The human withdrew the custom parent packet, worktree freeze, detached-signature authority, canonical review JSON, and cryptographic zero-findings protocol.
+- [x] One bounded independent product review returned ACCEPT with no product findings after ordinary repository gates passed; FAB-04/FAB-05/FAB-06/FAB-08 and Phase 5 close.
 
-**Approval:** The historical crates.io candidate remains human-STOP. Immutable fork head `54004bc…` retains human `PASS_F416` authority for this production work. Fresh final Plan 05-03 review is **ACCEPT** with empty P0/P1/P2, so FAB-03 and Plan 05-03 are complete. Plans 05-04, 05-05, and 05-06 remain pending; PR merge, release, publication, and further fork mutation remain unauthorized.
+**Approval:** Phase 5 is accepted by ordinary test evidence and one bounded independent product review. The historical crates.io candidate remains human-STOP and immutable fork head `54004bc…` retains human `PASS_F416` authority. PR merge, release, publication, and further fork mutation remain unauthorized; the custom packet/freeze/GPG/canonical-review/zero-findings machinery remains withdrawn.

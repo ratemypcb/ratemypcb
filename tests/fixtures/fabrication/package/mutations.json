@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "mutations": [
+    {"id": "missing-bottom", "expected": "partial"},
+    {"id": "missing-profile", "expected": "partial"},
+    {"id": "missing-drill", "expected": "partial"},
+    {"id": "unknown-plating", "expected": "partial"},
+    {"id": "unknown-span", "expected": "partial"},
+    {"id": "x2-job-role-conflict", "expected": "partial"},
+    {"id": "sparse-object-attributes", "expected": "partial"},
+    {"id": "filename-only", "expected": "partial"}
+  ]
+}

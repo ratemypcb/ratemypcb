@@ -15,9 +15,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --all
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --all --locked
       - run: >-
           node --test tests/board-view.test.mjs tests/report-contract.test.mjs
           tests/report-ux.test.mjs
@@ -25,6 +25,7 @@ jobs:
           cargo run -q -p ratemypcb-cli -- schema
           --output /tmp/report-schema.json
       - run: diff -u schemas/report-2.0.json /tmp/report-schema.json
+      - run: node --check crates/ratemypcb-cli/assets/local-viewer.js
       - run: python3 -m py_compile kicad-plugin/review_action.py
       - run: python3 -m py_compile skills/review-pcb-dfm/scripts/install.py
       - run: >-

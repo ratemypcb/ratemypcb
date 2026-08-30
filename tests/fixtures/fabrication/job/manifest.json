@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "specification": "Gerber Job 2023.06 supported subset",
+  "fixtures": [
+    {"path": "complete.gbrjob", "sha256": "24e30c6fe30ebb39d3ff825e23bf5d679f104882a5b496a89e68816f3d423644", "expected": "complete"},
+    {"path": "dangling.gbrjob", "sha256": "9ec90a3e57debdace62d9781e30723747a17794f203ad801f24fba16a77d5a61", "expected": "dangling-reference"}
+  ]
+}

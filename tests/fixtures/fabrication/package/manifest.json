@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "baseline": "Gerber/X2 plus strict XNC and Gerber Job",
+  "requiredDocuments": ["top.gbr", "bottom.gbr", "profile.gbr", "holes.xnc", "complete.gbrjob"],
+  "completeOnly": ["product", "roles", "order", "profile", "drills", "plating", "spans", "extents", "claimedConnectivity"],
+  "mutationManifest": "mutations.json"
+}

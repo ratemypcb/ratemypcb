@@ -1,0 +1,14 @@
+{
+  "Header": {
+    "GenerationSoftware": {"Vendor": "RateMyPCB", "Application": "fixture", "Version": "1"}
+  },
+  "GeneralSpecs": {
+    "ProjectId": {"Name": "phase5-board", "Revision": "r1", "PartNumber": "P5-001"}
+  },
+  "FilesAttributes": [
+    {"Path": "top.gbr", "FileFunction": "Copper,L1,Top"},
+    {"Path": "bottom.gbr", "FileFunction": "Copper,L2,Bot"},
+    {"Path": "profile.gbr", "FileFunction": "Profile,NP"},
+    {"Path": "holes.xnc", "FileFunction": "Plated,1,2,PTH"}
+  ]
+}

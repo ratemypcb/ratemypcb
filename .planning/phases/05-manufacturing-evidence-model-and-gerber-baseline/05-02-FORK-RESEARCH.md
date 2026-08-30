@@ -114,7 +114,7 @@ Preserves bounded native KiCad facts, separate source/package models, complete-p
 
 ### Plan 05-06 — old task 05-03-03
 
-Preserves aggregate XNC/Job/package and rerun Gerber hostile/resource/mutation matrix, sanitized manifest legality, official Gerber+XNC exact-buffer corpus, determinism, full fmt/Clippy/Rust/Node/schema/JS/dependency/diff/staged/GSD gates, known-gap preservation and terminal Phase 5 closure. Fresh independent review is recorded in duplicate-free `05-06-INDEPENDENT-REVIEW.json` with reviewer identity/independence, exact reviewed file manifest and hashes, reproduction commands, ACCEPT/REJECT, and P0/P1/P2/P3 arrays; closure requires recomputed hashes, ACCEPT, and empty P0/P1/P2. Requirement `[FAB-08]`.
+Preserves aggregate XNC/Job/package and rerun Gerber hostile/resource/mutation matrix, sanitized manifest legality, official Gerber+XNC exact-buffer corpus, determinism, full fmt/Clippy/Rust/Node/schema/JS/dependency/diff/staged gates, known-gap preservation, and terminal Phase 5 closure. Closure requires one ordinary bounded independent product review. Requirement `[FAB-08]`.
 
 ## Safe shell/publication behavior
 

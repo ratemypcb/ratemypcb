@@ -1,0 +1,19 @@
+; RateMyPCB project-authored KiCad legacy Excellon fixture
+M48
+; #@! TF.GenerationSoftware,Kicad,Pcbnew,9.0
+; #@! TF.FileFunction,NonPlated,1,2,NPTH
+FMAT,2
+METRIC
+; #@! TA.AperFunction,MechanicalDrill
+T1C1.000
+%
+G90
+G05
+T1
+X1.000Y1.000
+G00X2.000Y2.000
+M15
+G01X3.000Y2.000
+M16
+T0
+M30

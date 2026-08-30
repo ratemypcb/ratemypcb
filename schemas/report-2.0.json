@@ -36,6 +36,13 @@
     "apertureBlock": {
       "additionalProperties": false,
       "properties": {
+        "apertureId": {
+          "pattern": "^aperture-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "definitionEnd": {
+          "$ref": "#/$defs/structuralLocation"
+        },
         "documentId": {
           "$ref": "#/$defs/documentId"
         },
@@ -44,11 +51,20 @@
             "$ref": "#/$defs/featureId"
           },
           "maxItems": 419425,
-          "type": "array"
+          "type": "array",
+          "uniqueItems": true
         },
         "id": {
           "pattern": "^block-v1-[0-9a-f]{64}$",
           "type": "string"
+        },
+        "instantiationFeatureIds": {
+          "items": {
+            "$ref": "#/$defs/featureId"
+          },
+          "maxItems": 419425,
+          "type": "array",
+          "uniqueItems": true
         },
         "provenance": {
           "$ref": "#/$defs/manufacturingProvenance"
@@ -57,7 +73,10 @@
       "required": [
         "id",
         "documentId",
+        "apertureId",
         "featureIds",
+        "instantiationFeatureIds",
+        "definitionEnd",
         "provenance"
       ],
       "type": "object"
@@ -1039,6 +1058,62 @@
       ],
       "type": "object"
     },
+    "documentPhysicalBounds": {
+      "additionalProperties": false,
+      "properties": {
+        "artifactDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "extent": {
+          "$ref": "#/$defs/extent"
+        },
+        "format": {
+          "enum": [
+            "gerber",
+            "excellon"
+          ]
+        },
+        "geometryDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^physical-bounds-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "resolution": {
+          "$ref": "#/$defs/positivePicometres"
+        },
+        "sourceLocations": {
+          "items": {
+            "$ref": "#/$defs/structuralLocation"
+          },
+          "maxItems": 419425,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "artifactDigest",
+        "format",
+        "extent",
+        "resolution",
+        "geometryDigest",
+        "sourceLocations",
+        "provenance"
+      ],
+      "type": "object"
+    },
     "drillFeature": {
       "additionalProperties": false,
       "properties": {
@@ -1187,6 +1262,23 @@
           "maxItems": 2000,
           "type": "array"
         },
+        "integrationOutcome": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/integratedReconciliationOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "jobFileFunctions": {
+          "items": {
+            "$ref": "#/$defs/jobFileFunctionFact"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
         "layers": {
           "items": {
             "$ref": "#/$defs/manufacturingLayer"
@@ -1208,6 +1300,16 @@
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
+        "nativeReconciliationSource": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/nativeReconciliationSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "omissions": {
           "items": {
             "$ref": "#/$defs/manufacturingOmission"
@@ -1218,6 +1320,13 @@
         "packageId": {
           "pattern": "^package-v1-[0-9a-f]{64}$",
           "type": "string"
+        },
+        "physicalBounds": {
+          "items": {
+            "$ref": "#/$defs/documentPhysicalBounds"
+          },
+          "maxItems": 256,
+          "type": "array"
         },
         "product": {
           "oneOf": [
@@ -1239,12 +1348,29 @@
             }
           ]
         },
+        "reconciliations": {
+          "items": {
+            "$ref": "#/$defs/manufacturingReconciliation"
+          },
+          "maxItems": 6,
+          "type": "array"
+        },
         "repetitions": {
           "items": {
             "$ref": "#/$defs/stepRepeat"
           },
           "maxItems": 419425,
           "type": "array"
+        },
+        "sourcePair": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/manufacturingSourcePair"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "status": {
           "enum": [
@@ -1267,6 +1393,13 @@
           },
           "maxItems": 419425,
           "type": "array"
+        },
+        "x2Attributes": {
+          "items": {
+            "$ref": "#/$defs/scopedX2Attribute"
+          },
+          "maxItems": 419425,
+          "type": "array"
         }
       },
       "required": [
@@ -1283,14 +1416,21 @@
         "blocks",
         "repetitions",
         "features",
+        "physicalBounds",
         "profile",
         "connectivity",
+        "x2Attributes",
+        "jobFileFunctions",
         "assembly",
         "construction",
         "constraints",
         "capabilities",
         "omissions",
         "conflicts",
+        "sourcePair",
+        "nativeReconciliationSource",
+        "integrationOutcome",
+        "reconciliations",
         "warnings",
         "limits",
         "estimatedAllocationBytes"
@@ -1300,6 +1440,44 @@
     "featureId": {
       "pattern": "^feature-v1-[0-9a-f]{64}$",
       "type": "string"
+    },
+    "featureMembership": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "top_level"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "apertureId": {
+              "pattern": "^aperture-v1-[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "blockId": {
+              "pattern": "^block-v1-[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "aperture_block"
+            }
+          },
+          "required": [
+            "kind",
+            "blockId",
+            "apertureId"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "finding": {
       "additionalProperties": false,
@@ -1510,6 +1688,198 @@
           "type": "object"
         }
       ]
+    },
+    "integratedReconciliationOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "attemptedNativeDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attemptedNativePath": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "pattern": "^integration-outcome-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "not_provided",
+            "failed"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "attemptedNativePath",
+        "attemptedNativeDigest",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "jobFileFunctionFact": {
+      "additionalProperties": false,
+      "properties": {
+        "conflictIds": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 419425,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "fields": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        },
+        "fromLayer": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "pattern": "^job-file-function-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "jobArtifactDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "jobDocumentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "omission": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "order": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "plating": {
+          "enum": [
+            "plated",
+            "non_plated",
+            "mixed",
+            "unknown"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "qualifier": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "referencedArtifactDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "referencedDocumentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "referencedVirtualPath": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "copper",
+            "solder_mask",
+            "paste",
+            "legend",
+            "profile",
+            "drill_map",
+            "route",
+            "assembly",
+            "fabrication_drawing",
+            "other",
+            "unknown"
+          ]
+        },
+        "side": {
+          "enum": [
+            "top",
+            "bottom",
+            "inner",
+            "both",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "toLayer": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "jobDocumentId",
+        "jobArtifactDigest",
+        "referencedVirtualPath",
+        "referencedDocumentId",
+        "referencedArtifactDigest",
+        "fields",
+        "role",
+        "side",
+        "order",
+        "plating",
+        "fromLayer",
+        "toLayer",
+        "qualifier",
+        "operation",
+        "omission",
+        "conflictIds",
+        "provenance"
+      ],
+      "type": "object"
     },
     "layerId": {
       "pattern": "^layer-v1-[0-9a-f]{64}$",
@@ -1766,6 +2136,7 @@
           "enum": [
             "gerber",
             "excellon",
+            "gerber_job",
             "kicad_pcb",
             "unknown"
           ]
@@ -1830,6 +2201,9 @@
         "layerId": {
           "$ref": "#/$defs/layerId"
         },
+        "membership": {
+          "$ref": "#/$defs/featureMembership"
+        },
         "polarity": {
           "$ref": "#/$defs/layerPolarity"
         },
@@ -1858,6 +2232,7 @@
         "polarity",
         "geometry",
         "transforms",
+        "membership",
         "provenance"
       ],
       "type": "object"
@@ -1916,7 +2291,8 @@
         "kindCandidate": {
           "enum": [
             "gerber",
-            "excellon"
+            "excellon",
+            "gerber_job"
           ]
         },
         "reason": {
@@ -2265,6 +2641,98 @@
       ],
       "type": "object"
     },
+    "manufacturingReconciliation": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "enum": [
+            "exact",
+            "resolution_bounded",
+            "unavailable"
+          ]
+        },
+        "family": {
+          "enum": [
+            "product",
+            "layers",
+            "profile",
+            "drills",
+            "extents",
+            "connectivity"
+          ]
+        },
+        "id": {
+          "pattern": "^reconciliation-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "native": {
+          "$ref": "#/$defs/reconciliationFact"
+        },
+        "package": {
+          "$ref": "#/$defs/reconciliationFact"
+        },
+        "smallestEvidenceAction": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "match",
+            "mismatch",
+            "not_checked"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "family",
+        "status",
+        "confidence",
+        "native",
+        "package",
+        "smallestEvidenceAction"
+      ],
+      "type": "object"
+    },
+    "manufacturingSourcePair": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^source-pair-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "nativeArtifactDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "nativeDocumentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "releaseDocumentDigests": {
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "releasePackageId": {
+          "pattern": "^package-v1-[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "nativeDocumentId",
+        "nativeArtifactDigest",
+        "releasePackageId",
+        "releaseDocumentDigests"
+      ],
+      "type": "object"
+    },
     "manufacturingTool": {
       "additionalProperties": false,
       "properties": {
@@ -2437,6 +2905,29 @@
         "sheetPath",
         "sheetUuidPath",
         "structuralLocation"
+      ],
+      "type": "object"
+    },
+    "nativeReconciliationSource": {
+      "additionalProperties": false,
+      "properties": {
+        "extents": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/extent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review": {
+          "$ref": "#/$defs/fabricationReview"
+        }
+      },
+      "required": [
+        "review",
+        "extents"
       ],
       "type": "object"
     },
@@ -2681,6 +3172,50 @@
         "errorKind",
         "retrievedAtUnix",
         "upstreamAtUnix",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "reconciliationFact": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "canonicalValue": {
+          "maxLength": 33554432,
+          "type": "string"
+        },
+        "modelIds": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 419425,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "resolution": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positivePicometres"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "modelIds",
+        "canonicalValue",
+        "resolution",
+        "authority",
         "provenance"
       ],
       "type": "object"
@@ -3130,6 +3665,70 @@
         "schematicDigest",
         "boardPath",
         "boardDigest"
+      ],
+      "type": "object"
+    },
+    "scopedX2Attribute": {
+      "additionalProperties": false,
+      "properties": {
+        "deletion": {
+          "type": "boolean"
+        },
+        "documentId": {
+          "$ref": "#/$defs/documentId"
+        },
+        "id": {
+          "pattern": "^x2-attribute-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "file_function",
+            "aperture_function",
+            "net",
+            "component",
+            "pin",
+            "reset"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "scope": {
+          "enum": [
+            "file",
+            "aperture",
+            "object"
+          ]
+        },
+        "targetIds": {
+          "items": {
+            "pattern": "^(document|aperture|feature)-v1-[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "maxItems": 419425,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "values": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "documentId",
+        "scope",
+        "kind",
+        "values",
+        "deletion",
+        "targetIds",
+        "provenance"
       ],
       "type": "object"
     },

@@ -30,6 +30,22 @@ detected KiCad version/major and the explicit PCB DRC, schematic ERC, coherent-
 project parity, and format limitations. Native KiCad checks support majors 8, 9,
 and 10; exits 0 and 5 are completed analyses.
 
+The fabrication baseline is bounded core parsing of Gerber/X2, the supported
+Gerber Job 2023.06 subset, and strict XNC with exact named KiCad/LibrePCB legacy
+profiles. When both artifacts are complete, the report compares native KiCad
+and release-package product, layers, profile/cutouts, drills/slots, extents, and
+available connectivity without choosing a winning source. Release authority retains
+rederived per-document physical bounds—including full-circle Gerber arc extrema—and exact
+per-reference Gerber Job facts. Definition-only geometry requires parser-produced block
+membership, matching block/aperture identity, source range, document ownership, and retained
+instantiation relationships. One absolute deadline incrementally covers input reads/hashes and
+canonical length/hash serialization. Package completeness currently accepts only a demonstrable
+axis-aligned rectangular profile; other topology stays partial. Integrated no-native or failed
+reconciliation remains an explicit partial outcome. Missing, partial,
+stale, unsupported, failed, or conflicting facts remain not checked and close
+approval. Official corpora are local-only; browser Gerber rendering is
+presentation-only; ODB++ and IPC-2581 remain unsupported.
+
 KiCad 10 is locally exercised by this project. KiCad 8/9 compatibility is
 documentation/schema-attested, not claimed as locally executed. Native Altium
 `.SchDoc` and generic-netlist analysis is not supported: `.SchDoc` is inventory

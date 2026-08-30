@@ -55,11 +55,11 @@
 - [x] **FAB-01**: One canonical model represents product identity, layer system, fixed-point geometry/transforms, tools/drills/routes, profile, connectivity, assembly, construction, constraints, provenance, omissions, and conflicts.
 - [x] **FAB-02**: Input adapters declare provided capabilities and analyzers declare required capabilities so unsupported evidence becomes not checked rather than pass.
 - [x] **FAB-03**: A bounded production parser handles supported RS-274X geometry including units, formats, apertures/macros, interpolation/arcs, regions, polarity, transforms, and step-repeat without silent critical-record loss.
-- [ ] **FAB-04**: Gerber X2/Job attributes establish layer roles and retain net/component/pin semantics only when explicitly and completely supplied.
-- [ ] **FAB-05**: A bounded Excellon adapter preserves units, tools, plated/non-plated state when supplied, drill/slot/rout geometry, and layer spans or explicit unknowns.
-- [ ] **FAB-06**: Gerber/X2+Excellon package completeness and source↔release-package reconciliation report layer, outline, drill, extent, and available connectivity mismatches with provenance.
+- [x] **FAB-04**: Gerber X2/Job attributes establish layer roles and retain net/component/pin semantics only when explicitly and completely supplied.
+- [x] **FAB-05**: A bounded Excellon adapter preserves units, tools, plated/non-plated state when supplied, drill/slot/rout geometry, and layer spans or explicit unknowns.
+- [x] **FAB-06**: Gerber/X2+Excellon package completeness and source↔release-package reconciliation report layer, outline, drill, extent, and available connectivity mismatches with provenance.
 - [x] **FAB-07**: Current filename/token screening is labeled partial and non-approval evidence until real parsing succeeds; Gerber remains the supported fabrication baseline.
-- [ ] **FAB-08**: Official/sanitized corpus, mutation, malformed, truncation, and resource-bound fixtures verify parser completeness and deterministic output.
+- [x] **FAB-08**: Official/sanitized corpus, mutation, malformed, truncation, and resource-bound fixtures verify parser completeness and deterministic output.
 
 ### Intelligent Interchange Decision
 
@@ -150,11 +150,11 @@
 | FAB-01 | Phase 5 | Complete |
 | FAB-02 | Phase 5 | Complete |
 | FAB-03 | Phase 5 | Complete |
-| FAB-04 | Phase 5 | Pending |
-| FAB-05 | Phase 5 | Pending |
-| FAB-06 | Phase 5 | Pending |
+| FAB-04 | Phase 5 | Complete |
+| FAB-05 | Phase 5 | Complete |
+| FAB-06 | Phase 5 | Complete |
 | FAB-07 | Phase 5 | Complete |
-| FAB-08 | Phase 5 | Pending |
+| FAB-08 | Phase 5 | Complete |
 | FMT-01 | Phase 6 | Pending |
 | FMT-02 | Phase 6 | Pending |
 | FMT-03 | Phase 6 | Pending |
@@ -183,4 +183,4 @@
 
 ---
 *Requirements defined: 2026-08-26*
-*Last updated: 2026-08-27 after Plan 05-03 independent acceptance*
+*Last updated: 2026-08-30 after ordinary test evidence and one bounded independent product review accepted Phase 5 with no product findings; custom packet/freeze/GPG/canonical-review/zero-findings machinery remains withdrawn*

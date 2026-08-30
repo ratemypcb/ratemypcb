@@ -4,18 +4,24 @@ use gerber_parser::gerber_types::{
     MCode as ParserMCode, Operation as ParserOperation,
 };
 use gerber_parser::{ContentError, parse as parse_gerber};
-use serde::{Deserialize, Serialize};
+use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::io::{BufReader, Cursor, Read};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::io::{BufReader, Cursor, Read, Write};
 use std::time::{Duration, Instant};
+
+mod native;
+pub use native::*;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ManufacturingKindCandidate {
     Gerber,
     Excellon,
+    GerberJob,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -43,6 +49,7 @@ pub struct ManufacturingInput {
     pub kind_candidate: ManufacturingKindCandidate,
     pub size: u64,
     pub original_bytes: Vec<u8>,
+    pub file_started: Option<Instant>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,10 +68,30 @@ pub struct ManufacturingInputOutcome {
 pub struct ManufacturingInventory {
     pub inputs: Vec<ManufacturingInput>,
     pub outcomes: Vec<ManufacturingInputOutcome>,
+    pub aggregate_started: Option<Instant>,
 }
 
 impl ManufacturingInventory {
     pub fn validate(&self) -> Result<(), FabricationError> {
+        self.validate_with_deadline(ManufacturingDeadline::for_inventory(
+            self,
+            Duration::from_millis(MANUFACTURING_LIMITS.aggregate_timeout_ms),
+        ))
+    }
+
+    pub(crate) fn validate_with_deadline(
+        &self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<(), FabricationError> {
+        self.validate_with_deadline_observer(deadline, &mut |_| {})
+    }
+
+    fn validate_with_deadline_observer(
+        &self,
+        deadline: ManufacturingDeadline,
+        observer: &mut impl FnMut(usize),
+    ) -> Result<(), FabricationError> {
+        deadline.check("manufacturing-inventory")?;
         let mut paths = BTreeSet::new();
         let mut ids = BTreeSet::new();
         let mut retained_outcomes = BTreeSet::new();
@@ -76,6 +103,7 @@ impl ManufacturingInventory {
             });
         }
         for outcome in &self.outcomes {
+            deadline.check("manufacturing-inventory")?;
             if !paths.insert(outcome.virtual_path.as_str())
                 || !ids.insert(outcome.id.as_str())
                 || !valid_virtual_path(&outcome.virtual_path)
@@ -109,6 +137,7 @@ impl ManufacturingInventory {
             }
         }
         for input in &self.inputs {
+            deadline.check("manufacturing-inventory")?;
             let size = u64::try_from(input.original_bytes.len())
                 .map_err(|_| FabricationError::ArithmeticOverflow)?;
             retained_bytes = retained_bytes
@@ -116,7 +145,12 @@ impl ManufacturingInventory {
                 .ok_or(FabricationError::ArithmeticOverflow)?;
             if size != input.size
                 || size > MANUFACTURING_LIMITS.raw_bytes_per_file
-                || sha256(&input.original_bytes) != input.artifact_digest
+                || sha256_with_deadline_observer(
+                    &input.original_bytes,
+                    deadline,
+                    "manufacturing-inventory-hash",
+                    observer,
+                )? != input.artifact_digest
                 || !input_identities.insert((
                     input.virtual_path.as_str(),
                     input.artifact_digest.as_str(),
@@ -137,7 +171,17 @@ impl ManufacturingInventory {
                 resource: "retained-manufacturing-input",
             });
         }
+        deadline.check("manufacturing-inventory")?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn validate_with_deadline_counting(
+        &self,
+        deadline: ManufacturingDeadline,
+        mut observer: impl FnMut(usize),
+    ) -> Result<(), FabricationError> {
+        self.validate_with_deadline_observer(deadline, &mut observer)
     }
 }
 
@@ -159,6 +203,103 @@ pub fn input_outcome_id(
 ) -> String {
     stable_id("input", &(virtual_path, artifact_digest, kind_candidate))
         .expect("identity tuple serializes")
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManufacturingDeadline {
+    at: Instant,
+}
+
+impl ManufacturingDeadline {
+    pub(crate) fn from_timeout(timeout: Duration) -> Self {
+        let now = Instant::now();
+        Self {
+            at: now.checked_add(timeout).unwrap_or(now),
+        }
+    }
+
+    pub(crate) fn from_aggregate_start(aggregate_started: Instant) -> Self {
+        let now = Instant::now();
+        Self {
+            at: aggregate_started
+                .checked_add(Duration::from_millis(
+                    MANUFACTURING_LIMITS.aggregate_timeout_ms,
+                ))
+                .unwrap_or(now),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_starts(file_started: Instant, aggregate_started: Instant) -> Self {
+        Self::from_aggregate_start(aggregate_started).for_file_started(file_started)
+    }
+
+    pub(crate) fn for_file_started(self, file_started: Instant) -> Self {
+        let now = Instant::now();
+        let file = file_started
+            .checked_add(Duration::from_millis(MANUFACTURING_LIMITS.file_timeout_ms))
+            .unwrap_or(now);
+        Self {
+            at: self.at.min(file),
+        }
+    }
+
+    pub(crate) fn for_inventory(inventory: &ManufacturingInventory, requested: Duration) -> Self {
+        let now = Instant::now();
+        let contract = inventory
+            .aggregate_started
+            .unwrap_or(now)
+            .checked_add(Duration::from_millis(
+                MANUFACTURING_LIMITS.aggregate_timeout_ms,
+            ))
+            .unwrap_or(now);
+        let requested = now.checked_add(requested).unwrap_or(now);
+        Self {
+            at: contract.min(requested),
+        }
+    }
+
+    pub(crate) fn for_input(self, input: &ManufacturingInput) -> Self {
+        let now = Instant::now();
+        let file = input
+            .file_started
+            .unwrap_or(now)
+            .checked_add(Duration::from_millis(MANUFACTURING_LIMITS.file_timeout_ms))
+            .unwrap_or(now);
+        Self {
+            at: self.at.min(file),
+        }
+    }
+
+    pub(crate) fn with_file_limit(self) -> Self {
+        let now = Instant::now();
+        let file = now
+            .checked_add(Duration::from_millis(MANUFACTURING_LIMITS.file_timeout_ms))
+            .unwrap_or(now);
+        Self {
+            at: self.at.min(file),
+        }
+    }
+
+    pub(crate) fn with_aggregate_limit(self) -> Self {
+        let now = Instant::now();
+        let aggregate = now
+            .checked_add(Duration::from_millis(
+                MANUFACTURING_LIMITS.aggregate_timeout_ms,
+            ))
+            .unwrap_or(now);
+        Self {
+            at: self.at.min(aggregate),
+        }
+    }
+
+    pub(crate) fn check(self, resource: &'static str) -> Result<(), FabricationError> {
+        if Instant::now() >= self.at {
+            Err(FabricationError::LimitExceeded { resource })
+        } else {
+            Ok(())
+        }
+    }
 }
 
 pub const MAX_COORDINATE_PM: i64 = 10_000_000_000_000;
@@ -234,6 +375,8 @@ pub const MANUFACTURING_LIMITS: ManufacturingLimits = ManufacturingLimits {
     normalized_path_bytes: 512,
     directory_depth: 12,
 };
+
+const RECONCILIATION_VALUE_BYTES: u64 = MANUFACTURING_LIMITS.canonical_allocation_bytes / 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FabricationError {
@@ -649,6 +792,7 @@ pub struct ManufacturingProvenance {
 pub enum DocumentFormat {
     Gerber,
     Excellon,
+    GerberJob,
     KicadPcb,
     Unknown,
 }
@@ -876,6 +1020,10 @@ pub enum Geometry {
 }
 
 impl Geometry {
+    pub fn kind_name(&self) -> &'static str {
+        self.kind()
+    }
+
     fn kind(&self) -> &'static str {
         match self {
             Self::Point(_) => "point",
@@ -905,6 +1053,44 @@ impl Geometry {
             Self::Point(_) | Self::Flash(_) | Self::Drill(_) => 1,
         }
     }
+
+    fn vertex_count_with_deadline(
+        &self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<usize, FabricationError> {
+        deadline.check("fabrication-limits-validation")?;
+        if let Self::Region(region) = self {
+            let mut count = 0_usize;
+            for contour in &region.contours {
+                deadline.check("fabrication-limits-validation")?;
+                count = count
+                    .checked_add(
+                        contour
+                            .segments
+                            .len()
+                            .saturating_add(usize::from(contour.closed)),
+                    )
+                    .ok_or(FabricationError::ArithmeticOverflow)?;
+            }
+            Ok(count)
+        } else {
+            Ok(self.vertex_count())
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum FeatureMembership {
+    TopLevel,
+    ApertureBlock {
+        block_id: String,
+        aperture_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -917,6 +1103,7 @@ pub struct ManufacturingFeature {
     pub polarity: LayerPolarity,
     pub geometry: Geometry,
     pub transforms: TransformChain,
+    pub membership: FeatureMembership,
     pub provenance: ManufacturingProvenance,
 }
 
@@ -1008,7 +1195,10 @@ pub struct MacroDefinition {
 pub struct ApertureBlock {
     pub id: String,
     pub document_id: String,
+    pub aperture_id: String,
     pub feature_ids: Vec<String>,
+    pub instantiation_feature_ids: Vec<String>,
+    pub definition_end: StructuralLocation,
     pub provenance: ManufacturingProvenance,
 }
 
@@ -1036,6 +1226,20 @@ pub struct Extent {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct DocumentPhysicalBounds {
+    pub id: String,
+    pub document_id: String,
+    pub artifact_digest: String,
+    pub format: DocumentFormat,
+    pub extent: Extent,
+    pub resolution: Picometres,
+    pub geometry_digest: String,
+    pub source_locations: Vec<StructuralLocation>,
+    pub provenance: ManufacturingProvenance,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct BoardProfile {
     pub contour_feature_ids: Vec<String>,
     pub cutout_feature_ids: Vec<String>,
@@ -1050,6 +1254,38 @@ pub struct ObjectSemantics {
     pub net: Option<String>,
     pub component: Option<String>,
     pub pin: Option<String>,
+    pub provenance: ManufacturingProvenance,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum X2AttributeScope {
+    File,
+    Aperture,
+    Object,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum X2AttributeKind {
+    FileFunction,
+    ApertureFunction,
+    Net,
+    Component,
+    Pin,
+    Reset,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopedX2Attribute {
+    pub id: String,
+    pub document_id: String,
+    pub scope: X2AttributeScope,
+    pub kind: X2AttributeKind,
+    pub values: Vec<String>,
+    pub deletion: bool,
+    pub target_ids: Vec<String>,
     pub provenance: ManufacturingProvenance,
 }
 
@@ -1232,6 +1468,7 @@ pub const PACKAGE_GERBERS_ANALYZER: AnalyzerRequirements = AnalyzerRequirements 
         CapabilityId::LayerRoles,
         CapabilityId::Profile,
         CapabilityId::PackageCompleteness,
+        CapabilityId::PackageReconciliation,
     ],
 };
 
@@ -1372,12 +1609,157 @@ pub struct Conflict {
     pub right: ConflictFact,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ReconciliationFamily {
+    Product,
+    Layers,
+    Profile,
+    Drills,
+    Extents,
+    Connectivity,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ReconciliationStatus {
+    Match,
+    Mismatch,
+    NotChecked,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ReconciliationConfidence {
+    Exact,
+    ResolutionBounded,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconciliationFact {
+    pub model_ids: Vec<String>,
+    pub canonical_value: String,
+    pub resolution: Option<Picometres>,
+    pub authority: Authority,
+    pub provenance: ManufacturingProvenance,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManufacturingReconciliation {
+    pub id: String,
+    pub family: ReconciliationFamily,
+    pub status: ReconciliationStatus,
+    pub confidence: ReconciliationConfidence,
+    pub native: ReconciliationFact,
+    pub package: ReconciliationFact,
+    pub smallest_evidence_action: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct JobFileFunctionFact {
+    pub id: String,
+    pub job_document_id: String,
+    pub job_artifact_digest: String,
+    pub referenced_virtual_path: String,
+    pub referenced_document_id: String,
+    pub referenced_artifact_digest: String,
+    pub fields: Vec<String>,
+    pub role: LayerRole,
+    pub side: LayerSide,
+    pub order: Option<i32>,
+    pub plating: Plating,
+    pub from_layer: Option<i32>,
+    pub to_layer: Option<i32>,
+    pub qualifier: Option<String>,
+    pub operation: Option<String>,
+    pub omission: Option<String>,
+    pub conflict_ids: Vec<String>,
+    pub provenance: ManufacturingProvenance,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum IntegratedReconciliationState {
+    NotProvided,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegratedReconciliationOutcome {
+    pub id: String,
+    pub state: IntegratedReconciliationState,
+    pub attempted_native_path: Option<String>,
+    pub attempted_native_digest: Option<String>,
+    pub reason: String,
+}
+
+impl IntegratedReconciliationOutcome {
+    pub fn new(
+        state: IntegratedReconciliationState,
+        attempted_native_path: Option<String>,
+        attempted_native_digest: Option<String>,
+        reason: impl Into<String>,
+    ) -> Result<Self, FabricationError> {
+        let mut outcome = Self {
+            id: String::new(),
+            state,
+            attempted_native_path,
+            attempted_native_digest,
+            reason: reason.into(),
+        };
+        let valid = match outcome.state {
+            IntegratedReconciliationState::NotProvided => {
+                outcome.attempted_native_path.is_none() && outcome.attempted_native_digest.is_none()
+            }
+            IntegratedReconciliationState::Failed => {
+                outcome
+                    .attempted_native_path
+                    .as_deref()
+                    .is_some_and(valid_virtual_path)
+                    && outcome
+                        .attempted_native_digest
+                        .as_deref()
+                        .is_some_and(lowercase_sha256)
+            }
+        };
+        if outcome.reason.is_empty() || !valid {
+            return Err(FabricationError::InvalidIdentity(
+                "integration-outcome".into(),
+            ));
+        }
+        outcome.id = integration_outcome_id(&outcome);
+        Ok(outcome)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManufacturingSourcePair {
+    pub id: String,
+    pub native_document_id: String,
+    pub native_artifact_digest: String,
+    pub release_package_id: String,
+    pub release_document_digests: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ManufacturingWarning {
     pub code: String,
     pub message: String,
     pub provenance: Option<ManufacturingProvenance>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeReconciliationSource {
+    pub review: Box<FabricationReview>,
+    pub extents: Option<Extent>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1405,22 +1787,29 @@ pub struct FabricationReview {
     pub blocks: Vec<ApertureBlock>,
     pub repetitions: Vec<StepRepeat>,
     pub features: Vec<ManufacturingFeature>,
+    pub physical_bounds: Vec<DocumentPhysicalBounds>,
     pub profile: Option<BoardProfile>,
     pub connectivity: Vec<ObjectSemantics>,
+    pub x2_attributes: Vec<ScopedX2Attribute>,
+    pub job_file_functions: Vec<JobFileFunctionFact>,
     pub assembly: AssemblyEvidence,
     pub construction: ConstructionEvidence,
     pub constraints: Vec<ManufacturingConstraint>,
     pub capabilities: CapabilityLedger,
     pub omissions: Vec<Omission>,
     pub conflicts: Vec<Conflict>,
+    pub source_pair: Option<ManufacturingSourcePair>,
+    pub native_reconciliation_source: Option<NativeReconciliationSource>,
+    pub integration_outcome: Option<IntegratedReconciliationOutcome>,
+    pub reconciliations: Vec<ManufacturingReconciliation>,
     pub warnings: Vec<ManufacturingWarning>,
     pub limits: ManufacturingLimits,
     pub estimated_allocation_bytes: u64,
 }
 
-impl Default for FabricationReview {
-    fn default() -> Self {
-        let mut review = Self {
+impl FabricationReview {
+    fn empty_unfinalized() -> Self {
+        Self {
             status: FabricationStatus::NotProvided,
             package_id: String::new(),
             model_digest: String::new(),
@@ -1434,40 +1823,69 @@ impl Default for FabricationReview {
             blocks: vec![],
             repetitions: vec![],
             features: vec![],
+            physical_bounds: vec![],
             profile: None,
             connectivity: vec![],
+            x2_attributes: vec![],
+            job_file_functions: vec![],
             assembly: AssemblyEvidence::default(),
             construction: ConstructionEvidence::default(),
             constraints: vec![],
             capabilities: CapabilityLedger::default(),
             omissions: vec![],
             conflicts: vec![],
+            source_pair: None,
+            native_reconciliation_source: None,
+            integration_outcome: None,
+            reconciliations: vec![],
             warnings: vec![],
             limits: MANUFACTURING_LIMITS,
             estimated_allocation_bytes: 0,
-        };
-        review
-            .refresh_digests()
-            .expect("empty model is serializable");
-        review
+        }
+    }
+
+    fn empty_with_deadline(deadline: ManufacturingDeadline) -> Result<Self, FabricationError> {
+        let mut review = Self::empty_unfinalized();
+        review.refresh_digests_with_deadline(deadline)?;
+        Ok(review)
+    }
+}
+
+impl Default for FabricationReview {
+    fn default() -> Self {
+        Self::empty_with_deadline(ManufacturingDeadline::from_timeout(Duration::from_millis(
+            MANUFACTURING_LIMITS.aggregate_timeout_ms,
+        )))
+        .expect("empty model is serializable")
     }
 }
 
 pub fn legacy_inventory_review(
     inventory: &ManufacturingInventory,
 ) -> Result<FabricationReview, FabricationError> {
-    inventory.validate()?;
-    let mut review = FabricationReview {
-        status: if inventory.outcomes.is_empty() {
-            FabricationStatus::NotProvided
-        } else if inventory.inputs.is_empty() {
-            FabricationStatus::Failed
-        } else {
-            FabricationStatus::Partial
-        },
-        input_outcomes: inventory.outcomes.clone(),
-        ..FabricationReview::default()
+    legacy_inventory_review_with_deadline(
+        inventory,
+        ManufacturingDeadline::for_inventory(
+            inventory,
+            Duration::from_millis(MANUFACTURING_LIMITS.aggregate_timeout_ms),
+        ),
+    )
+}
+
+pub(crate) fn legacy_inventory_review_with_deadline(
+    inventory: &ManufacturingInventory,
+    deadline: ManufacturingDeadline,
+) -> Result<FabricationReview, FabricationError> {
+    inventory.validate_with_deadline(deadline)?;
+    let mut review = FabricationReview::empty_with_deadline(deadline)?;
+    review.status = if inventory.outcomes.is_empty() {
+        FabricationStatus::NotProvided
+    } else if inventory.inputs.is_empty() {
+        FabricationStatus::Failed
+    } else {
+        FabricationStatus::Partial
     };
+    review.input_outcomes = inventory.outcomes.clone();
     for outcome in inventory
         .outcomes
         .iter()
@@ -1477,6 +1895,7 @@ pub fn legacy_inventory_review(
         let format = match outcome.kind_candidate {
             ManufacturingKindCandidate::Gerber => DocumentFormat::Gerber,
             ManufacturingKindCandidate::Excellon => DocumentFormat::Excellon,
+            ManufacturingKindCandidate::GerberJob => DocumentFormat::GerberJob,
         };
         let artifact_digest = outcome
             .artifact_digest
@@ -1575,8 +1994,8 @@ pub fn legacy_inventory_review(
             "Drill coordinate tokens are not parsed drill facts.",
         ),
     ];
-    review.refresh_digests()?;
-    review.validate()?;
+    review.refresh_digests_with_deadline(deadline)?;
+    review.validate_with_deadline(deadline)?;
     Ok(review)
 }
 
@@ -1689,8 +2108,20 @@ pub fn document_id(
     stable_id("document", &(artifact_digest, format))
 }
 
-pub fn layer_id(document_id: &str, role: LayerRole, location: &StructuralLocation) -> String {
-    stable_id("layer", &(document_id, role, location)).expect("identity tuple serializes")
+pub fn layer_id(
+    document_id: &str,
+    name: Option<&str>,
+    role: LayerRole,
+    side: LayerSide,
+    order: Option<i32>,
+    authority: Authority,
+    location: &StructuralLocation,
+) -> String {
+    stable_id(
+        "layer",
+        &(document_id, name, role, side, order, authority, location),
+    )
+    .expect("identity tuple serializes")
 }
 
 pub fn tool_id(document_id: &str, identity_kind: &str, location: &StructuralLocation) -> String {
@@ -1711,8 +2142,43 @@ pub fn feature_id(
     semantic_kind: &str,
     location: &StructuralLocation,
 ) -> String {
-    stable_id("feature", &(document_id, layer_id, semantic_kind, location))
-        .expect("identity tuple serializes")
+    feature_id_with_membership(
+        document_id,
+        layer_id,
+        semantic_kind,
+        location,
+        &FeatureMembership::TopLevel,
+    )
+}
+
+pub fn feature_id_with_membership(
+    document_id: &str,
+    layer_id: &str,
+    semantic_kind: &str,
+    location: &StructuralLocation,
+    membership: &FeatureMembership,
+) -> String {
+    match membership {
+        FeatureMembership::TopLevel => {
+            stable_id("feature", &(document_id, layer_id, semantic_kind, location))
+        }
+        FeatureMembership::ApertureBlock {
+            block_id,
+            aperture_id,
+        } => stable_id(
+            "feature",
+            &(
+                document_id,
+                layer_id,
+                semantic_kind,
+                location,
+                "aperture-block",
+                block_id,
+                aperture_id,
+            ),
+        ),
+    }
+    .expect("feature identity tuple serializes")
 }
 
 pub fn constraint_id(
@@ -1727,56 +2193,171 @@ fn record_id(kind: &str, document_id: &str, location: &StructuralLocation) -> St
     stable_id(kind, &(document_id, location)).expect("identity tuple serializes")
 }
 
+fn source_pair_id_with_deadline(
+    native_document_id: &str,
+    native_artifact_digest: &str,
+    release_package_id: &str,
+    release_document_digests: &[String],
+    deadline: ManufacturingDeadline,
+) -> Result<String, FabricationError> {
+    let mut digests = BTreeSet::new();
+    for digest in release_document_digests {
+        deadline.check("source-pair-identity")?;
+        digests.insert(digest);
+    }
+    stable_id_with_deadline(
+        deadline,
+        "source-pair-identity",
+        "source-pair",
+        &(
+            native_document_id,
+            native_artifact_digest,
+            release_package_id,
+            digests,
+        ),
+    )
+}
+
+fn reconciliation_id_with_deadline(
+    family: ReconciliationFamily,
+    native: &ReconciliationFact,
+    package: &ReconciliationFact,
+    deadline: ManufacturingDeadline,
+) -> Result<String, FabricationError> {
+    stable_id_with_deadline(
+        deadline,
+        "reconciliation-identity",
+        "reconciliation",
+        &(
+            family,
+            &native.model_ids,
+            &native.canonical_value,
+            native.resolution,
+            native.authority,
+            &native.provenance.document_id,
+            &native.provenance.artifact_digest,
+            &native.provenance.location,
+            &package.model_ids,
+            &package.canonical_value,
+            package.resolution,
+            package.authority,
+            &package.provenance.document_id,
+            &package.provenance.artifact_digest,
+            &package.provenance.location,
+        ),
+    )
+}
+
 fn stable_id(kind: &str, fields: &impl Serialize) -> Result<String, FabricationError> {
-    let canonical = serde_json::to_vec(&("fabrication-identity-v1", kind, fields))
+    let mut writer = DeadlineWriter::unbounded("fabrication-identity", true);
+    serde_json::to_writer(&mut writer, &("fabrication-identity-v1", kind, fields))
         .map_err(|error| FabricationError::Serialization(error.to_string()))?;
-    Ok(format!("{kind}-v1-{}", sha256(canonical)))
+    if writer.overflow {
+        return Err(FabricationError::ArithmeticOverflow);
+    }
+    Ok(format!(
+        "{kind}-v1-{}",
+        writer.digest().expect("identity hashing enabled")
+    ))
+}
+
+fn stable_id_with_deadline(
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+    kind: &str,
+    fields: &impl Serialize,
+) -> Result<String, FabricationError> {
+    Ok(format!(
+        "{kind}-v1-{}",
+        hash_serialized_with_deadline(
+            deadline,
+            resource,
+            &("fabrication-identity-v1", kind, fields),
+        )?
+    ))
 }
 
 impl FabricationReview {
     pub fn refresh_digests(&mut self) -> Result<(), FabricationError> {
-        self.package_id = self.expected_package_id()?;
-        self.model_digest = self.expected_model_digest()?;
-        self.estimated_allocation_bytes = self.estimate_allocation()?;
+        self.refresh_digests_with_deadline(ManufacturingDeadline::from_timeout(
+            Duration::from_millis(MANUFACTURING_LIMITS.aggregate_timeout_ms),
+        ))
+    }
+
+    pub fn refresh_physical_bounds(&mut self) -> Result<(), FabricationError> {
+        let deadline = ManufacturingDeadline::from_timeout(Duration::from_millis(
+            MANUFACTURING_LIMITS.aggregate_timeout_ms,
+        ));
+        self.physical_bounds =
+            derive_release_physical_bounds(self, ReconciliationBudget { deadline })?;
         Ok(())
     }
 
-    fn finalize_trusted(&mut self) -> Result<(), FabricationError> {
+    pub(crate) fn refresh_digests_with_deadline(
+        &mut self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<(), FabricationError> {
+        deadline.check("fabrication-digest-refresh")?;
+        self.package_id = self.expected_package_id(deadline)?;
+        self.model_digest = self.expected_model_digest(deadline)?;
+        self.estimated_allocation_bytes = self.estimate_allocation(deadline)?;
+        deadline.check("fabrication-digest-refresh")?;
+        Ok(())
+    }
+
+    fn finalize_trusted_with_deadline(
+        &mut self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<(), FabricationError> {
+        deadline.check("fabrication-finalization")?;
         if self.limits != MANUFACTURING_LIMITS {
             return Err(FabricationError::LimitExceeded {
                 resource: "limits-contract",
             });
         }
-        self.validate_limits()?;
-        self.validate_identities_and_references()?;
-        self.package_id = self.expected_package_id()?;
-        self.model_digest = self.expected_model_digest()?;
-        self.estimated_allocation_bytes = self.estimate_allocation()?;
+        self.validate_limits(deadline)?;
+        self.physical_bounds =
+            derive_release_physical_bounds(self, ReconciliationBudget { deadline })?;
+        self.validate_identities_and_references_with_deadline(deadline, false)?;
+        self.package_id = self.expected_package_id(deadline)?;
+        self.model_digest = self.expected_model_digest(deadline)?;
+        self.estimated_allocation_bytes = self.estimate_allocation(deadline)?;
         if self.estimated_allocation_bytes > self.limits.canonical_allocation_bytes {
             return Err(FabricationError::LimitExceeded {
                 resource: "canonical-allocation",
             });
         }
+        deadline.check("fabrication-finalization")?;
         Ok(())
     }
 
     pub fn validate(&self) -> Result<(), FabricationError> {
+        self.validate_with_deadline(ManufacturingDeadline::from_timeout(Duration::from_millis(
+            MANUFACTURING_LIMITS.aggregate_timeout_ms,
+        )))
+    }
+
+    pub(crate) fn validate_with_deadline(
+        &self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<(), FabricationError> {
+        deadline.check("fabrication-validation")?;
         if self.limits != MANUFACTURING_LIMITS {
             return Err(FabricationError::LimitExceeded {
                 resource: "limits-contract",
             });
         }
-        self.validate_limits()?;
-        self.validate_identities_and_references()?;
-        if self.package_id != self.expected_package_id()? {
+        self.validate_limits(deadline)?;
+        self.validate_identities_and_references_with_deadline(deadline, true)?;
+        if self.package_id != self.expected_package_id(deadline)? {
             return Err(FabricationError::PackageIdentityMismatch);
         }
         if !lowercase_sha256(&self.model_digest)
-            || self.model_digest != self.expected_model_digest()?
+            || self.model_digest != self.expected_model_digest(deadline)?
         {
             return Err(FabricationError::DigestMismatch);
         }
-        let estimated = self.estimate_allocation()?;
+        let estimated = self.estimate_allocation(deadline)?;
         if self.estimated_allocation_bytes != estimated {
             return Err(FabricationError::AllocationEstimateMismatch);
         }
@@ -1785,12 +2366,19 @@ impl FabricationReview {
                 resource: "canonical-allocation",
             });
         }
+        deadline.check("fabrication-validation")?;
         Ok(())
     }
 
-    fn expected_package_id(&self) -> Result<String, FabricationError> {
-        let mut documents: Vec<_> = self.documents.iter().map(|document| &document.id).collect();
-        documents.sort();
+    fn expected_package_id(
+        &self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<String, FabricationError> {
+        let mut documents = BTreeSet::new();
+        for document in &self.documents {
+            deadline.check("fabrication-package-identity")?;
+            documents.insert(&document.id);
+        }
         let product = self.product.as_ref().map(|product| {
             (
                 product.name.as_deref(),
@@ -1799,31 +2387,69 @@ impl FabricationReview {
                 product.authority,
             )
         });
-        stable_id("package", &(documents, product))
+        stable_id_with_deadline(
+            deadline,
+            "fabrication-package-identity",
+            "package",
+            &(documents, product),
+        )
     }
 
-    fn expected_model_digest(&self) -> Result<String, FabricationError> {
-        let mut records = Vec::new();
-        records.push(canonical_json("status", &self.status)?);
-        records.push(canonical_json("package", &self.package_id)?);
-        records.push(canonical_json("limits", &self.limits)?);
+    fn expected_model_digest(
+        &self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<String, FabricationError> {
+        let mut records = BTreeSet::new();
+        let mut feature_records = BTreeMap::new();
+        let mut aperture_records = BTreeMap::new();
+        let mut macro_records = BTreeMap::new();
+        let mut block_records = BTreeMap::new();
+        let mut repeat_records = BTreeMap::new();
+        let mut physically_bound_documents = BTreeSet::new();
+        for bounds in &self.physical_bounds {
+            deadline.check("fabrication-model-digest")?;
+            physically_bound_documents.insert(bounds.document_id.as_str());
+        }
+        records.insert(canonical_json_with_deadline(
+            deadline,
+            "status",
+            &self.status,
+        )?);
+        records.insert(canonical_json_with_deadline(
+            deadline,
+            "package",
+            &self.package_id,
+        )?);
+        records.insert(canonical_json_with_deadline(
+            deadline,
+            "limits",
+            &self.limits,
+        )?);
         for outcome in &self.input_outcomes {
-            records.push(canonical_json("input-outcome", outcome)?);
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "input-outcome",
+                outcome,
+            )?);
         }
         if let Some(product) = &self.product {
-            records.push(canonical_json(
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "product",
                 &(
                     &product.name,
                     &product.revision,
                     &product.part_number,
                     product.authority,
-                    canonical_provenances(&product.provenance),
+                    canonical_provenances(&product.provenance, deadline)?,
                 ),
             )?);
         }
         for document in &self.documents {
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "document",
                 &(
                     &document.id,
@@ -1837,11 +2463,14 @@ impl FabricationReview {
             )?);
         }
         for layer in &self.layers {
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "layer",
                 &(
                     &layer.id,
                     &layer.document_id,
+                    &layer.name,
                     layer.role,
                     layer.side,
                     layer.context,
@@ -1853,7 +2482,9 @@ impl FabricationReview {
             )?);
         }
         for tool in &self.tools {
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "tool",
                 &(
                     &tool.id,
@@ -1867,97 +2498,145 @@ impl FabricationReview {
                 ),
             )?);
         }
-        for aperture in &self.apertures {
-            records.push(canonical_json(
-                "aperture",
-                &(
-                    &aperture.id,
-                    &aperture.document_id,
-                    aperture.shape,
-                    &aperture.dimensions,
-                    aperture.polygon_vertices,
-                    aperture.polygon_rotation_microdegrees,
-                    &aperture.macro_id,
-                    &aperture.macro_arguments,
-                    canonical_provenance(&aperture.provenance),
-                ),
-            )?);
+        for (index, aperture) in self.apertures.iter().enumerate() {
+            if index % 1024 == 0 {
+                deadline.check("fabrication-model-digest")?;
+            }
+            if !physically_bound_documents.contains(aperture.document_id.as_str()) {
+                aperture_records.insert(
+                    aperture.id.as_str(),
+                    (
+                        aperture.shape,
+                        &aperture.dimensions,
+                        aperture.polygon_vertices,
+                        aperture.polygon_rotation_microdegrees,
+                        &aperture.macro_id,
+                        &aperture.macro_arguments,
+                    ),
+                );
+            }
         }
-        for definition in &self.macros {
-            records.push(canonical_json(
-                "macro",
-                &(
-                    &definition.id,
-                    &definition.document_id,
-                    &definition.name,
-                    &definition.variables,
-                    &definition.operations,
-                    canonical_provenance(&definition.provenance),
-                ),
-            )?);
+        for (index, definition) in self.macros.iter().enumerate() {
+            if index % 1024 == 0 {
+                deadline.check("fabrication-model-digest")?;
+            }
+            if !physically_bound_documents.contains(definition.document_id.as_str()) {
+                macro_records.insert(
+                    definition.id.as_str(),
+                    (
+                        &definition.name,
+                        &definition.variables,
+                        &definition.operations,
+                    ),
+                );
+            }
         }
-        for block in &self.blocks {
-            let mut feature_ids = block.feature_ids.clone();
-            feature_ids.sort();
-            records.push(canonical_json(
-                "block",
-                &(
-                    &block.id,
-                    &block.document_id,
-                    feature_ids,
-                    canonical_provenance(&block.provenance),
-                ),
-            )?);
+        for (index, block) in self.blocks.iter().enumerate() {
+            if index % 1024 == 0 {
+                deadline.check("fabrication-model-digest")?;
+            }
+            if !physically_bound_documents.contains(block.document_id.as_str()) {
+                block_records.insert(
+                    block.id.as_str(),
+                    (
+                        &block.aperture_id,
+                        &block.feature_ids,
+                        &block.instantiation_feature_ids,
+                        &block.definition_end,
+                    ),
+                );
+            }
         }
-        for repeat in &self.repetitions {
-            let mut feature_ids = repeat.feature_ids.clone();
-            feature_ids.sort();
-            records.push(canonical_json(
-                "repeat",
-                &(
-                    &repeat.id,
-                    &repeat.document_id,
-                    feature_ids,
-                    repeat.x_count,
-                    repeat.y_count,
-                    repeat.x_step,
-                    repeat.y_step,
-                    canonical_provenance(&repeat.provenance),
-                ),
-            )?);
+        for (index, repeat) in self.repetitions.iter().enumerate() {
+            if index % 1024 == 0 {
+                deadline.check("fabrication-model-digest")?;
+            }
+            if !physically_bound_documents.contains(repeat.document_id.as_str()) {
+                repeat_records.insert(
+                    repeat.id.as_str(),
+                    (
+                        &repeat.feature_ids,
+                        repeat.x_count,
+                        repeat.y_count,
+                        repeat.x_step,
+                        repeat.y_step,
+                    ),
+                );
+            }
         }
         for feature in &self.features {
-            records.push(canonical_json(
-                "feature",
-                &(
-                    &feature.id,
-                    &feature.document_id,
-                    &feature.layer_id,
+            deadline.check("fabrication-model-digest")?;
+            if physically_bound_documents.contains(feature.document_id.as_str()) {
+                continue;
+            }
+            feature_records.insert(
+                feature.id.as_str(),
+                (
                     &feature.tool_id,
                     feature.polarity,
                     &feature.geometry,
                     &feature.transforms,
-                    canonical_provenance(&feature.provenance),
+                    &feature.membership,
+                ),
+            );
+        }
+        if !(aperture_records.is_empty()
+            && macro_records.is_empty()
+            && block_records.is_empty()
+            && repeat_records.is_empty()
+            && feature_records.is_empty())
+        {
+            records.insert(format!(
+                "retained-geometry-v4:{}",
+                hash_serialized_with_deadline(
+                    deadline,
+                    "fabrication-model-digest",
+                    &(
+                        aperture_records,
+                        macro_records,
+                        block_records,
+                        repeat_records,
+                        feature_records,
+                    ),
+                )?
+            ));
+        }
+        for bounds in &self.physical_bounds {
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "physical-bounds",
+                &(
+                    &bounds.id,
+                    &bounds.document_id,
+                    &bounds.artifact_digest,
+                    bounds.format,
+                    &bounds.extent,
+                    bounds.resolution,
+                    &bounds.geometry_digest,
+                    &bounds.source_locations,
+                    canonical_provenance(&bounds.provenance),
                 ),
             )?);
         }
         if let Some(profile) = &self.profile {
-            let mut contours = profile.contour_feature_ids.clone();
-            let mut cutouts = profile.cutout_feature_ids.clone();
-            contours.sort();
-            cutouts.sort();
-            records.push(canonical_json(
+            let contours = canonical_refs(&profile.contour_feature_ids, deadline)?;
+            let cutouts = canonical_refs(&profile.cutout_feature_ids, deadline)?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "profile",
                 &(
                     contours,
                     cutouts,
                     &profile.extents,
-                    canonical_provenances(&profile.provenance),
+                    canonical_provenances(&profile.provenance, deadline)?,
                 ),
             )?);
         }
         for semantic in &self.connectivity {
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "connectivity",
                 &(
                     &semantic.feature_id,
@@ -1968,8 +2647,36 @@ impl FabricationReview {
                 ),
             )?);
         }
+        for attribute in &self.x2_attributes {
+            deadline.check("fabrication-model-digest")?;
+            let targets = canonical_refs(&attribute.target_ids, deadline)?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "x2-attribute",
+                &(
+                    &attribute.id,
+                    &attribute.document_id,
+                    attribute.scope,
+                    attribute.kind,
+                    &attribute.values,
+                    attribute.deletion,
+                    targets,
+                    canonical_provenance(&attribute.provenance),
+                ),
+            )?);
+        }
+        for fact in &self.job_file_functions {
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "job-file-function",
+                fact,
+            )?);
+        }
         for placement in &self.assembly.placements {
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "placement",
                 &(
                     &placement.reference,
@@ -1980,16 +2687,17 @@ impl FabricationReview {
                 ),
             )?);
         }
-        let mut mask_layers = self.assembly.mask_layer_ids.clone();
-        let mut paste_layers = self.assembly.paste_layer_ids.clone();
-        mask_layers.sort();
-        paste_layers.sort();
-        records.push(canonical_json(
+        let mask_layers = canonical_refs(&self.assembly.mask_layer_ids, deadline)?;
+        let paste_layers = canonical_refs(&self.assembly.paste_layer_ids, deadline)?;
+        records.insert(canonical_json_with_deadline(
+            deadline,
             "assembly-layers",
             &(mask_layers, paste_layers),
         )?);
         for layer in &self.construction.layers {
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "construction-layer",
                 &(
                     &layer.layer_id,
@@ -2000,7 +2708,8 @@ impl FabricationReview {
                 ),
             )?);
         }
-        records.push(canonical_json(
+        records.insert(canonical_json_with_deadline(
+            deadline,
             "construction",
             &(
                 &self.construction.total_thickness,
@@ -2008,7 +2717,9 @@ impl FabricationReview {
             ),
         )?);
         for constraint in &self.constraints {
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "constraint",
                 &(
                     &constraint.id,
@@ -2021,23 +2732,25 @@ impl FabricationReview {
             )?);
         }
         for capability in &self.capabilities.records {
-            let mut documents = capability.document_ids.clone();
-            documents.sort();
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            let documents = canonical_refs(&capability.document_ids, deadline)?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "capability",
                 &(
                     capability.id,
                     capability.state,
                     capability.authority,
                     documents,
-                    canonical_provenances(&capability.provenance),
+                    canonical_provenances(&capability.provenance, deadline)?,
                 ),
             )?);
         }
         for omission in &self.omissions {
-            let mut affected = omission.affected_capabilities.clone();
-            affected.sort();
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            let affected = canonical_refs(&omission.affected_capabilities, deadline)?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "omission",
                 &(
                     &omission.id,
@@ -2048,9 +2761,10 @@ impl FabricationReview {
             )?);
         }
         for conflict in &self.conflicts {
-            let mut affected = conflict.affected_capabilities.clone();
-            affected.sort();
-            records.push(canonical_json(
+            deadline.check("fabrication-model-digest")?;
+            let affected = canonical_refs(&conflict.affected_capabilities, deadline)?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
                 "conflict",
                 &(
                     &conflict.id,
@@ -2065,15 +2779,87 @@ impl FabricationReview {
                 ),
             )?);
         }
-        records.sort();
-        Ok(sha256(records.join("\n")))
+        if let Some(pair) = &self.source_pair {
+            let digests = canonical_refs(&pair.release_document_digests, deadline)?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "source-pair",
+                &(
+                    &pair.id,
+                    &pair.native_document_id,
+                    &pair.native_artifact_digest,
+                    &pair.release_package_id,
+                    digests,
+                ),
+            )?);
+        }
+        if let Some(source) = &self.native_reconciliation_source {
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "native-reconciliation-source",
+                &(&source.review.model_digest, &source.extents),
+            )?);
+        }
+        if let Some(outcome) = &self.integration_outcome {
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "integration-outcome",
+                outcome,
+            )?);
+        }
+        for reconciliation in &self.reconciliations {
+            deadline.check("fabrication-model-digest")?;
+            let native_ids = canonical_refs(&reconciliation.native.model_ids, deadline)?;
+            let package_ids = canonical_refs(&reconciliation.package.model_ids, deadline)?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "reconciliation",
+                &(
+                    &reconciliation.id,
+                    reconciliation.family,
+                    reconciliation.status,
+                    reconciliation.confidence,
+                    native_ids,
+                    &reconciliation.native.canonical_value,
+                    reconciliation.native.resolution,
+                    reconciliation.native.authority,
+                    canonical_provenance(&reconciliation.native.provenance),
+                    package_ids,
+                    &reconciliation.package.canonical_value,
+                    reconciliation.package.resolution,
+                    reconciliation.package.authority,
+                    canonical_provenance(&reconciliation.package.provenance),
+                ),
+            )?);
+        }
+        deadline.check("fabrication-model-digest")?;
+        let mut hasher = Sha256::new();
+        let mut first = true;
+        for record in records {
+            deadline.check("fabrication-model-digest")?;
+            if !first {
+                hasher.update(b"\n");
+            }
+            update_sha256_with_deadline(
+                &mut hasher,
+                record.as_bytes(),
+                deadline,
+                "fabrication-model-digest",
+            )?;
+            first = false;
+        }
+        deadline.check("fabrication-model-digest")?;
+        Ok(format!("{:x}", hasher.finalize()))
     }
-
-    fn expanded_feature_instances(&self) -> Result<u64, FabricationError> {
+    fn expanded_feature_instances(
+        &self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<u64, FabricationError> {
         let mut total =
             u64::try_from(self.features.len()).map_err(|_| FabricationError::ArithmeticOverflow)?;
         let mut originals_reused = BTreeSet::new();
         for repeat in &self.repetitions {
+            deadline.check("fabrication-expansion-validation")?;
             let grid = u64::from(repeat.x_count)
                 .checked_mul(u64::from(repeat.y_count))
                 .ok_or(FabricationError::ArithmeticOverflow)?;
@@ -2082,14 +2868,15 @@ impl FabricationReview {
             let repeated = feature_count
                 .checked_mul(grid)
                 .ok_or(FabricationError::ArithmeticOverflow)?;
-            let newly_reused_originals = u64::try_from(
-                repeat
-                    .feature_ids
-                    .iter()
-                    .filter(|feature_id| originals_reused.insert(feature_id.as_str()))
-                    .count(),
-            )
-            .map_err(|_| FabricationError::ArithmeticOverflow)?;
+            let mut newly_reused_originals = 0_u64;
+            for feature_id in &repeat.feature_ids {
+                deadline.check("fabrication-expansion-validation")?;
+                if originals_reused.insert(feature_id.as_str()) {
+                    newly_reused_originals = newly_reused_originals
+                        .checked_add(1)
+                        .ok_or(FabricationError::ArithmeticOverflow)?;
+                }
+            }
             total = total
                 .checked_add(repeated)
                 .and_then(|total| total.checked_sub(newly_reused_originals))
@@ -2098,7 +2885,8 @@ impl FabricationReview {
         Ok(total)
     }
 
-    fn validate_limits(&self) -> Result<(), FabricationError> {
+    fn validate_limits(&self, deadline: ManufacturingDeadline) -> Result<(), FabricationError> {
+        deadline.check("fabrication-limits-validation")?;
         if self.documents.len() > self.limits.recognized_files
             || self.input_outcomes.len() > self.limits.archive_entries
             || self.features.len() > self.limits.geometry_features
@@ -2106,10 +2894,14 @@ impl FabricationReview {
             || self.blocks.len() > self.limits.geometry_features
             || self.repetitions.len() > self.limits.geometry_features
             || self.connectivity.len() > self.limits.geometry_features
+            || self.x2_attributes.len() > self.limits.geometry_features
+            || self.physical_bounds.len() > self.limits.recognized_files
+            || self.job_file_functions.len() > self.limits.recognized_files
             || self.constraints.len() > self.limits.geometry_features
             || self.capabilities.records.len() > self.limits.geometry_features
             || self.omissions.len() > self.limits.geometry_features
             || self.conflicts.len() > self.limits.geometry_features
+            || self.reconciliations.len() > 6
             || self.warnings.len() > self.limits.geometry_features
             || self.assembly.placements.len() > self.limits.geometry_features
             || self.assembly.mask_layer_ids.len() > self.limits.geometry_features
@@ -2128,6 +2920,7 @@ impl FabricationReview {
         let mut retained_outcomes = 0_usize;
         let mut retained_outcome_bytes = 0_u64;
         for outcome in &self.input_outcomes {
+            deadline.check("fabrication-limits-validation")?;
             if !outcome_ids.insert(outcome.id.as_str())
                 || !outcome_paths.insert(outcome.virtual_path.as_str())
                 || !valid_virtual_path(&outcome.virtual_path)
@@ -2170,8 +2963,15 @@ impl FabricationReview {
         let mut raw = 0_u64;
         let mut records = 0_u64;
         let mut tokens = 0_u64;
+        let mut retained_documents = BTreeSet::new();
         for document in &self.documents {
+            deadline.check("fabrication-limits-validation")?;
             let metrics = &document.metrics;
+            retained_documents.insert((
+                document.virtual_path.as_str(),
+                document.artifact_digest.as_str(),
+                document.metrics.raw_bytes,
+            ));
             raw = raw
                 .checked_add(metrics.raw_bytes)
                 .ok_or(FabricationError::ArithmeticOverflow)?;
@@ -2210,18 +3010,24 @@ impl FabricationReview {
                 });
             }
         }
-        if self.input_outcomes.iter().any(|outcome| {
-            outcome.state == ManufacturingLoadState::Retained
-                && !self.documents.iter().any(|document| {
-                    document.virtual_path == outcome.virtual_path
-                        && outcome.artifact_digest.as_deref()
-                            == Some(document.artifact_digest.as_str())
-                        && document.metrics.raw_bytes == outcome.size
-                })
-        }) {
-            return Err(FabricationError::DanglingReference(
-                "retained-manufacturing-input".into(),
-            ));
+        for outcome in self
+            .input_outcomes
+            .iter()
+            .filter(|outcome| outcome.state == ManufacturingLoadState::Retained)
+        {
+            deadline.check("fabrication-limits-validation")?;
+            if !retained_documents.contains(&(
+                outcome.virtual_path.as_str(),
+                outcome
+                    .artifact_digest
+                    .as_deref()
+                    .expect("retained input digest"),
+                outcome.size,
+            )) {
+                return Err(FabricationError::DanglingReference(
+                    "retained-manufacturing-input".into(),
+                ));
+            }
         }
         if raw > self.limits.raw_bytes_aggregate
             || records > self.limits.records_aggregate
@@ -2231,13 +3037,20 @@ impl FabricationReview {
                 resource: "aggregate-input",
             });
         }
-        if self.repetitions.iter().any(|repeat| {
-            repeat.feature_ids.len() > self.limits.geometry_features
+        for repeat in &self.repetitions {
+            deadline.check("fabrication-limits-validation")?;
+            if repeat.feature_ids.len() > self.limits.geometry_features
                 || repeat.x_count == 0
                 || repeat.y_count == 0
                 || repeat.x_count > self.limits.repeat_factor
                 || repeat.y_count > self.limits.repeat_factor
-        }) || self.expanded_feature_instances()?
+            {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
+        if self.expanded_feature_instances(deadline)?
             > u64::try_from(self.limits.geometry_features)
                 .map_err(|_| FabricationError::ArithmeticOverflow)?
         {
@@ -2245,7 +3058,26 @@ impl FabricationReview {
                 resource: "definition-expansion",
             });
         }
-        let macro_variables: usize = self.macros.iter().map(|item| item.variables.len()).sum();
+        let mut macro_variables = 0_usize;
+        for item in &self.macros {
+            deadline.check("fabrication-limits-validation")?;
+            macro_variables = macro_variables
+                .checked_add(item.variables.len())
+                .ok_or(FabricationError::ArithmeticOverflow)?;
+            if item.operations.len() > self.limits.operations_per_macro {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+            for text in item.variables.iter().chain(item.operations.iter()) {
+                deadline.check("fabrication-limits-validation")?;
+                if text.len() > self.limits.max_text_bytes {
+                    return Err(FabricationError::LimitExceeded {
+                        resource: "definition-expansion",
+                    });
+                }
+            }
+        }
         if macro_variables > self.limits.macro_variables
             || self
                 .product
@@ -2256,75 +3088,121 @@ impl FabricationReview {
                     || profile.cutout_feature_ids.len() > self.limits.geometry_features
                     || profile.provenance.len() > self.limits.geometry_features
             })
-            || self
-                .apertures
-                .iter()
-                .any(|item| item.dimensions.len() > self.limits.geometry_features)
-            || self
-                .blocks
-                .iter()
-                .any(|item| item.feature_ids.len() > self.limits.geometry_features)
-            || self.capabilities.records.iter().any(|item| {
-                item.document_ids.len() > self.limits.recognized_files
-                    || item.provenance.len() > self.limits.geometry_features
-            })
-            || self
-                .omissions
-                .iter()
-                .any(|item| item.affected_capabilities.len() > self.limits.geometry_features)
-            || self
-                .conflicts
-                .iter()
-                .any(|item| item.affected_capabilities.len() > self.limits.geometry_features)
-            || self
-                .features
-                .iter()
-                .any(|item| item.transforms.operations.len() > usize::from(self.limits.max_nesting))
-            || self.macros.iter().any(|item| {
-                item.operations.len() > self.limits.operations_per_macro
-                    || item
-                        .variables
-                        .iter()
-                        .chain(item.operations.iter())
-                        .any(|text| text.len() > self.limits.max_text_bytes)
-            })
         {
             return Err(FabricationError::LimitExceeded {
                 resource: "definition-expansion",
             });
         }
-        let vertices: usize = self
-            .features
-            .iter()
-            .map(|item| item.geometry.vertex_count())
-            .sum();
-        let drill_routes = self
-            .features
-            .iter()
-            .filter(|item| {
-                matches!(
-                    item.geometry,
-                    Geometry::Drill(_) | Geometry::Route(_) | Geometry::Slot(_)
-                )
-            })
-            .count();
+        for item in &self.physical_bounds {
+            deadline.check("fabrication-limits-validation")?;
+            if item.source_locations.len() > self.limits.geometry_features {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
+        for item in &self.job_file_functions {
+            deadline.check("fabrication-limits-validation")?;
+            if item.fields.len() > 8 || item.conflict_ids.len() > self.limits.geometry_features {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
+        for item in &self.apertures {
+            deadline.check("fabrication-limits-validation")?;
+            if item.dimensions.len() > self.limits.geometry_features {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
+        for item in &self.blocks {
+            deadline.check("fabrication-limits-validation")?;
+            if item.feature_ids.len() > self.limits.geometry_features {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
+        for item in &self.capabilities.records {
+            deadline.check("fabrication-limits-validation")?;
+            if item.document_ids.len() > self.limits.recognized_files
+                || item.provenance.len() > self.limits.geometry_features
+            {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
+        for item in &self.omissions {
+            deadline.check("fabrication-limits-validation")?;
+            if item.affected_capabilities.len() > self.limits.geometry_features {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
+        for item in &self.conflicts {
+            deadline.check("fabrication-limits-validation")?;
+            if item.affected_capabilities.len() > self.limits.geometry_features {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
+        let mut vertices = 0_usize;
+        let mut drill_routes = 0_usize;
+        for item in &self.features {
+            deadline.check("fabrication-limits-validation")?;
+            if item.transforms.operations.len() > usize::from(self.limits.max_nesting) {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+            vertices = vertices
+                .checked_add(item.geometry.vertex_count_with_deadline(deadline)?)
+                .ok_or(FabricationError::ArithmeticOverflow)?;
+            drill_routes = drill_routes
+                .checked_add(match &item.geometry {
+                    Geometry::Drill(_) | Geometry::Slot(_) => 1,
+                    Geometry::Route(route) => route.segments.len(),
+                    _ => 0,
+                })
+                .ok_or(FabricationError::ArithmeticOverflow)?;
+        }
         if vertices > self.limits.contour_vertices
             || drill_routes > self.limits.drill_route_features
-            || self.all_texts().any(|text| {
-                text.len() > self.limits.max_text_bytes || text.chars().any(char::is_control)
-            })
         {
             return Err(FabricationError::LimitExceeded {
                 resource: "canonical-model",
             });
         }
+        for text in self.all_texts() {
+            deadline.check("fabrication-limits-validation")?;
+            if text.len() > self.limits.max_text_bytes || text.chars().any(char::is_control) {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "canonical-model",
+                });
+            }
+        }
+        deadline.check("fabrication-limits-validation")?;
         Ok(())
     }
 
-    fn validate_identities_and_references(&self) -> Result<(), FabricationError> {
+    fn validate_identities_and_references_with_deadline(
+        &self,
+        deadline: ManufacturingDeadline,
+        rederive_physical_bounds: bool,
+    ) -> Result<(), FabricationError> {
+        let check_deadline = || deadline.check("fabrication-reference-validation");
+        let authoritative_budget = ReconciliationBudget { deadline };
+        check_deadline()?;
         let mut ids = HashSet::new();
         let mut document_ids = HashSet::new();
+        let mut documents_by_id = HashMap::new();
         for document in &self.documents {
+            check_deadline()?;
             if !lowercase_sha256(&document.artifact_digest) {
                 return Err(FabricationError::InvalidDigest(
                     document.artifact_digest.clone(),
@@ -2335,21 +3213,36 @@ impl FabricationReview {
             }
             insert_id(&mut ids, &document.id)?;
             document_ids.insert(document.id.as_str());
+            documents_by_id.insert(document.id.as_str(), document);
         }
         let mut layer_ids = HashSet::new();
+        let mut layer_documents = HashMap::new();
         for layer in &self.layers {
-            validate_provenance(&layer.provenance, &self.documents)?;
+            check_deadline()?;
+            validate_provenance(&layer.provenance, &self.documents, deadline)?;
             if !document_ids.contains(layer.document_id.as_str())
-                || layer.id != layer_id(&layer.document_id, layer.role, &layer.provenance.location)
+                || layer.id
+                    != layer_id(
+                        &layer.document_id,
+                        layer.name.as_deref(),
+                        layer.role,
+                        layer.side,
+                        layer.order,
+                        layer.authority,
+                        &layer.provenance.location,
+                    )
             {
                 return Err(FabricationError::InvalidIdentity(layer.id.clone()));
             }
             insert_id(&mut ids, &layer.id)?;
             layer_ids.insert(layer.id.as_str());
+            layer_documents.insert(layer.id.as_str(), layer.document_id.as_str());
         }
         let mut tool_ids = HashSet::new();
+        let mut tool_documents = HashMap::new();
         for tool in &self.tools {
-            validate_provenance(&tool.provenance, &self.documents)?;
+            check_deadline()?;
+            validate_provenance(&tool.provenance, &self.documents, deadline)?;
             let identity_kind = format!("{:?}:{}", tool.kind, tool.code);
             if !document_ids.contains(tool.document_id.as_str())
                 || tool.id != tool_id(&tool.document_id, &identity_kind, &tool.provenance.location)
@@ -2367,10 +3260,12 @@ impl FabricationReview {
             validate_positive_length_option(tool.diameter)?;
             insert_id(&mut ids, &tool.id)?;
             tool_ids.insert(tool.id.as_str());
+            tool_documents.insert(tool.id.as_str(), tool.document_id.as_str());
         }
         let mut macro_ids = HashSet::new();
         for definition in &self.macros {
-            validate_provenance(&definition.provenance, &self.documents)?;
+            check_deadline()?;
+            validate_provenance(&definition.provenance, &self.documents, deadline)?;
             if definition.id
                 != record_id(
                     "macro",
@@ -2384,8 +3279,10 @@ impl FabricationReview {
             macro_ids.insert(definition.id.as_str());
         }
         let mut aperture_ids = HashSet::new();
+        let mut apertures_by_id = HashMap::new();
         for aperture in &self.apertures {
-            validate_provenance(&aperture.provenance, &self.documents)?;
+            check_deadline()?;
+            validate_provenance(&aperture.provenance, &self.documents, deadline)?;
             if aperture.id
                 != aperture_id(
                     &aperture.document_id,
@@ -2434,60 +3331,213 @@ impl FabricationReview {
             }
             insert_id(&mut ids, &aperture.id)?;
             aperture_ids.insert(aperture.id.as_str());
+            apertures_by_id.insert(aperture.id.as_str(), aperture);
         }
+        let mut blocks_by_id = HashMap::new();
+        let mut block_ranges = BTreeMap::<&str, Vec<&ApertureBlock>>::new();
+        let mut matched_block_apertures = BTreeSet::new();
+        for block in &self.blocks {
+            check_deadline()?;
+            validate_provenance(&block.provenance, &self.documents, deadline)?;
+            let aperture = apertures_by_id.get(block.aperture_id.as_str()).copied();
+            let start = &block.provenance.location;
+            if !document_ids.contains(block.document_id.as_str())
+                || block.id != record_id("block", &block.document_id, start)
+                || block.aperture_id != aperture_id(&block.document_id, ApertureShape::Block, start)
+                || aperture.is_none_or(|aperture| {
+                    aperture.document_id != block.document_id
+                        || aperture.shape != ApertureShape::Block
+                        || !aperture.dimensions.is_empty()
+                        || aperture.provenance.location != *start
+                })
+                || start.record >= block.definition_end.record
+                || start.byte_end >= block.definition_end.byte_start
+                || blocks_by_id.insert(block.id.as_str(), block).is_some()
+                || !matched_block_apertures.insert(block.aperture_id.as_str())
+            {
+                return Err(FabricationError::InvalidIdentity("block-membership".into()));
+            }
+            let ranges = block_ranges.entry(block.document_id.as_str()).or_default();
+            if ranges.last().is_some_and(|previous| {
+                previous.definition_end.byte_end >= block.provenance.location.byte_start
+            }) {
+                return Err(FabricationError::InvalidIdentity("block-membership".into()));
+            }
+            ranges.push(block);
+        }
+        let mut expected_block_apertures = BTreeSet::new();
+        for aperture in &self.apertures {
+            check_deadline()?;
+            if aperture.shape == ApertureShape::Block {
+                expected_block_apertures.insert(aperture.id.as_str());
+            }
+        }
+        if matched_block_apertures != expected_block_apertures {
+            return Err(FabricationError::InvalidIdentity("block-membership".into()));
+        }
+
         let mut feature_ids = HashSet::new();
-        let mut transformed_geometry_was_quantized = false;
+        let mut features_by_id = HashMap::new();
+        let mut members_by_block = HashMap::<&str, Vec<&str>>::new();
+        let mut instantiations_by_aperture = HashMap::<&str, Vec<&str>>::new();
+        let mut quantized_documents = BTreeSet::new();
         for feature in &self.features {
-            validate_provenance(&feature.provenance, &self.documents)?;
+            check_deadline()?;
+            validate_provenance(&feature.provenance, &self.documents, deadline)?;
+            let containing_block =
+                block_ranges
+                    .get(feature.document_id.as_str())
+                    .and_then(|ranges| {
+                        let index = ranges.partition_point(|block| {
+                            block.provenance.location.byte_start
+                                < feature.provenance.location.byte_start
+                        });
+                        index
+                            .checked_sub(1)
+                            .and_then(|index| ranges.get(index).copied())
+                            .filter(|block| {
+                                block.provenance.location.byte_end
+                                    < feature.provenance.location.byte_start
+                                    && feature.provenance.location.byte_end
+                                        < block.definition_end.byte_start
+                            })
+                    });
+            let membership_valid = match &feature.membership {
+                FeatureMembership::TopLevel => containing_block.is_none(),
+                FeatureMembership::ApertureBlock {
+                    block_id,
+                    aperture_id,
+                } => containing_block.is_some_and(|block| {
+                    block.id == *block_id
+                        && block.aperture_id == *aperture_id
+                        && block.document_id == feature.document_id
+                }),
+            };
+            let referenced_aperture = match &feature.geometry {
+                Geometry::Flash(flash) => Some(flash.aperture_id.as_str()),
+                _ => None,
+            };
+            let referenced_geometry_tool = match &feature.geometry {
+                Geometry::Drill(drill) => Some(drill.tool_id.as_str()),
+                Geometry::Route(route) => Some(route.tool_id.as_str()),
+                Geometry::Slot(slot) => Some(slot.tool_id.as_str()),
+                _ => None,
+            };
             if !document_ids.contains(feature.document_id.as_str())
-                || !layer_ids.contains(feature.layer_id.as_str())
+                || layer_documents.get(feature.layer_id.as_str()).copied()
+                    != Some(feature.document_id.as_str())
+                || feature.tool_id.as_deref().is_some_and(|id| {
+                    tool_documents.get(id).copied() != Some(feature.document_id.as_str())
+                })
+                || referenced_geometry_tool.is_some_and(|id| {
+                    tool_documents.get(id).copied() != Some(feature.document_id.as_str())
+                })
+                || referenced_aperture.is_some_and(|id| {
+                    apertures_by_id
+                        .get(id)
+                        .is_none_or(|aperture| aperture.document_id != feature.document_id)
+                })
             {
                 return Err(FabricationError::DanglingReference(feature.id.clone()));
             }
-            if feature.id
-                != feature_id(
-                    &feature.document_id,
-                    &feature.layer_id,
-                    feature.geometry.kind(),
-                    &feature.provenance.location,
-                )
+            if !membership_valid
+                || feature.id
+                    != feature_id_with_membership(
+                        &feature.document_id,
+                        &feature.layer_id,
+                        feature.geometry.kind(),
+                        &feature.provenance.location,
+                        &feature.membership,
+                    )
             {
-                return Err(FabricationError::InvalidIdentity(feature.id.clone()));
+                return Err(FabricationError::InvalidIdentity("block-membership".into()));
             }
-            if feature
-                .tool_id
-                .as_deref()
-                .is_some_and(|id| !tool_ids.contains(id))
+            validate_geometry(&feature.geometry, &aperture_ids, &tool_ids, deadline)?;
+            if !feature.transforms.operations.is_empty()
+                && validate_transformed_geometry(&feature.geometry, &feature.transforms, deadline)?
             {
-                return Err(FabricationError::DanglingReference(feature.id.clone()));
+                quantized_documents.insert(feature.document_id.as_str());
             }
-            validate_geometry(&feature.geometry, &aperture_ids, &tool_ids)?;
-            transformed_geometry_was_quantized |=
-                validate_transformed_geometry(&feature.geometry, &feature.transforms)?;
             insert_id(&mut ids, &feature.id)?;
             feature_ids.insert(feature.id.as_str());
+            features_by_id.insert(feature.id.as_str(), feature);
+            if let FeatureMembership::ApertureBlock { block_id, .. } = &feature.membership {
+                members_by_block
+                    .entry(block_id.as_str())
+                    .or_default()
+                    .push(feature.id.as_str());
+            }
+            if let Geometry::Flash(flash) = &feature.geometry {
+                instantiations_by_aperture
+                    .entry(flash.aperture_id.as_str())
+                    .or_default()
+                    .push(feature.id.as_str());
+            }
         }
         for block in &self.blocks {
-            validate_provenance(&block.provenance, &self.documents)?;
-            if block.id != record_id("block", &block.document_id, &block.provenance.location)
-                || block
-                    .feature_ids
-                    .iter()
-                    .any(|id| !feature_ids.contains(id.as_str()))
+            check_deadline()?;
+            let expected_members = members_by_block
+                .get(block.id.as_str())
+                .cloned()
+                .unwrap_or_default();
+            let expected_instantiations = instantiations_by_aperture
+                .get(block.aperture_id.as_str())
+                .cloned()
+                .unwrap_or_default();
+            let members_match = block.feature_ids.len() == expected_members.len()
+                && checked_all_with_deadline(
+                    block.feature_ids.iter().zip(&expected_members),
+                    deadline,
+                    "block-membership",
+                    |(supplied, expected)| supplied == expected,
+                )?;
+            let instantiations_match = block.instantiation_feature_ids.len()
+                == expected_instantiations.len()
+                && checked_all_with_deadline(
+                    block
+                        .instantiation_feature_ids
+                        .iter()
+                        .zip(&expected_instantiations),
+                    deadline,
+                    "block-membership",
+                    |(supplied, expected)| supplied == expected,
+                )?;
+            let supplied_members = checked_btree_set_with_deadline(
+                block.feature_ids.iter().map(String::as_str),
+                deadline,
+                "block-membership",
+            )?;
+            let supplied_instantiations = checked_btree_set_with_deadline(
+                block.instantiation_feature_ids.iter().map(String::as_str),
+                deadline,
+                "block-membership",
+            )?;
+            if !members_match
+                || !instantiations_match
+                || supplied_members.len() != block.feature_ids.len()
+                || supplied_instantiations.len() != block.instantiation_feature_ids.len()
             {
-                return Err(FabricationError::DanglingReference(block.id.clone()));
+                return Err(FabricationError::InvalidIdentity("block-membership".into()));
             }
             insert_id(&mut ids, &block.id)?;
         }
         for repeat in &self.repetitions {
-            validate_provenance(&repeat.provenance, &self.documents)?;
-            if repeat.id != record_id("repeat", &repeat.document_id, &repeat.provenance.location)
-                || repeat
-                    .feature_ids
-                    .iter()
-                    .any(|id| !feature_ids.contains(id.as_str()))
-            {
+            check_deadline()?;
+            validate_provenance(&repeat.provenance, &self.documents, deadline)?;
+            if repeat.id != record_id("repeat", &repeat.document_id, &repeat.provenance.location) {
                 return Err(FabricationError::DanglingReference(repeat.id.clone()));
+            }
+            for (index, feature_id) in repeat.feature_ids.iter().enumerate() {
+                if index % 1024 == 0 {
+                    check_deadline()?;
+                }
+                if !feature_ids.contains(feature_id.as_str())
+                    || features_by_id
+                        .get(feature_id.as_str())
+                        .is_none_or(|feature| feature.document_id != repeat.document_id)
+                {
+                    return Err(FabricationError::DanglingReference(repeat.id.clone()));
+                }
             }
             validate_length(repeat.x_step)?;
             validate_length(repeat.y_step)?;
@@ -2496,15 +3546,16 @@ impl FabricationReview {
                 y: repeat_max_offset(repeat.y_step, repeat.y_count)?,
             };
             for feature_id in &repeat.feature_ids {
-                let feature = self
-                    .features
-                    .iter()
-                    .find(|feature| feature.id == *feature_id)
+                check_deadline()?;
+                let feature = features_by_id
+                    .get(feature_id.as_str())
+                    .copied()
                     .ok_or_else(|| FabricationError::DanglingReference(feature_id.clone()))?;
                 validate_transformed_geometry_at_offset(
                     &feature.geometry,
                     &feature.transforms,
                     offset,
+                    deadline,
                 )?;
             }
             insert_id(&mut ids, &repeat.id)?;
@@ -2514,20 +3565,23 @@ impl FabricationReview {
                 return Err(FabricationError::InvalidProvenance("product".into()));
             }
             for provenance in &product.provenance {
-                validate_provenance(provenance, &self.documents)?;
+                check_deadline()?;
+                validate_provenance(provenance, &self.documents, deadline)?;
             }
         }
         if let Some(profile) = &self.profile {
             if profile.provenance.is_empty() {
                 return Err(FabricationError::InvalidProvenance("profile".into()));
             }
-            if profile
+            for feature_id in profile
                 .contour_feature_ids
                 .iter()
-                .chain(profile.cutout_feature_ids.iter())
-                .any(|id| !feature_ids.contains(id.as_str()))
+                .chain(&profile.cutout_feature_ids)
             {
-                return Err(FabricationError::DanglingReference("profile".into()));
+                check_deadline()?;
+                if !feature_ids.contains(feature_id.as_str()) {
+                    return Err(FabricationError::DanglingReference("profile".into()));
+                }
             }
             if let Some(extents) = &profile.extents {
                 validate_point(extents.min)?;
@@ -2537,31 +3591,256 @@ impl FabricationReview {
                 }
             }
             for provenance in &profile.provenance {
-                validate_provenance(provenance, &self.documents)?;
+                check_deadline()?;
+                validate_provenance(provenance, &self.documents, deadline)?;
             }
         }
         for semantic in &self.connectivity {
+            check_deadline()?;
             if !feature_ids.contains(semantic.feature_id.as_str()) {
                 return Err(FabricationError::DanglingReference(
                     semantic.feature_id.clone(),
                 ));
             }
-            validate_provenance(&semantic.provenance, &self.documents)?;
+            validate_provenance(&semantic.provenance, &self.documents, deadline)?;
         }
+        for attribute in &self.x2_attributes {
+            check_deadline()?;
+            validate_provenance(&attribute.provenance, &self.documents, deadline)?;
+            let mut targets = BTreeSet::new();
+            let mut targets_valid = true;
+            for (index, target) in attribute.target_ids.iter().enumerate() {
+                if index % 1024 == 0 {
+                    check_deadline()?;
+                }
+                targets.insert(target);
+                targets_valid &= match attribute.scope {
+                    X2AttributeScope::File => target == &attribute.document_id,
+                    X2AttributeScope::Aperture => aperture_ids.contains(target.as_str()),
+                    X2AttributeScope::Object => feature_ids.contains(target.as_str()),
+                };
+            }
+            let valid_kind = matches!(
+                (attribute.scope, attribute.kind),
+                (X2AttributeScope::File, X2AttributeKind::FileFunction)
+                    | (
+                        X2AttributeScope::Aperture,
+                        X2AttributeKind::ApertureFunction | X2AttributeKind::Reset
+                    )
+                    | (
+                        X2AttributeScope::Object,
+                        X2AttributeKind::Net
+                            | X2AttributeKind::Component
+                            | X2AttributeKind::Pin
+                            | X2AttributeKind::Reset
+                    )
+            );
+            let mut values_valid = true;
+            for (index, value) in attribute.values.iter().enumerate() {
+                if index % 1024 == 0 {
+                    check_deadline()?;
+                }
+                values_valid &= !value.is_empty();
+            }
+            if attribute.document_id != attribute.provenance.document_id
+                || attribute.id != scoped_x2_attribute_id_with_deadline(attribute, deadline)?
+                || !valid_kind
+                || targets.len() != attribute.target_ids.len()
+                || !targets_valid
+                || attribute.deletion != attribute.values.is_empty()
+                || !values_valid
+                || (attribute.deletion && !attribute.target_ids.is_empty())
+            {
+                return Err(FabricationError::InvalidIdentity(attribute.id.clone()));
+            }
+            insert_id(&mut ids, &attribute.id)?;
+        }
+        let mut bound_documents = BTreeSet::new();
+        for bounds in &self.physical_bounds {
+            check_deadline()?;
+            let document = documents_by_id
+                .get(bounds.document_id.as_str())
+                .copied()
+                .ok_or_else(|| FabricationError::DanglingReference(bounds.id.clone()))?;
+            let mut locations = BTreeSet::new();
+            for (index, location) in bounds.source_locations.iter().enumerate() {
+                if index % 1024 == 0 {
+                    check_deadline()?;
+                }
+                locations.insert(location);
+            }
+            if !bound_documents.insert(bounds.document_id.as_str())
+                || !matches!(
+                    bounds.format,
+                    DocumentFormat::Gerber | DocumentFormat::Excellon
+                )
+                || bounds.format != document.format
+                || bounds.artifact_digest != document.artifact_digest
+                || !lowercase_sha256(&bounds.geometry_digest)
+                || bounds.id != physical_bounds_id_with_deadline(bounds, deadline)?
+                || document
+                    .numeric_format
+                    .as_ref()
+                    .is_none_or(|format| format.resolution != bounds.resolution)
+                || locations.len() != bounds.source_locations.len()
+                || bounds.source_locations.is_empty()
+            {
+                return Err(FabricationError::InvalidIdentity(bounds.id.clone()));
+            }
+            validate_provenance(&bounds.provenance, &self.documents, deadline)?;
+            insert_id(&mut ids, &bounds.id)?;
+            validate_point(bounds.extent.min)?;
+            validate_point(bounds.extent.max)?;
+            if bounds.extent.min.x > bounds.extent.max.x
+                || bounds.extent.min.y > bounds.extent.max.y
+            {
+                return Err(FabricationError::InvalidIdentity(bounds.id.clone()));
+            }
+        }
+        let expected_bounds = if rederive_physical_bounds {
+            Some(derive_release_physical_bounds(self, authoritative_budget)?)
+        } else {
+            None
+        };
+        let requires_bounds = checked_any_with_deadline(
+            &self.documents,
+            deadline,
+            "authoritative-physical-bounds",
+            |document| {
+                matches!(
+                    document.format,
+                    DocumentFormat::Gerber | DocumentFormat::Excellon
+                ) && document.parse_status == ParseStatus::Complete
+                    && matches!(
+                        document.adapter.as_str(),
+                        "gerber-parser-ratemypcb" | "ratemypcb-xnc"
+                    )
+            },
+        )?;
+        if let Some(expected_bounds) = expected_bounds {
+            if requires_bounds || !self.physical_bounds.is_empty() {
+                let supplied_digest = hash_serialized_with_deadline(
+                    deadline,
+                    "authoritative-physical-bounds",
+                    &self.physical_bounds,
+                )?;
+                let expected_digest = hash_serialized_with_deadline(
+                    deadline,
+                    "authoritative-physical-bounds",
+                    &expected_bounds,
+                )?;
+                if supplied_digest != expected_digest {
+                    return Err(FabricationError::InvalidIdentity(
+                        "authoritative-physical-bounds".into(),
+                    ));
+                }
+            }
+        }
+
+        let mut retained_conflict_ids = BTreeSet::new();
+        for conflict in &self.conflicts {
+            check_deadline()?;
+            retained_conflict_ids.insert(conflict.id.as_str());
+        }
+        let mut job_fact_ids = BTreeSet::new();
+        let mut job_targets = BTreeSet::new();
+        for fact in &self.job_file_functions {
+            check_deadline()?;
+            let job = documents_by_id
+                .get(fact.job_document_id.as_str())
+                .copied()
+                .filter(|document| document.format == DocumentFormat::GerberJob)
+                .ok_or_else(|| FabricationError::DanglingReference(fact.id.clone()))?;
+            let referenced = documents_by_id
+                .get(fact.referenced_document_id.as_str())
+                .copied()
+                .filter(|document| document.format != DocumentFormat::GerberJob)
+                .ok_or_else(|| FabricationError::DanglingReference(fact.id.clone()))?;
+            let parsed = package_file_function(&X2Attribute {
+                name: "TF.FileFunction".into(),
+                values: fact.fields.clone(),
+                provenance: fact.provenance.clone(),
+            })?;
+            let mut conflicts = BTreeSet::new();
+            let mut conflicts_valid = true;
+            for conflict_id in &fact.conflict_ids {
+                check_deadline()?;
+                conflicts.insert(conflict_id);
+                conflicts_valid &= retained_conflict_ids.contains(conflict_id.as_str());
+            }
+            if !job_fact_ids.insert(fact.id.as_str())
+                || !job_targets.insert(fact.referenced_document_id.as_str())
+                || fact.id != job_file_function_fact_id_with_deadline(fact, deadline)?
+                || fact.job_artifact_digest != job.artifact_digest
+                || fact.referenced_virtual_path != referenced.virtual_path
+                || fact.referenced_artifact_digest != referenced.artifact_digest
+                || fact.provenance.document_id != job.id
+                || fact.provenance.artifact_digest != job.artifact_digest
+                || parsed.role != fact.role
+                || parsed.side != fact.side
+                || parsed.order != fact.order
+                || parsed.plating != fact.plating
+                || parsed.from_layer != fact.from_layer
+                || parsed.to_layer != fact.to_layer
+                || parsed.qualifier != fact.qualifier
+                || parsed.operation != fact.operation
+                || conflicts.len() != fact.conflict_ids.len()
+                || !conflicts_valid
+            {
+                return Err(FabricationError::InvalidIdentity(fact.id.clone()));
+            }
+            validate_provenance(&fact.provenance, &self.documents, deadline)?;
+            insert_id(&mut ids, &fact.id)?;
+        }
+
+        if let Some(outcome) = &self.integration_outcome {
+            check_deadline()?;
+            let shape_valid = match outcome.state {
+                IntegratedReconciliationState::NotProvided => {
+                    outcome.attempted_native_path.is_none()
+                        && outcome.attempted_native_digest.is_none()
+                }
+                IntegratedReconciliationState::Failed => {
+                    outcome
+                        .attempted_native_path
+                        .as_deref()
+                        .is_some_and(valid_virtual_path)
+                        && outcome
+                            .attempted_native_digest
+                            .as_deref()
+                            .is_some_and(lowercase_sha256)
+                }
+            };
+            insert_id(&mut ids, &outcome.id)?;
+            if outcome.id != integration_outcome_id(outcome)
+                || outcome.reason.is_empty()
+                || !shape_valid
+                || self.source_pair.is_some()
+                || self.native_reconciliation_source.is_some()
+                || !self.reconciliations.is_empty()
+            {
+                return Err(FabricationError::InvalidIdentity(outcome.id.clone()));
+            }
+        }
+
         for placement in &self.assembly.placements {
+            check_deadline()?;
             validate_point(placement.position)?;
-            validate_provenance(&placement.provenance, &self.documents)?;
+            validate_provenance(&placement.provenance, &self.documents, deadline)?;
         }
-        if self
+        for layer_id in self
             .assembly
             .mask_layer_ids
             .iter()
-            .chain(self.assembly.paste_layer_ids.iter())
-            .any(|id| !layer_ids.contains(id.as_str()))
+            .chain(&self.assembly.paste_layer_ids)
         {
-            return Err(FabricationError::DanglingReference("assembly-layer".into()));
+            check_deadline()?;
+            if !layer_ids.contains(layer_id.as_str()) {
+                return Err(FabricationError::DanglingReference("assembly-layer".into()));
+            }
         }
         for layer in &self.construction.layers {
+            check_deadline()?;
             if layer
                 .layer_id
                 .as_deref()
@@ -2572,11 +3851,12 @@ impl FabricationReview {
                 ));
             }
             validate_positive_length_option(layer.thickness)?;
-            validate_provenance(&layer.provenance, &self.documents)?;
+            validate_provenance(&layer.provenance, &self.documents, deadline)?;
         }
         validate_positive_length_option(self.construction.total_thickness)?;
         for constraint in &self.constraints {
-            validate_provenance(&constraint.provenance, &self.documents)?;
+            check_deadline()?;
+            validate_provenance(&constraint.provenance, &self.documents, deadline)?;
             if constraint.id
                 != constraint_id(
                     &constraint.provenance.document_id,
@@ -2589,33 +3869,44 @@ impl FabricationReview {
             validate_positive_length_option(constraint.value)?;
             insert_id(&mut ids, &constraint.id)?;
         }
-        if transformed_geometry_was_quantized
-            && self.capabilities.records.iter().any(|capability| {
-                capability.id == CapabilityId::GeometryExpanded
+        if !quantized_documents.is_empty() {
+            for capability in &self.capabilities.records {
+                check_deadline()?;
+                if capability.id == CapabilityId::GeometryExpanded
                     && capability.state == CapabilityState::Complete
-            })
-        {
-            return Err(FabricationError::InvalidIdentity(
-                "quantized-expanded-geometry".into(),
-            ));
+                {
+                    let mut applies = capability.document_ids.is_empty();
+                    for document_id in &capability.document_ids {
+                        check_deadline()?;
+                        applies |= quantized_documents.contains(document_id.as_str());
+                    }
+                    if applies {
+                        return Err(FabricationError::InvalidIdentity(
+                            "quantized-expanded-geometry".into(),
+                        ));
+                    }
+                }
+            }
         }
         let mut capabilities = HashSet::new();
+        let mut capability_states = BTreeMap::new();
         for capability in &self.capabilities.records {
+            check_deadline()?;
             if !capabilities.insert(capability.id) {
                 return Err(FabricationError::DuplicateId(format!(
                     "capability:{:?}",
                     capability.id
                 )));
             }
-            if capability
-                .document_ids
-                .iter()
-                .any(|id| !document_ids.contains(id.as_str()))
-            {
-                return Err(FabricationError::DanglingReference(format!(
-                    "capability:{:?}",
-                    capability.id
-                )));
+            capability_states.insert(capability.id, capability.state);
+            for document_id in &capability.document_ids {
+                check_deadline()?;
+                if !document_ids.contains(document_id.as_str()) {
+                    return Err(FabricationError::DanglingReference(format!(
+                        "capability:{:?}",
+                        capability.id
+                    )));
+                }
             }
             if matches!(
                 capability.state,
@@ -2631,30 +3922,39 @@ impl FabricationReview {
                 )));
             }
             for provenance in &capability.provenance {
-                validate_provenance(provenance, &self.documents)?;
+                check_deadline()?;
+                validate_provenance(provenance, &self.documents, deadline)?;
             }
         }
         for omission in &self.omissions {
+            check_deadline()?;
             insert_id(&mut ids, &omission.id)?;
-            validate_provenance(&omission.provenance, &self.documents)?;
-            if omission.affected_capabilities.is_empty()
-                || omission.affected_capabilities.iter().any(|id| {
-                    self.capabilities
-                        .records
-                        .iter()
-                        .find(|item| item.id == *id)
-                        .is_none_or(|item| item.state == CapabilityState::Complete)
-                })
-            {
+            validate_provenance(&omission.provenance, &self.documents, deadline)?;
+            if omission.affected_capabilities.is_empty() {
                 return Err(FabricationError::InvalidOmission(omission.id.clone()));
+            }
+            for capability_id in &omission.affected_capabilities {
+                check_deadline()?;
+                if capability_states
+                    .get(capability_id)
+                    .is_none_or(|state| *state == CapabilityState::Complete)
+                {
+                    return Err(FabricationError::InvalidOmission(omission.id.clone()));
+                }
+            }
+        }
+        let mut omitted_capabilities = BTreeSet::new();
+        for omission in &self.omissions {
+            check_deadline()?;
+            for capability_id in &omission.affected_capabilities {
+                check_deadline()?;
+                omitted_capabilities.insert(*capability_id);
             }
         }
         for capability in &self.capabilities.records {
+            check_deadline()?;
             if capability.state == CapabilityState::Omitted
-                && !self
-                    .omissions
-                    .iter()
-                    .any(|omission| omission.affected_capabilities.contains(&capability.id))
+                && !omitted_capabilities.contains(&capability.id)
             {
                 return Err(FabricationError::InvalidOmission(format!(
                     "capability:{:?}",
@@ -2663,54 +3963,278 @@ impl FabricationReview {
             }
         }
         for conflict in &self.conflicts {
+            check_deadline()?;
             insert_id(&mut ids, &conflict.id)?;
-            validate_provenance(&conflict.left.provenance, &self.documents)?;
-            validate_provenance(&conflict.right.provenance, &self.documents)?;
-            if conflict.affected_capabilities.is_empty()
-                || conflict.affected_capabilities.iter().any(|id| {
-                    !capabilities.contains(id)
-                        || self
-                            .capabilities
-                            .records
-                            .iter()
-                            .find(|capability| capability.id == *id)
-                            .is_none_or(|capability| capability.state == CapabilityState::Complete)
-                })
+            validate_provenance(&conflict.left.provenance, &self.documents, deadline)?;
+            validate_provenance(&conflict.right.provenance, &self.documents, deadline)?;
+            let mut affected_valid = !conflict.affected_capabilities.is_empty();
+            for capability_id in &conflict.affected_capabilities {
+                check_deadline()?;
+                affected_valid &= capabilities.contains(capability_id)
+                    && capability_states
+                        .get(capability_id)
+                        .is_some_and(|state| *state != CapabilityState::Complete);
+            }
+            if !affected_valid
                 || conflict.left.canonical_value == conflict.right.canonical_value
                 || conflict.left.provenance == conflict.right.provenance
             {
                 return Err(FabricationError::InvalidConflict(conflict.id.clone()));
             }
         }
+        native::validate_authoritative_states(self, authoritative_budget)?;
+        if let Some(pair) = &self.source_pair {
+            let native = documents_by_id
+                .get(pair.native_document_id.as_str())
+                .copied()
+                .filter(|document| document.format == DocumentFormat::KicadPcb)
+                .ok_or_else(|| FabricationError::DanglingReference(pair.id.clone()))?;
+            let mut release_documents = BTreeMap::new();
+            for document in &self.documents {
+                check_deadline()?;
+                if document.format != DocumentFormat::KicadPcb {
+                    release_documents.insert(document.id.as_str(), document);
+                }
+            }
+            let release_ids = checked_btree_set_with_deadline(
+                release_documents.keys().copied(),
+                deadline,
+                "manufacturing-source-pair",
+            )?;
+            let product = self.product.as_ref().map(|product| {
+                (
+                    product.name.as_deref(),
+                    product.revision.as_deref(),
+                    product.part_number.as_deref(),
+                    product.authority,
+                )
+            });
+            let expected_release_package = stable_id_with_deadline(
+                deadline,
+                "manufacturing-source-pair",
+                "package",
+                &(release_ids, product),
+            )?;
+            let expected_digests = checked_btree_set_with_deadline(
+                release_documents
+                    .values()
+                    .map(|document| document.artifact_digest.as_str()),
+                deadline,
+                "manufacturing-source-pair",
+            )?;
+            let supplied_digests = checked_btree_set_with_deadline(
+                pair.release_document_digests.iter().map(String::as_str),
+                deadline,
+                "manufacturing-source-pair",
+            )?;
+            if native.artifact_digest != pair.native_artifact_digest
+                || pair.release_package_id != expected_release_package
+                || supplied_digests != expected_digests
+                || pair.id
+                    != source_pair_id_with_deadline(
+                        &pair.native_document_id,
+                        &pair.native_artifact_digest,
+                        &pair.release_package_id,
+                        &pair.release_document_digests,
+                        deadline,
+                    )?
+            {
+                return Err(FabricationError::InvalidIdentity(pair.id.clone()));
+            }
+        } else if !self.reconciliations.is_empty() || self.native_reconciliation_source.is_some() {
+            return Err(FabricationError::DanglingReference(
+                "manufacturing-source-pair".into(),
+            ));
+        }
+        if self.source_pair.is_some() {
+            if self.reconciliations.is_empty() || self.native_reconciliation_source.is_none() {
+                return Err(FabricationError::DanglingReference(
+                    "native-reconciliation-source".into(),
+                ));
+            }
+            native::validate_reconciliation_derivation_with_deadline(self, deadline)?;
+        }
+        let native_document_id = self
+            .source_pair
+            .as_ref()
+            .map(|pair| pair.native_document_id.as_str());
+        let mut native_model_ids = BTreeSet::new();
+        if let Some(native_document_id) = native_document_id {
+            native_model_ids.insert(native_document_id);
+            for item in &self.layers {
+                check_deadline()?;
+                if item.document_id == native_document_id {
+                    native_model_ids.insert(item.id.as_str());
+                }
+            }
+            for item in &self.tools {
+                check_deadline()?;
+                if item.document_id == native_document_id {
+                    native_model_ids.insert(item.id.as_str());
+                }
+            }
+            for item in &self.features {
+                check_deadline()?;
+                if item.document_id == native_document_id {
+                    native_model_ids.insert(item.id.as_str());
+                }
+            }
+        }
+        let model_id_is_native = |id: &str| native_model_ids.contains(id);
+        let mut families = BTreeSet::new();
+        for reconciliation in &self.reconciliations {
+            check_deadline()?;
+            deadline.check("reconciliation-validation")?;
+            let mut supplied_native_ids = BTreeSet::new();
+            let mut native_ids_valid = true;
+            for model_id in &reconciliation.native.model_ids {
+                check_deadline()?;
+                supplied_native_ids.insert(model_id);
+                native_ids_valid &= ids.contains(model_id) && model_id_is_native(model_id);
+            }
+            let mut supplied_package_ids = BTreeSet::new();
+            let mut package_ids_valid = true;
+            for model_id in &reconciliation.package.model_ids {
+                check_deadline()?;
+                supplied_package_ids.insert(model_id);
+                package_ids_valid &= ids.contains(model_id) && !model_id_is_native(model_id);
+            }
+            let mut canonical_values_valid = true;
+            for value in [
+                &reconciliation.native.canonical_value,
+                &reconciliation.package.canonical_value,
+            ] {
+                check_deadline()?;
+                canonical_values_valid &= value.len() as u64 <= RECONCILIATION_VALUE_BYTES
+                    && canonical_json_valid_with_deadline(
+                        value,
+                        deadline,
+                        "reconciliation-canonical-json",
+                    )?;
+            }
+            if !families.insert(reconciliation.family)
+                || reconciliation.id
+                    != reconciliation_id_with_deadline(
+                        reconciliation.family,
+                        &reconciliation.native,
+                        &reconciliation.package,
+                        deadline,
+                    )?
+                || reconciliation.native.model_ids.is_empty()
+                || reconciliation.package.model_ids.is_empty()
+                || supplied_native_ids.len() != reconciliation.native.model_ids.len()
+                || supplied_package_ids.len() != reconciliation.package.model_ids.len()
+                || !native_ids_valid
+                || !package_ids_valid
+                || reconciliation.native.authority != Authority::NativeSource
+                || matches!(
+                    reconciliation.package.authority,
+                    Authority::NativeSource | Authority::FilenameInference | Authority::Unknown
+                )
+                || !canonical_values_valid
+                || reconciliation.smallest_evidence_action.is_empty()
+            {
+                return Err(FabricationError::InvalidIdentity(reconciliation.id.clone()));
+            }
+            validate_provenance(&reconciliation.native.provenance, &self.documents, deadline)?;
+            validate_provenance(
+                &reconciliation.package.provenance,
+                &self.documents,
+                deadline,
+            )?;
+            if native_document_id != Some(reconciliation.native.provenance.document_id.as_str())
+                || reconciliation.package.provenance.document_id
+                    == reconciliation.native.provenance.document_id
+            {
+                return Err(FabricationError::InvalidProvenance(
+                    reconciliation.id.clone(),
+                ));
+            }
+            validate_positive_length_option(reconciliation.native.resolution)?;
+            validate_positive_length_option(reconciliation.package.resolution)?;
+            let values_equivalent = native::reconciliation_values_equivalent(
+                reconciliation,
+                ReconciliationBudget { deadline },
+            )?;
+            let valid_status = match reconciliation.status {
+                ReconciliationStatus::Match => values_equivalent,
+                ReconciliationStatus::Mismatch => {
+                    !values_equivalent
+                        && reconciliation.confidence != ReconciliationConfidence::Unavailable
+                }
+                ReconciliationStatus::NotChecked => {
+                    reconciliation.confidence == ReconciliationConfidence::Unavailable
+                }
+            };
+            if !valid_status {
+                return Err(FabricationError::InvalidConflict(reconciliation.id.clone()));
+            }
+        }
+        let mut reconciliation_capability = None;
+        for capability in &self.capabilities.records {
+            check_deadline()?;
+            if capability.id == CapabilityId::PackageReconciliation {
+                reconciliation_capability = Some(capability);
+                break;
+            }
+        }
+        if let Some(capability) = reconciliation_capability {
+            let complete = self.reconciliations.len() == 6
+                && checked_all_with_deadline(
+                    &self.reconciliations,
+                    deadline,
+                    "package-reconciliation-capability",
+                    |item| item.status == ReconciliationStatus::Match,
+                )?;
+            if (capability.state == CapabilityState::Complete) != complete {
+                return Err(FabricationError::InvalidIdentity(
+                    "package-reconciliation-capability".into(),
+                ));
+            }
+        }
         for warning in &self.warnings {
+            check_deadline()?;
             if let Some(provenance) = &warning.provenance {
-                validate_provenance(provenance, &self.documents)?;
+                validate_provenance(provenance, &self.documents, deadline)?;
             }
         }
         Ok(())
     }
-
-    fn estimate_allocation(&self) -> Result<u64, FabricationError> {
+    fn estimate_allocation(
+        &self,
+        deadline: ManufacturingDeadline,
+    ) -> Result<u64, FabricationError> {
+        deadline.check("fabrication-allocation-estimate")?;
         let lengths = [
-            serialized_len(&self.input_outcomes)?,
-            serialized_len(&self.product)?,
-            serialized_len(&self.documents)?,
-            serialized_len(&self.layers)?,
-            serialized_len(&self.tools)?,
-            serialized_len(&self.apertures)?,
-            serialized_len(&self.macros)?,
-            serialized_len(&self.blocks)?,
-            serialized_len(&self.repetitions)?,
-            serialized_len(&self.features)?,
-            serialized_len(&self.profile)?,
-            serialized_len(&self.connectivity)?,
-            serialized_len(&self.assembly)?,
-            serialized_len(&self.construction)?,
-            serialized_len(&self.constraints)?,
-            serialized_len(&self.capabilities)?,
-            serialized_len(&self.omissions)?,
-            serialized_len(&self.conflicts)?,
-            serialized_len(&self.warnings)?,
+            serialized_len_with_deadline(deadline, &self.input_outcomes)?,
+            serialized_len_with_deadline(deadline, &self.product)?,
+            serialized_len_with_deadline(deadline, &self.documents)?,
+            serialized_len_with_deadline(deadline, &self.layers)?,
+            serialized_len_with_deadline(deadline, &self.tools)?,
+            definition_storage_len_with_deadline(deadline, self)?,
+            feature_storage_len_with_deadline(deadline, &self.features)?,
+            serialized_len_with_deadline(deadline, &self.physical_bounds)?,
+            serialized_len_with_deadline(deadline, &self.profile)?,
+            serialized_len_with_deadline(deadline, &self.connectivity)?,
+            serialized_len_with_deadline(deadline, &self.x2_attributes)?,
+            serialized_len_with_deadline(deadline, &self.job_file_functions)?,
+            serialized_len_with_deadline(deadline, &self.assembly)?,
+            serialized_len_with_deadline(deadline, &self.construction)?,
+            serialized_len_with_deadline(deadline, &self.constraints)?,
+            serialized_len_with_deadline(deadline, &self.capabilities)?,
+            serialized_len_with_deadline(deadline, &self.omissions)?,
+            serialized_len_with_deadline(deadline, &self.conflicts)?,
+            serialized_len_with_deadline(deadline, &self.source_pair)?,
+            serialized_len_with_deadline(
+                deadline,
+                &self
+                    .native_reconciliation_source
+                    .as_ref()
+                    .map(|source| (source.review.estimated_allocation_bytes, &source.extents)),
+            )?,
+            serialized_len_with_deadline(deadline, &self.integration_outcome)?,
+            serialized_len_with_deadline(deadline, &self.reconciliations)?,
+            serialized_len_with_deadline(deadline, &self.warnings)?,
         ];
         let bytes = lengths.into_iter().try_fold(0_u64, |sum, length| {
             sum.checked_add(length)
@@ -2719,7 +4243,7 @@ impl FabricationReview {
         let feature_definitions =
             u64::try_from(self.features.len()).map_err(|_| FabricationError::ArithmeticOverflow)?;
         let additional_instances = self
-            .expanded_feature_instances()?
+            .expanded_feature_instances(deadline)?
             .checked_sub(feature_definitions)
             .ok_or(FabricationError::ArithmeticOverflow)?;
         // ponytail: compact repeats charge one u64 index; materializing analyzers must add a
@@ -2727,11 +4251,13 @@ impl FabricationReview {
         let expansion_bytes = additional_instances
             .checked_mul(u64::try_from(std::mem::size_of::<u64>()).unwrap_or(8))
             .ok_or(FabricationError::ArithmeticOverflow)?;
-        bytes
+        let estimated = bytes
             .checked_mul(2)
             .and_then(|bytes| bytes.checked_add(expansion_bytes))
             .and_then(|bytes| bytes.checked_add(1024))
-            .ok_or(FabricationError::ArithmeticOverflow)
+            .ok_or(FabricationError::ArithmeticOverflow)?;
+        deadline.check("fabrication-allocation-estimate")?;
+        Ok(estimated)
     }
 
     fn all_texts(&self) -> impl Iterator<Item = &str> {
@@ -2744,6 +4270,15 @@ impl FabricationReview {
                     document.adapter.as_str(),
                     document.adapter_version.as_str(),
                 ]
+            }))
+            .chain(self.product.iter().flat_map(|product| {
+                [
+                    product.name.as_deref(),
+                    product.revision.as_deref(),
+                    product.part_number.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
             }))
             .chain(self.layers.iter().filter_map(|layer| layer.name.as_deref()))
             .chain(self.tools.iter().map(|tool| tool.code.as_str()))
@@ -2759,6 +4294,30 @@ impl FabricationReview {
                     semantic.net.as_deref(),
                     semantic.component.as_deref(),
                     semantic.pin.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+            }))
+            .chain(
+                self.x2_attributes
+                    .iter()
+                    .flat_map(|attribute| attribute.values.iter().map(String::as_str)),
+            )
+            .chain(self.job_file_functions.iter().flat_map(|fact| {
+                [
+                    Some(fact.referenced_virtual_path.as_str()),
+                    fact.qualifier.as_deref(),
+                    fact.operation.as_deref(),
+                    fact.omission.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .chain(fact.fields.iter().map(String::as_str))
+            }))
+            .chain(self.integration_outcome.iter().flat_map(|outcome| {
+                [
+                    outcome.attempted_native_path.as_deref(),
+                    Some(outcome.reason.as_str()),
                 ]
                 .into_iter()
                 .flatten()
@@ -2780,6 +4339,11 @@ impl FabricationReview {
                     conflict.right.canonical_value.as_str(),
                 ]
             }))
+            .chain(
+                self.reconciliations
+                    .iter()
+                    .map(|reconciliation| reconciliation.smallest_evidence_action.as_str()),
+            )
             .chain(
                 self.warnings
                     .iter()
@@ -2803,10 +4367,319 @@ fn valid_virtual_path(path: &str) -> bool {
         && path.as_bytes().get(1).is_none_or(|byte| *byte != b':')
 }
 
-fn serialized_len(value: &impl Serialize) -> Result<u64, FabricationError> {
-    let bytes = serde_json::to_vec(value)
-        .map_err(|error| FabricationError::Serialization(error.to_string()))?;
-    u64::try_from(bytes.len()).map_err(|_| FabricationError::ArithmeticOverflow)
+struct DeadlineWriter {
+    deadline: Option<ManufacturingDeadline>,
+    resource: &'static str,
+    bytes: Option<Vec<u8>>,
+    hasher: Option<Sha256>,
+    hash_buffer: Vec<u8>,
+    length: u64,
+    expired: bool,
+    overflow: bool,
+    bytes_since_check: usize,
+    writes_since_check: usize,
+}
+
+impl DeadlineWriter {
+    fn new(
+        deadline: ManufacturingDeadline,
+        resource: &'static str,
+        retain: bool,
+        hash: bool,
+    ) -> Self {
+        Self {
+            deadline: Some(deadline),
+            resource,
+            bytes: retain.then(Vec::new),
+            hasher: hash.then(Sha256::new),
+            hash_buffer: if hash {
+                Vec::with_capacity(4096)
+            } else {
+                Vec::new()
+            },
+            length: 0,
+            expired: false,
+            overflow: false,
+            bytes_since_check: 0,
+            writes_since_check: 0,
+        }
+    }
+
+    fn unbounded(resource: &'static str, hash: bool) -> Self {
+        Self {
+            deadline: None,
+            resource,
+            bytes: None,
+            hasher: hash.then(Sha256::new),
+            hash_buffer: if hash {
+                Vec::with_capacity(4096)
+            } else {
+                Vec::new()
+            },
+            length: 0,
+            expired: false,
+            overflow: false,
+            bytes_since_check: 0,
+            writes_since_check: 0,
+        }
+    }
+
+    fn digest(self) -> Option<String> {
+        self.hasher.map(|mut hasher| {
+            hasher.update(&self.hash_buffer);
+            format!("{:x}", hasher.finalize())
+        })
+    }
+}
+
+impl Write for DeadlineWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        for chunk in buffer.chunks(4096) {
+            let check = self.bytes_since_check.saturating_add(chunk.len()) > 4096
+                || self.writes_since_check >= 1024;
+            if check {
+                if self
+                    .deadline
+                    .is_some_and(|deadline| deadline.check(self.resource).is_err())
+                {
+                    self.expired = true;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        self.resource,
+                    ));
+                }
+                self.bytes_since_check = 0;
+                self.writes_since_check = 0;
+            }
+            let Ok(length) = u64::try_from(chunk.len()) else {
+                self.overflow = true;
+                return Err(std::io::Error::other("serialized length overflow"));
+            };
+            let Some(total) = self.length.checked_add(length) else {
+                self.overflow = true;
+                return Err(std::io::Error::other("serialized length overflow"));
+            };
+            self.length = total;
+            self.bytes_since_check = self.bytes_since_check.saturating_add(chunk.len());
+            self.writes_since_check = self.writes_since_check.saturating_add(1);
+            if let Some(bytes) = &mut self.bytes {
+                bytes.extend_from_slice(chunk);
+            }
+            if let Some(hasher) = &mut self.hasher {
+                self.hash_buffer.extend_from_slice(chunk);
+                if self.hash_buffer.len() >= 4096 {
+                    hasher.update(&self.hash_buffer);
+                    self.hash_buffer.clear();
+                }
+            }
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialize_with_deadline(
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+    value: &impl Serialize,
+    retain: bool,
+) -> Result<(u64, Option<Vec<u8>>), FabricationError> {
+    deadline.check(resource)?;
+    let mut writer = DeadlineWriter::new(deadline, resource, retain, false);
+    let result = serde_json::to_writer(&mut writer, value);
+    if writer.expired {
+        return Err(FabricationError::LimitExceeded { resource });
+    }
+    if writer.overflow {
+        return Err(FabricationError::ArithmeticOverflow);
+    }
+    result.map_err(|error| FabricationError::Serialization(error.to_string()))?;
+    deadline.check(resource)?;
+    Ok((writer.length, writer.bytes))
+}
+
+fn hash_serialized_with_deadline(
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+    value: &impl Serialize,
+) -> Result<String, FabricationError> {
+    deadline.check(resource)?;
+    let mut writer = DeadlineWriter::new(deadline, resource, false, true);
+    let result = serde_json::to_writer(&mut writer, value);
+    if writer.expired {
+        return Err(FabricationError::LimitExceeded { resource });
+    }
+    if writer.overflow {
+        return Err(FabricationError::ArithmeticOverflow);
+    }
+    result.map_err(|error| FabricationError::Serialization(error.to_string()))?;
+    deadline.check(resource)?;
+    Ok(writer.digest().expect("serialization hashing enabled"))
+}
+
+fn feature_storage_len_with_deadline(
+    deadline: ManufacturingDeadline,
+    features: &[ManufacturingFeature],
+) -> Result<u64, FabricationError> {
+    fn add(total: &mut u64, value: usize) -> Result<(), FabricationError> {
+        *total = total
+            .checked_add(u64::try_from(value).map_err(|_| FabricationError::ArithmeticOverflow)?)
+            .ok_or(FabricationError::ArithmeticOverflow)?;
+        Ok(())
+    }
+    fn add_segments(total: &mut u64, segments: &[ContourSegment]) -> Result<(), FabricationError> {
+        add(
+            total,
+            segments
+                .len()
+                .checked_mul(std::mem::size_of::<ContourSegment>())
+                .ok_or(FabricationError::ArithmeticOverflow)?,
+        )
+    }
+    let mut total = 0_u64;
+    for feature in features {
+        deadline.check("fabrication-allocation-estimate")?;
+        add(&mut total, std::mem::size_of::<ManufacturingFeature>())?;
+        for text in [
+            feature.id.as_str(),
+            feature.document_id.as_str(),
+            feature.layer_id.as_str(),
+            feature.tool_id.as_deref().unwrap_or_default(),
+            feature.provenance.document_id.as_str(),
+            feature.provenance.artifact_digest.as_str(),
+            feature.provenance.producer.as_str(),
+            feature.provenance.producer_version.as_str(),
+            feature
+                .provenance
+                .source_lexeme
+                .as_deref()
+                .unwrap_or_default(),
+        ] {
+            add(&mut total, text.len())?;
+        }
+        add(
+            &mut total,
+            feature
+                .transforms
+                .operations
+                .len()
+                .checked_mul(std::mem::size_of::<TransformOperation>())
+                .ok_or(FabricationError::ArithmeticOverflow)?,
+        )?;
+        if let FeatureMembership::ApertureBlock {
+            block_id,
+            aperture_id,
+        } = &feature.membership
+        {
+            add(&mut total, block_id.len())?;
+            add(&mut total, aperture_id.len())?;
+        }
+        match &feature.geometry {
+            Geometry::Contour(contour) => add_segments(&mut total, &contour.segments)?,
+            Geometry::Region(region) => {
+                add(
+                    &mut total,
+                    region
+                        .contours
+                        .len()
+                        .checked_mul(std::mem::size_of::<CanonicalContour>())
+                        .ok_or(FabricationError::ArithmeticOverflow)?,
+                )?;
+                for contour in &region.contours {
+                    deadline.check("fabrication-allocation-estimate")?;
+                    add_segments(&mut total, &contour.segments)?;
+                }
+            }
+            Geometry::Flash(flash) => add(&mut total, flash.aperture_id.len())?,
+            Geometry::Drill(drill) => add(&mut total, drill.tool_id.len())?,
+            Geometry::Route(route) => {
+                add_segments(&mut total, &route.segments)?;
+                add(&mut total, route.tool_id.len())?;
+            }
+            Geometry::Slot(slot) => add(&mut total, slot.tool_id.len())?,
+            Geometry::Point(_) | Geometry::Line(_) | Geometry::Arc(_) => {}
+        }
+    }
+    deadline.check("fabrication-allocation-estimate")?;
+    Ok(total)
+}
+
+fn definition_storage_len_with_deadline(
+    deadline: ManufacturingDeadline,
+    review: &FabricationReview,
+) -> Result<u64, FabricationError> {
+    fn charge(total: &mut u64, count: usize, bytes: usize) -> Result<(), FabricationError> {
+        let value = count
+            .checked_mul(bytes)
+            .and_then(|value| u64::try_from(value).ok())
+            .ok_or(FabricationError::ArithmeticOverflow)?;
+        *total = total
+            .checked_add(value)
+            .ok_or(FabricationError::ArithmeticOverflow)?;
+        Ok(())
+    }
+    let mut total = 0_u64;
+    for (index, aperture) in review.apertures.iter().enumerate() {
+        if index % 1024 == 0 {
+            deadline.check("fabrication-allocation-estimate")?;
+        }
+        charge(
+            &mut total,
+            1,
+            std::mem::size_of::<ApertureDefinition>() + 1024,
+        )?;
+        charge(
+            &mut total,
+            aperture.dimensions.len(),
+            std::mem::size_of::<Picometres>(),
+        )?;
+        charge(
+            &mut total,
+            aperture.macro_arguments.len(),
+            std::mem::size_of::<CanonicalRational>() + 64,
+        )?;
+    }
+    for (index, definition) in review.macros.iter().enumerate() {
+        if index % 1024 == 0 {
+            deadline.check("fabrication-allocation-estimate")?;
+        }
+        charge(&mut total, 1, std::mem::size_of::<MacroDefinition>() + 512)?;
+        for value in definition.variables.iter().chain(&definition.operations) {
+            charge(&mut total, 1, value.len() + std::mem::size_of::<String>())?;
+        }
+    }
+    for (index, block) in review.blocks.iter().enumerate() {
+        if index % 1024 == 0 {
+            deadline.check("fabrication-allocation-estimate")?;
+        }
+        charge(
+            &mut total,
+            1,
+            std::mem::size_of::<ApertureBlock>() + block.aperture_id.len() + 512,
+        )?;
+        charge(&mut total, block.feature_ids.len(), 128)?;
+        charge(&mut total, block.instantiation_feature_ids.len(), 128)?;
+    }
+    for (index, repeat) in review.repetitions.iter().enumerate() {
+        if index % 1024 == 0 {
+            deadline.check("fabrication-allocation-estimate")?;
+        }
+        charge(&mut total, 1, std::mem::size_of::<StepRepeat>() + 512)?;
+        charge(&mut total, repeat.feature_ids.len(), 128)?;
+    }
+    deadline.check("fabrication-allocation-estimate")?;
+    Ok(total)
+}
+
+fn serialized_len_with_deadline(
+    deadline: ManufacturingDeadline,
+    value: &impl Serialize,
+) -> Result<u64, FabricationError> {
+    serialize_with_deadline(deadline, "fabrication-allocation-estimate", value, false)
+        .map(|(length, _)| length)
 }
 
 fn insert_id(ids: &mut HashSet<String>, id: &str) -> Result<(), FabricationError> {
@@ -2819,10 +4692,17 @@ fn insert_id(ids: &mut HashSet<String>, id: &str) -> Result<(), FabricationError
 fn validate_provenance(
     provenance: &ManufacturingProvenance,
     documents: &[ManufacturingDocument],
+    deadline: ManufacturingDeadline,
 ) -> Result<(), FabricationError> {
-    let document = documents
-        .iter()
-        .find(|document| document.id == provenance.document_id)
+    let mut matched = None;
+    for document in documents {
+        deadline.check("fabrication-provenance-validation")?;
+        if document.id == provenance.document_id {
+            matched = Some(document);
+            break;
+        }
+    }
+    let document = matched
         .ok_or_else(|| FabricationError::DanglingReference(provenance.document_id.clone()))?;
     let byte_location_valid = if document.metrics.raw_bytes == 0 {
         provenance.location.byte_start == 0 && provenance.location.byte_end == 0
@@ -2899,7 +4779,9 @@ fn validate_geometry(
     geometry: &Geometry,
     aperture_ids: &HashSet<&str>,
     tool_ids: &HashSet<&str>,
+    deadline: ManufacturingDeadline,
 ) -> Result<(), FabricationError> {
+    const RESOURCE: &str = "fabrication-geometry-validation";
     fn line(line: &CanonicalLine) -> Result<(), FabricationError> {
         validate_point(line.start)?;
         validate_point(line.end)?;
@@ -2910,14 +4792,37 @@ fn validate_geometry(
         validate_point(arc.end)?;
         validate_point(arc.center)?;
         validate_positive_length_option(arc.width)?;
-        validate_positive_length(arc.source_resolution)
+        validate_positive_length(arc.source_resolution)?;
+        if arc.quadrant == QuadrantMode::Single
+            && !valid_single_quadrant_arc(
+                arc.start,
+                arc.end,
+                arc.center,
+                arc.direction,
+                arc.source_resolution,
+            )
+        {
+            return Err(FabricationError::InvalidIdentity("arc-geometry".into()));
+        }
+        Ok(())
     }
-    fn contour(contour: &CanonicalContour) -> Result<(), FabricationError> {
-        for segment in &contour.segments {
-            match segment {
-                ContourSegment::Line(value) => line(value)?,
-                ContourSegment::Arc(value) => arc(value)?,
-            }
+    fn segment(
+        segment: &ContourSegment,
+        deadline: ManufacturingDeadline,
+    ) -> Result<(), FabricationError> {
+        deadline.check(RESOURCE)?;
+        match segment {
+            ContourSegment::Line(value) => line(value),
+            ContourSegment::Arc(value) => arc(value),
+        }
+    }
+    fn contour(
+        contour: &CanonicalContour,
+        deadline: ManufacturingDeadline,
+    ) -> Result<(), FabricationError> {
+        deadline.check(RESOURCE)?;
+        for item in &contour.segments {
+            segment(item, deadline)?;
         }
         Ok(())
     }
@@ -2925,8 +4830,13 @@ fn validate_geometry(
         Geometry::Point(point) => validate_point(*point),
         Geometry::Line(value) => line(value),
         Geometry::Arc(value) => arc(value),
-        Geometry::Contour(value) => contour(value),
-        Geometry::Region(value) => value.contours.iter().try_for_each(contour),
+        Geometry::Contour(value) => contour(value, deadline),
+        Geometry::Region(value) => {
+            for value in &value.contours {
+                contour(value, deadline)?;
+            }
+            Ok(())
+        }
         Geometry::Flash(value) => {
             validate_point(value.position)?;
             if !aperture_ids.contains(value.aperture_id.as_str()) {
@@ -2948,15 +4858,18 @@ fn validate_geometry(
             if !tool_ids.contains(value.tool_id.as_str()) {
                 return Err(FabricationError::DanglingReference(value.tool_id.clone()));
             }
-            value.segments.iter().try_for_each(|segment| match segment {
-                ContourSegment::Line(value) => line(value),
-                ContourSegment::Arc(value) => arc(value),
-            })
+            for item in &value.segments {
+                segment(item, deadline)?;
+            }
+            Ok(())
         }
         Geometry::Slot(value) => {
             validate_point(value.start)?;
             validate_point(value.end)?;
             validate_positive_length(value.width)?;
+            if value.start == value.end {
+                return Err(FabricationError::InvalidIdentity("zero-length-slot".into()));
+            }
             if !tool_ids.contains(value.tool_id.as_str()) {
                 return Err(FabricationError::DanglingReference(value.tool_id.clone()));
             }
@@ -2968,15 +4881,23 @@ fn validate_geometry(
 fn validate_transformed_geometry(
     geometry: &Geometry,
     transforms: &TransformChain,
+    deadline: ManufacturingDeadline,
 ) -> Result<bool, FabricationError> {
-    validate_transformed_geometry_at_offset(geometry, transforms, CanonicalPoint::default())
+    validate_transformed_geometry_at_offset(
+        geometry,
+        transforms,
+        CanonicalPoint::default(),
+        deadline,
+    )
 }
 
 fn validate_transformed_geometry_at_offset(
     geometry: &Geometry,
     transforms: &TransformChain,
     offset: CanonicalPoint,
+    deadline: ManufacturingDeadline,
 ) -> Result<bool, FabricationError> {
+    const RESOURCE: &str = "fabrication-transformed-geometry-validation";
     fn point(
         value: CanonicalPoint,
         transforms: &TransformChain,
@@ -3024,7 +4945,9 @@ fn validate_transformed_geometry_at_offset(
         transforms: &TransformChain,
         offset: CanonicalPoint,
         quantized: &mut bool,
+        deadline: ManufacturingDeadline,
     ) -> Result<(), FabricationError> {
+        deadline.check(RESOURCE)?;
         match value {
             ContourSegment::Line(value) => line(value, transforms, offset, quantized),
             ContourSegment::Arc(value) => arc(value, transforms, offset, quantized),
@@ -3040,13 +4963,14 @@ fn validate_transformed_geometry_at_offset(
         Geometry::Arc(value) => arc(value, transforms, offset, &mut quantized)?,
         Geometry::Contour(value) => {
             for value in &value.segments {
-                segment(value, transforms, offset, &mut quantized)?;
+                segment(value, transforms, offset, &mut quantized, deadline)?;
             }
         }
         Geometry::Region(value) => {
             for contour in &value.contours {
+                deadline.check(RESOURCE)?;
                 for value in &contour.segments {
-                    segment(value, transforms, offset, &mut quantized)?;
+                    segment(value, transforms, offset, &mut quantized, deadline)?;
                 }
             }
         }
@@ -3054,7 +4978,7 @@ fn validate_transformed_geometry_at_offset(
         Geometry::Drill(value) => point(value.position, transforms, offset, &mut quantized)?,
         Geometry::Route(value) => {
             for value in &value.segments {
-                segment(value, transforms, offset, &mut quantized)?;
+                segment(value, transforms, offset, &mut quantized, deadline)?;
             }
         }
         Geometry::Slot(value) => {
@@ -3079,9 +5003,9 @@ fn repeat_max_offset(step: Picometres, count: u32) -> Result<Picometres, Fabrica
     Ok(offset)
 }
 
-fn canonical_provenance(
-    provenance: &ManufacturingProvenance,
-) -> (&str, &str, &str, &str, &StructuralLocation) {
+type CanonicalProvenance<'a> = (&'a str, &'a str, &'a str, &'a str, &'a StructuralLocation);
+
+fn canonical_provenance(provenance: &ManufacturingProvenance) -> CanonicalProvenance<'_> {
     (
         &provenance.document_id,
         &provenance.artifact_digest,
@@ -3093,15 +5017,261 @@ fn canonical_provenance(
 
 fn canonical_provenances(
     provenances: &[ManufacturingProvenance],
-) -> Vec<(&str, &str, &str, &str, &StructuralLocation)> {
-    let mut values: Vec<_> = provenances.iter().map(canonical_provenance).collect();
-    values.sort();
-    values
+    deadline: ManufacturingDeadline,
+) -> Result<Vec<CanonicalProvenance<'_>>, FabricationError> {
+    let mut values = BTreeSet::new();
+    for provenance in provenances {
+        deadline.check("fabrication-model-digest")?;
+        values.insert(canonical_provenance(provenance));
+    }
+    let mut canonical = Vec::with_capacity(values.len());
+    for value in values {
+        deadline.check("fabrication-model-digest")?;
+        canonical.push(value);
+    }
+    Ok(canonical)
 }
 
-fn canonical_json(label: &str, value: &impl Serialize) -> Result<String, FabricationError> {
-    serde_json::to_string(&(label, value))
+fn canonical_refs<T: Ord>(
+    values: &[T],
+    deadline: ManufacturingDeadline,
+) -> Result<BTreeSet<&T>, FabricationError> {
+    checked_btree_set_with_deadline(values.iter(), deadline, "fabrication-model-digest")
+}
+
+fn checked_all_with_deadline<I, F>(
+    values: I,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+    mut predicate: F,
+) -> Result<bool, FabricationError>
+where
+    I: IntoIterator,
+    F: FnMut(I::Item) -> bool,
+{
+    for value in values {
+        deadline.check(resource)?;
+        if !predicate(value) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn checked_any_with_deadline<I, F>(
+    values: I,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+    mut predicate: F,
+) -> Result<bool, FabricationError>
+where
+    I: IntoIterator,
+    F: FnMut(I::Item) -> bool,
+{
+    for value in values {
+        deadline.check(resource)?;
+        if predicate(value) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn checked_btree_set_with_deadline<I>(
+    values: I,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<BTreeSet<I::Item>, FabricationError>
+where
+    I: IntoIterator,
+    I::Item: Ord,
+{
+    let mut output = BTreeSet::new();
+    for value in values {
+        deadline.check(resource)?;
+        output.insert(value);
+    }
+    Ok(output)
+}
+
+fn checked_retain_with_deadline<T: Clone>(
+    values: &mut Vec<T>,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+    mut retain: impl FnMut(&T) -> bool,
+) -> Result<(), FabricationError> {
+    let mut output = Vec::with_capacity(values.len());
+    for value in values.iter() {
+        deadline.check(resource)?;
+        if retain(value) {
+            output.push(value.clone());
+        }
+    }
+    *values = output;
+    Ok(())
+}
+
+#[cfg(test)]
+fn checked_slice_equal_with_deadline<T: PartialEq>(
+    left: &[T],
+    right: &[T],
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<bool, FabricationError> {
+    if left.len() != right.len() {
+        return Ok(false);
+    }
+    checked_all_with_deadline(
+        left.iter().zip(right),
+        deadline,
+        resource,
+        |(left, right)| left == right,
+    )
+}
+
+fn canonical_json_with_deadline(
+    deadline: ManufacturingDeadline,
+    label: &str,
+    value: &impl Serialize,
+) -> Result<String, FabricationError> {
+    let (_, bytes) =
+        serialize_with_deadline(deadline, "fabrication-model-digest", &(label, value), true)?;
+    String::from_utf8(bytes.expect("canonical JSON retention enabled"))
         .map_err(|error| FabricationError::Serialization(error.to_string()))
+}
+
+struct CanonicalDeadlineReader<R> {
+    inner: R,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+}
+
+impl<R: Read> Read for CanonicalDeadlineReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.deadline.check(self.resource).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "canonical JSON deadline")
+        })?;
+        let bounded = buffer.len().min(4096);
+        self.inner.read(&mut buffer[..bounded])
+    }
+}
+
+fn canonical_json_from_reader_with_deadline(
+    reader: impl Read,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<Value, FabricationError> {
+    let reader = CanonicalDeadlineReader {
+        inner: reader,
+        deadline,
+        resource,
+    };
+    let mut deserializer =
+        serde_json::Deserializer::from_reader(BufReader::with_capacity(4096, reader));
+    let value = Value::deserialize(&mut deserializer).map_err(|_| {
+        deadline.check(resource).err().unwrap_or_else(|| {
+            FabricationError::InvalidIdentity("reconciliation-canonical-json".into())
+        })
+    })?;
+    deserializer.end().map_err(|_| {
+        deadline.check(resource).err().unwrap_or_else(|| {
+            FabricationError::InvalidIdentity("reconciliation-canonical-json".into())
+        })
+    })?;
+    deadline.check(resource)?;
+    Ok(value)
+}
+
+fn parse_canonical_json_with_deadline(
+    value: &str,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<Value, FabricationError> {
+    canonical_json_from_reader_with_deadline(Cursor::new(value.as_bytes()), deadline, resource)
+}
+
+fn canonical_json_valid_with_deadline(
+    value: &str,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<bool, FabricationError> {
+    match parse_canonical_json_with_deadline(value, deadline, resource) {
+        Ok(_) => Ok(true),
+        Err(error @ FabricationError::LimitExceeded { .. }) => Err(error),
+        Err(_) => Ok(false),
+    }
+}
+
+fn chunked_bytes_equal_with_deadline(
+    left: &[u8],
+    right: &[u8],
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<bool, FabricationError> {
+    if left.len() != right.len() {
+        return Ok(false);
+    }
+    for (left, right) in left.chunks(4096).zip(right.chunks(4096)) {
+        deadline.check(resource)?;
+        if left != right {
+            return Ok(false);
+        }
+    }
+    deadline.check(resource)?;
+    Ok(true)
+}
+
+fn chunked_str_equal_with_deadline(
+    left: &str,
+    right: &str,
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<bool, FabricationError> {
+    chunked_bytes_equal_with_deadline(left.as_bytes(), right.as_bytes(), deadline, resource)
+}
+
+fn update_sha256_with_deadline_observer(
+    hasher: &mut Sha256,
+    value: &[u8],
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+    observer: &mut impl FnMut(usize),
+) -> Result<(), FabricationError> {
+    for chunk in value.chunks(4096) {
+        deadline.check(resource)?;
+        observer(chunk.len());
+        hasher.update(chunk);
+    }
+    Ok(())
+}
+
+fn update_sha256_with_deadline(
+    hasher: &mut Sha256,
+    value: &[u8],
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<(), FabricationError> {
+    update_sha256_with_deadline_observer(hasher, value, deadline, resource, &mut |_| {})
+}
+
+fn sha256_with_deadline_observer(
+    value: &[u8],
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+    observer: &mut impl FnMut(usize),
+) -> Result<String, FabricationError> {
+    let mut hasher = Sha256::new();
+    update_sha256_with_deadline_observer(&mut hasher, value, deadline, resource, observer)?;
+    deadline.check(resource)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub(crate) fn sha256_with_deadline(
+    value: &[u8],
+    deadline: ManufacturingDeadline,
+    resource: &'static str,
+) -> Result<String, FabricationError> {
+    sha256_with_deadline_observer(value, deadline, resource, &mut |_| {})
 }
 
 fn sha256(value: impl AsRef<[u8]>) -> String {
@@ -3119,7 +5289,7 @@ pub(crate) fn schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["status", "packageId", "modelDigest", "inputOutcomes", "product", "documents", "layers", "tools", "apertures", "macros", "blocks", "repetitions", "features", "profile", "connectivity", "assembly", "construction", "constraints", "capabilities", "omissions", "conflicts", "warnings", "limits", "estimatedAllocationBytes"],
+        "required": ["status", "packageId", "modelDigest", "inputOutcomes", "product", "documents", "layers", "tools", "apertures", "macros", "blocks", "repetitions", "features", "physicalBounds", "profile", "connectivity", "x2Attributes", "jobFileFunctions", "assembly", "construction", "constraints", "capabilities", "omissions", "conflicts", "sourcePair", "nativeReconciliationSource", "integrationOutcome", "reconciliations", "warnings", "limits", "estimatedAllocationBytes"],
         "properties": {
             "status": { "enum": ["not_provided", "partial", "complete", "failed"] },
             "packageId": { "type": "string", "pattern": "^package-v1-[0-9a-f]{64}$" },
@@ -3134,14 +5304,21 @@ pub(crate) fn schema() -> Value {
             "blocks": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/apertureBlock" } },
             "repetitions": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/stepRepeat" } },
             "features": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/manufacturingFeature" } },
+            "physicalBounds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.recognized_files, "items": { "$ref": "#/$defs/documentPhysicalBounds" } },
             "profile": { "oneOf": [{ "$ref": "#/$defs/boardProfile" }, { "type": "null" }] },
             "connectivity": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/objectSemantics" } },
+            "x2Attributes": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/scopedX2Attribute" } },
+            "jobFileFunctions": { "type": "array", "maxItems": MANUFACTURING_LIMITS.recognized_files, "items": { "$ref": "#/$defs/jobFileFunctionFact" } },
             "assembly": { "$ref": "#/$defs/assemblyEvidence" },
             "construction": { "$ref": "#/$defs/constructionEvidence" },
             "constraints": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/manufacturingConstraint" } },
             "capabilities": { "$ref": "#/$defs/capabilityLedger" },
             "omissions": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/manufacturingOmission" } },
             "conflicts": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/manufacturingConflict" } },
+            "sourcePair": { "oneOf": [{ "$ref": "#/$defs/manufacturingSourcePair" }, { "type": "null" }] },
+            "nativeReconciliationSource": { "oneOf": [{ "$ref": "#/$defs/nativeReconciliationSource" }, { "type": "null" }] },
+            "integrationOutcome": { "oneOf": [{ "$ref": "#/$defs/integratedReconciliationOutcome" }, { "type": "null" }] },
+            "reconciliations": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/manufacturingReconciliation" } },
             "warnings": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/manufacturingWarning" } },
             "limits": { "$ref": "#/$defs/manufacturingLimits" },
             "estimatedAllocationBytes": { "type": "integer", "minimum": 0, "maximum": MANUFACTURING_LIMITS.canonical_allocation_bytes }
@@ -3174,7 +5351,7 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
                     "id": { "type": "string", "pattern": "^input-v1-[0-9a-f]{64}$" },
                     "virtualPath": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.normalized_path_bytes },
                     "artifactDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
-                    "kindCandidate": { "enum": ["gerber", "excellon"] },
+                    "kindCandidate": { "enum": ["gerber", "excellon", "gerber_job"] },
                     "size": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615_u64 },
                     "state": { "enum": ["retained", "omitted", "failed"] },
                     "reason": { "type": ["string", "null"], "enum": ["recognized_file_limit", "per_file_byte_limit", "aggregate_byte_limit", "read_failure", null] }
@@ -3436,9 +5613,12 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
         ),
         (
             "apertureBlock",
-            json!({ "type": "object", "additionalProperties": false, "required": ["id", "documentId", "featureIds", "provenance"], "properties": {
+            json!({ "type": "object", "additionalProperties": false, "required": ["id", "documentId", "apertureId", "featureIds", "instantiationFeatureIds", "definitionEnd", "provenance"], "properties": {
                 "id": { "type": "string", "pattern": "^block-v1-[0-9a-f]{64}$" }, "documentId": { "$ref": "#/$defs/documentId" },
-                "featureIds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/featureId" } }, "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
+                "apertureId": { "type": "string", "pattern": "^aperture-v1-[0-9a-f]{64}$" },
+                "featureIds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "uniqueItems": true, "items": { "$ref": "#/$defs/featureId" } },
+                "instantiationFeatureIds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "uniqueItems": true, "items": { "$ref": "#/$defs/featureId" } },
+                "definitionEnd": { "$ref": "#/$defs/structuralLocation" }, "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
             } }),
         ),
         (
@@ -3453,6 +5633,24 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
         (
             "extent",
             json!({ "type": "object", "additionalProperties": false, "required": ["min", "max"], "properties": { "min": { "$ref": "#/$defs/canonicalPoint" }, "max": { "$ref": "#/$defs/canonicalPoint" } } }),
+        ),
+        (
+            "documentPhysicalBounds",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "documentId", "artifactDigest", "format", "extent", "resolution", "geometryDigest", "sourceLocations", "provenance"],
+                "properties": {
+                    "id": { "type": "string", "pattern": "^physical-bounds-v1-[0-9a-f]{64}$" },
+                    "documentId": { "$ref": "#/$defs/documentId" },
+                    "artifactDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "format": { "enum": ["gerber", "excellon"] },
+                    "extent": { "$ref": "#/$defs/extent" },
+                    "resolution": { "$ref": "#/$defs/positivePicometres" },
+                    "geometryDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "sourceLocations": { "type": "array", "minItems": 1, "maxItems": MANUFACTURING_LIMITS.geometry_features, "uniqueItems": true, "items": { "$ref": "#/$defs/structuralLocation" } },
+                    "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
+                }
+            }),
         ),
         (
             "boardProfile",
@@ -3470,6 +5668,50 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
                 "component": { "type": ["string", "null"], "maxLength": MANUFACTURING_LIMITS.max_text_bytes }, "pin": { "type": ["string", "null"], "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
                 "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
             } }),
+        ),
+        (
+            "scopedX2Attribute",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "documentId", "scope", "kind", "values", "deletion", "targetIds", "provenance"],
+                "properties": {
+                    "id": { "type": "string", "pattern": "^x2-attribute-v1-[0-9a-f]{64}$" },
+                    "documentId": { "$ref": "#/$defs/documentId" },
+                    "scope": { "enum": ["file", "aperture", "object"] },
+                    "kind": { "enum": ["file_function", "aperture_function", "net", "component", "pin", "reset"] },
+                    "values": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes } },
+                    "deletion": { "type": "boolean" },
+                    "targetIds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "uniqueItems": true, "items": { "type": "string", "pattern": "^(document|aperture|feature)-v1-[0-9a-f]{64}$" } },
+                    "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
+                }
+            }),
+        ),
+        (
+            "jobFileFunctionFact",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "jobDocumentId", "jobArtifactDigest", "referencedVirtualPath", "referencedDocumentId", "referencedArtifactDigest", "fields", "role", "side", "order", "plating", "fromLayer", "toLayer", "qualifier", "operation", "omission", "conflictIds", "provenance"],
+                "properties": {
+                    "id": { "type": "string", "pattern": "^job-file-function-v1-[0-9a-f]{64}$" },
+                    "jobDocumentId": { "$ref": "#/$defs/documentId" },
+                    "jobArtifactDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "referencedVirtualPath": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.normalized_path_bytes },
+                    "referencedDocumentId": { "$ref": "#/$defs/documentId" },
+                    "referencedArtifactDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "fields": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes } },
+                    "role": { "enum": ["copper", "solder_mask", "paste", "legend", "profile", "drill_map", "route", "assembly", "fabrication_drawing", "other", "unknown"] },
+                    "side": { "enum": ["top", "bottom", "inner", "both", "not_applicable", "unknown"] },
+                    "order": { "type": ["integer", "null"], "minimum": -2147483648_i64, "maximum": 2147483647_i64 },
+                    "plating": { "enum": ["plated", "non_plated", "mixed", "unknown"] },
+                    "fromLayer": { "type": ["integer", "null"], "minimum": -2147483648_i64, "maximum": 2147483647_i64 },
+                    "toLayer": { "type": ["integer", "null"], "minimum": -2147483648_i64, "maximum": 2147483647_i64 },
+                    "qualifier": { "type": ["string", "null"], "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                    "operation": { "type": ["string", "null"], "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                    "omission": { "type": ["string", "null"], "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                    "conflictIds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes } },
+                    "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
+                }
+            }),
         ),
         (
             "assemblyPlacement",
@@ -3531,7 +5773,7 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
                     "id": { "$ref": "#/$defs/documentId" },
                     "virtualPath": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.normalized_path_bytes },
                     "artifactDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-                    "format": { "enum": ["gerber", "excellon", "kicad_pcb", "unknown"] },
+                    "format": { "enum": ["gerber", "excellon", "gerber_job", "kicad_pcb", "unknown"] },
                     "adapter": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
                     "adapterVersion": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
                     "parseStatus": { "enum": ["complete", "partial", "failed", "unsupported", "not_provided"] },
@@ -3541,16 +5783,30 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
             }),
         ),
         (
+            "featureMembership",
+            json!({
+                "oneOf": [
+                    { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "top_level" } } },
+                    { "type": "object", "additionalProperties": false, "required": ["kind", "blockId", "apertureId"], "properties": {
+                        "kind": { "const": "aperture_block" },
+                        "blockId": { "type": "string", "pattern": "^block-v1-[0-9a-f]{64}$" },
+                        "apertureId": { "type": "string", "pattern": "^aperture-v1-[0-9a-f]{64}$" }
+                    } }
+                ]
+            }),
+        ),
+        (
             "manufacturingFeature",
             json!({
                 "type": "object", "additionalProperties": false,
-                "required": ["id", "documentId", "layerId", "toolId", "polarity", "geometry", "transforms", "provenance"],
+                "required": ["id", "documentId", "layerId", "toolId", "polarity", "geometry", "transforms", "membership", "provenance"],
                 "properties": {
                     "id": { "type": "string", "pattern": "^feature-v1-[0-9a-f]{64}$" },
                     "documentId": { "$ref": "#/$defs/documentId" }, "layerId": { "$ref": "#/$defs/layerId" },
                     "toolId": { "oneOf": [{ "$ref": "#/$defs/toolId" }, { "type": "null" }] },
                     "polarity": { "$ref": "#/$defs/layerPolarity" },
-                    "geometry": { "$ref": "#/$defs/geometry" }, "transforms": { "$ref": "#/$defs/transformChain" }, "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
+                    "geometry": { "$ref": "#/$defs/geometry" }, "transforms": { "$ref": "#/$defs/transformChain" },
+                    "membership": { "$ref": "#/$defs/featureMembership" }, "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
                 }
             }),
         ),
@@ -3601,6 +5857,75 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
                     "affectedCapabilities": { "type": "array", "minItems": 1, "maxItems": MANUFACTURING_LIMITS.geometry_features, "uniqueItems": true, "items": { "$ref": "#/$defs/capabilityId" } },
                     "left": { "$ref": "#/$defs/conflictFact" },
                     "right": { "$ref": "#/$defs/conflictFact" }
+                }
+            }),
+        ),
+        (
+            "reconciliationFact",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["modelIds", "canonicalValue", "resolution", "authority", "provenance"],
+                "properties": {
+                    "modelIds": { "type": "array", "minItems": 1, "maxItems": MANUFACTURING_LIMITS.geometry_features, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes } },
+                    "canonicalValue": { "type": "string", "maxLength": RECONCILIATION_VALUE_BYTES },
+                    "resolution": { "oneOf": [{ "$ref": "#/$defs/positivePicometres" }, { "type": "null" }] },
+                    "authority": { "$ref": "#/$defs/authority" },
+                    "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
+                }
+            }),
+        ),
+        (
+            "manufacturingReconciliation",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "family", "status", "confidence", "native", "package", "smallestEvidenceAction"],
+                "properties": {
+                    "id": { "type": "string", "pattern": "^reconciliation-v1-[0-9a-f]{64}$" },
+                    "family": { "enum": ["product", "layers", "profile", "drills", "extents", "connectivity"] },
+                    "status": { "enum": ["match", "mismatch", "not_checked"] },
+                    "confidence": { "enum": ["exact", "resolution_bounded", "unavailable"] },
+                    "native": { "$ref": "#/$defs/reconciliationFact" },
+                    "package": { "$ref": "#/$defs/reconciliationFact" },
+                    "smallestEvidenceAction": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes }
+                }
+            }),
+        ),
+        (
+            "nativeReconciliationSource",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["review", "extents"],
+                "properties": {
+                    "review": { "$ref": "#/$defs/fabricationReview" },
+                    "extents": { "oneOf": [{ "$ref": "#/$defs/extent" }, { "type": "null" }] }
+                }
+            }),
+        ),
+        (
+            "manufacturingSourcePair",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "nativeDocumentId", "nativeArtifactDigest", "releasePackageId", "releaseDocumentDigests"],
+                "properties": {
+                    "id": { "type": "string", "pattern": "^source-pair-v1-[0-9a-f]{64}$" },
+                    "nativeDocumentId": { "$ref": "#/$defs/documentId" },
+                    "nativeArtifactDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "releasePackageId": { "type": "string", "pattern": "^package-v1-[0-9a-f]{64}$" },
+                    "releaseDocumentDigests": { "type": "array", "minItems": 1, "maxItems": MANUFACTURING_LIMITS.recognized_files, "uniqueItems": true, "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+                }
+            }),
+        ),
+        (
+            "integratedReconciliationOutcome",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "state", "attemptedNativePath", "attemptedNativeDigest", "reason"],
+                "properties": {
+                    "id": { "type": "string", "pattern": "^integration-outcome-v1-[0-9a-f]{64}$" },
+                    "state": { "enum": ["not_provided", "failed"] },
+                    "attemptedNativePath": { "type": ["string", "null"], "maxLength": MANUFACTURING_LIMITS.normalized_path_bytes },
+                    "attemptedNativeDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                    "reason": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes }
                 }
             }),
         ),
@@ -3671,6 +5996,20 @@ pub struct GerberRouteFileFunctionEvidence {
     pub provenance: ManufacturingProvenance,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageFileFunction {
+    pub raw: String,
+    pub role: LayerRole,
+    pub side: LayerSide,
+    pub order: Option<i32>,
+    pub plating: Plating,
+    pub from_layer: Option<i32>,
+    pub to_layer: Option<i32>,
+    pub qualifier: Option<String>,
+    pub operation: Option<String>,
+    pub provenance: ManufacturingProvenance,
+}
+
 #[derive(Clone, Debug)]
 pub struct GerberProduction {
     pub review: FabricationReview,
@@ -3680,6 +6019,7 @@ pub struct GerberProduction {
     pub normalization_warnings: Vec<GerberNormalizationWarning>,
     pub attributes: Vec<GerberAttributeEvidence>,
     pub route_file_functions: Vec<GerberRouteFileFunctionEvidence>,
+    pub file_function: Option<PackageFileFunction>,
     pub extents: Option<Extent>,
 }
 
@@ -3752,10 +6092,10 @@ impl GerberByteBoundary {
     }
 
     pub fn with_timeout(bytes: &[u8], timeout: Duration) -> Result<Self, GerberParseError> {
-        Self::build(bytes, Instant::now(), timeout)
+        Self::build(bytes, ManufacturingDeadline::from_timeout(timeout))
     }
 
-    fn build(bytes: &[u8], started: Instant, timeout: Duration) -> Result<Self, GerberParseError> {
+    fn build(bytes: &[u8], deadline: ManufacturingDeadline) -> Result<Self, GerberParseError> {
         let raw_bytes = u64::try_from(bytes.len()).map_err(|_| GerberParseError::Resource {
             resource: "raw-bytes",
             observed: u64::MAX,
@@ -3768,14 +6108,14 @@ impl GerberByteBoundary {
                 limit: MANUFACTURING_LIMITS.raw_bytes_per_file,
             });
         }
-        check_gerber_deadline(started, timeout, "byte-boundary")?;
+        check_gerber_deadline(deadline, "byte-boundary")?;
 
         let mut max_line_bytes = 0_usize;
         let mut line_bytes = 0_usize;
         let mut index = 0_usize;
         while index < bytes.len() {
             if index % 4_096 == 0 {
-                check_gerber_deadline(started, timeout, "byte-boundary")?;
+                check_gerber_deadline(deadline, "byte-boundary")?;
             }
             let byte = bytes[index];
             if byte == b'\r' {
@@ -3818,7 +6158,7 @@ impl GerberByteBoundary {
         let mut cursor = 0_usize;
         let mut line = 1_usize;
         while cursor < bytes.len() {
-            check_gerber_deadline(started, timeout, "byte-framing")?;
+            check_gerber_deadline(deadline, "byte-framing")?;
             while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
                 match bytes[cursor] {
                     b'\r' => {
@@ -3913,7 +6253,7 @@ impl GerberByteBoundary {
                 });
             }
             lexical_tokens = lexical_tokens
-                .checked_add(count_gerber_tokens(&parser_frame)?)
+                .checked_add(count_gerber_tokens(&parser_frame, deadline)?)
                 .ok_or(GerberParseError::Resource {
                     resource: "lexical-tokens",
                     observed: u64::MAX,
@@ -3983,10 +6323,22 @@ impl GerberByteBoundary {
                 .unwrap_or(0);
             return Err(GerberParseError::InvalidByte { offset });
         }
-        check_gerber_deadline(started, timeout, "byte-boundary")?;
+        check_gerber_deadline(deadline, "byte-boundary")?;
+        let original_digest = sha256_with_deadline(bytes, deadline, "gerber-boundary-hash")
+            .map_err(|error| match error {
+                FabricationError::LimitExceeded { .. } => GerberParseError::Deadline {
+                    stage: "boundary-hash",
+                },
+                error => GerberParseError::Canonical(error),
+            })?;
+        let mut original_bytes = Vec::with_capacity(bytes.len());
+        for chunk in bytes.chunks(4096) {
+            check_gerber_deadline(deadline, "gerber-boundary-copy")?;
+            original_bytes.extend_from_slice(chunk);
+        }
         Ok(Self {
-            original_bytes: bytes.to_vec(),
-            original_digest: sha256(bytes),
+            original_bytes,
+            original_digest,
             parser_copy,
             warnings,
             metrics: DocumentMetrics {
@@ -4014,10 +6366,16 @@ impl GerberByteBoundary {
     }
 }
 
-fn count_gerber_tokens(bytes: &[u8]) -> Result<u64, GerberParseError> {
+fn count_gerber_tokens(
+    bytes: &[u8],
+    deadline: ManufacturingDeadline,
+) -> Result<u64, GerberParseError> {
     let mut count = 0_u64;
     let mut in_word = false;
-    for byte in bytes.iter().copied() {
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if index & 0x0fff == 0 {
+            check_gerber_deadline(deadline, "lexical-tokens")?;
+        }
         let word = byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$');
         if word {
             if !in_word {
@@ -4040,11 +6398,10 @@ fn count_gerber_tokens(bytes: &[u8]) -> Result<u64, GerberParseError> {
 }
 
 fn check_gerber_deadline(
-    started: Instant,
-    timeout: Duration,
+    deadline: ManufacturingDeadline,
     stage: &'static str,
 ) -> Result<(), GerberParseError> {
-    if timeout.is_zero() || started.elapsed() >= timeout {
+    if Instant::now() >= deadline.at {
         Err(GerberParseError::Deadline { stage })
     } else {
         Ok(())
@@ -4053,19 +6410,19 @@ fn check_gerber_deadline(
 
 struct GerberDeadlineReader<'a> {
     cursor: Cursor<&'a [u8]>,
-    started: Instant,
-    timeout: Duration,
+    deadline: ManufacturingDeadline,
 }
 
 impl Read for GerberDeadlineReader<'_> {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        if self.timeout.is_zero() || self.started.elapsed() >= self.timeout {
+        if Instant::now() >= self.deadline.at {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "Gerber parser deadline",
             ));
         }
-        self.cursor.read(buffer)
+        let bounded = buffer.len().min(4096);
+        self.cursor.read(&mut buffer[..bounded])
     }
 }
 
@@ -4563,6 +6920,7 @@ mod gerber_parser_reconciliation_tests {
             kind_candidate: ManufacturingKindCandidate::Gerber,
             size: bytes.len() as u64,
             original_bytes: bytes,
+            file_started: None,
         };
         let inventory = ManufacturingInventory {
             inputs: vec![input],
@@ -4575,6 +6933,7 @@ mod gerber_parser_reconciliation_tests {
                 state: ManufacturingLoadState::Retained,
                 reason: None,
             }],
+            aggregate_started: None,
         };
         assert_eq!(
             parse_gerber_inventory_with_timeout(&inventory, Duration::from_secs(1))
@@ -4595,6 +6954,7 @@ mod gerber_parser_reconciliation_tests {
                 kind_candidate: ManufacturingKindCandidate::Gerber,
                 size: bomb_size,
                 original_bytes: bomb_bytes,
+                file_started: None,
             }],
             outcomes: vec![ManufacturingInputOutcome {
                 id: input_outcome_id(
@@ -4609,11 +6969,57 @@ mod gerber_parser_reconciliation_tests {
                 state: ManufacturingLoadState::Retained,
                 reason: None,
             }],
+            aggregate_started: None,
         };
         assert!(matches!(
             parse_gerber_inventory_with_timeout(&bomb, Duration::from_micros(50)),
             Err(GerberParseError::Deadline { stage: "aggregate" })
         ));
+    }
+
+    #[test]
+    fn round7_deadline_inventory_validation_does_not_restart_or_consume_all_bytes() {
+        let mut bytes = b"%FSLAX46Y46*%%MOMM*%".to_vec();
+        bytes.extend_from_slice(b"G04 aggregate-deadline*\n".repeat(100_000).as_slice());
+        bytes.extend_from_slice(b"M02*");
+        let digest = sha256(&bytes);
+        let size = bytes.len() as u64;
+        let path = "round7-inventory-deadline.gbr".to_string();
+        let inventory = ManufacturingInventory {
+            inputs: vec![ManufacturingInput {
+                virtual_path: path.clone(),
+                artifact_digest: digest.clone(),
+                kind_candidate: ManufacturingKindCandidate::Gerber,
+                size,
+                original_bytes: bytes,
+                file_started: None,
+            }],
+            outcomes: vec![ManufacturingInputOutcome {
+                id: input_outcome_id(&path, Some(&digest), ManufacturingKindCandidate::Gerber),
+                virtual_path: path,
+                artifact_digest: Some(digest),
+                kind_candidate: ManufacturingKindCandidate::Gerber,
+                size,
+                state: ManufacturingLoadState::Retained,
+                reason: None,
+            }],
+            aggregate_started: None,
+        };
+        let mut consumed = 0_usize;
+        let result = inventory.validate_with_deadline_counting(
+            ManufacturingDeadline::from_timeout(Duration::from_millis(2)),
+            |bytes| {
+                consumed += bytes;
+                std::thread::sleep(Duration::from_micros(100));
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(FabricationError::LimitExceeded {
+                resource: "manufacturing-inventory-hash"
+            })
+        ));
+        assert!(consumed > 0 && consumed < size as usize);
     }
 
     #[test]
@@ -4625,27 +7031,29 @@ mod gerber_parser_reconciliation_tests {
             size: bytes.len() as u64,
             original_bytes: bytes,
             kind_candidate: ManufacturingKindCandidate::Gerber,
+            file_started: None,
         };
         let timeout = Duration::from_millis(100);
 
         let parser_started = Instant::now();
-        let boundary =
-            GerberByteBoundary::build(&input.original_bytes, parser_started, timeout).unwrap();
+        let parser_deadline = ManufacturingDeadline::from_timeout(timeout);
+        let boundary = GerberByteBoundary::build(&input.original_bytes, parser_deadline).unwrap();
         assert!(parser_started.elapsed() < timeout);
         std::thread::sleep(timeout);
         assert!(matches!(
-            parse_gerber_document_after_boundary(&input, boundary, parser_started, timeout),
+            parse_gerber_document_after_boundary(&input, boundary, parser_deadline),
             Err(GerberParseError::Deadline {
                 stage: "parser-reconciliation"
             })
         ));
 
         let interpreter_started = Instant::now();
+        let interpreter_deadline = ManufacturingDeadline::from_timeout(timeout);
         let boundary =
-            GerberByteBoundary::build(&input.original_bytes, interpreter_started, timeout).unwrap();
+            GerberByteBoundary::build(&input.original_bytes, interpreter_deadline).unwrap();
         let document_id = document_id(&boundary.original_digest, DocumentFormat::Gerber).unwrap();
         let (accounting, issues, routes) =
-            account_gerber_parser(&boundary, &document_id, interpreter_started, timeout).unwrap();
+            account_gerber_parser(&boundary, &document_id, interpreter_deadline).unwrap();
         assert!(interpreter_started.elapsed() < timeout);
         std::thread::sleep(timeout);
         assert!(matches!(
@@ -4655,8 +7063,7 @@ mod gerber_parser_reconciliation_tests {
                 accounting,
                 issues,
                 routes,
-                interpreter_started,
-                timeout,
+                interpreter_deadline,
             )
             .run(),
             Err(GerberParseError::Deadline {
@@ -4744,8 +7151,7 @@ fn enforce_parser_record_limit(observed: u64) -> Result<(), GerberParseError> {
 fn account_gerber_parser(
     boundary: &GerberByteBoundary,
     document_id: &str,
-    started: Instant,
-    timeout: Duration,
+    deadline: ManufacturingDeadline,
 ) -> Result<
     (
         GerberParserAccounting,
@@ -4754,7 +7160,7 @@ fn account_gerber_parser(
     ),
     GerberParseError,
 > {
-    check_gerber_deadline(started, timeout, "parser-reconciliation")?;
+    check_gerber_deadline(deadline, "parser-reconciliation")?;
     let marker = reconciliation_marker(boundary);
     let marker_bytes = marker.len() as u64;
     let sentinel_bytes = u64::try_from(boundary.frames.len())
@@ -4784,14 +7190,13 @@ fn account_gerber_parser(
 
     let reader = GerberDeadlineReader {
         cursor: Cursor::new(augmented.as_slice()),
-        started,
-        timeout,
+        deadline,
     };
     let (document, fatal) = match parse_gerber(BufReader::new(reader)) {
         Ok(document) => (document, false),
         Err((document, _)) => (document, true),
     };
-    check_gerber_deadline(started, timeout, "parser-reconciliation")?;
+    check_gerber_deadline(deadline, "parser-reconciliation")?;
 
     let mut tokens = Vec::with_capacity(document.commands.len());
     for (document_index, result) in document.commands.iter().enumerate() {
@@ -4936,19 +7341,25 @@ pub fn parse_gerber_document_with_timeout(
     input: &ManufacturingInput,
     timeout: Duration,
 ) -> Result<GerberProduction, GerberParseError> {
-    parse_gerber_document_started(input, Instant::now(), timeout)
-        .map(|(production, _, _)| production)
+    let deadline = ManufacturingDeadline::from_timeout(timeout).for_input(input);
+    parse_gerber_document_with_deadline(input, deadline).map(|(production, _, _)| production)
 }
 
-fn parse_gerber_document_started(
+fn parse_gerber_document_with_deadline(
     input: &ManufacturingInput,
-    started: Instant,
-    timeout: Duration,
+    deadline: ManufacturingDeadline,
 ) -> Result<(GerberProduction, u64, u64), GerberParseError> {
+    let digest = sha256_with_deadline(&input.original_bytes, deadline, "gerber-input-hash")
+        .map_err(|error| match error {
+            FabricationError::LimitExceeded { .. } => GerberParseError::Deadline {
+                stage: "input-hash",
+            },
+            error => GerberParseError::Canonical(error),
+        })?;
     if input.kind_candidate != ManufacturingKindCandidate::Gerber
         || input.size != input.original_bytes.len() as u64
         || input.size > MANUFACTURING_LIMITS.raw_bytes_per_file
-        || input.artifact_digest != sha256(&input.original_bytes)
+        || input.artifact_digest != digest
     {
         return Err(GerberParseError::Semantic {
             record: 0,
@@ -4961,27 +7372,22 @@ fn parse_gerber_document_started(
             reason: "invalid-gerber-virtual-path",
         });
     }
-    let boundary = GerberByteBoundary::build(&input.original_bytes, started, timeout)?;
+    let boundary = GerberByteBoundary::build(&input.original_bytes, deadline)?;
     let source_records = boundary.metrics.records;
     let lexical_tokens = boundary.metrics.lexical_tokens;
-    let production = parse_gerber_document_after_boundary(input, boundary, started, timeout)?;
+    let production = parse_gerber_document_after_boundary(input, boundary, deadline)?;
     Ok((production, source_records, lexical_tokens))
 }
 
 fn parse_gerber_document_after_boundary(
     input: &ManufacturingInput,
     boundary: GerberByteBoundary,
-    started: Instant,
-    timeout: Duration,
+    deadline: ManufacturingDeadline,
 ) -> Result<GerberProduction, GerberParseError> {
     let document_id = document_id(&boundary.original_digest, DocumentFormat::Gerber)
         .map_err(GerberParseError::Canonical)?;
-    let (accounting, issues, routes) =
-        account_gerber_parser(&boundary, &document_id, started, timeout)?;
-    GerberInterpreter::new(
-        input, boundary, accounting, issues, routes, started, timeout,
-    )
-    .run()
+    let (accounting, issues, routes) = account_gerber_parser(&boundary, &document_id, deadline)?;
+    GerberInterpreter::new(input, boundary, accounting, issues, routes, deadline).run()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -5058,10 +7464,17 @@ fn parse_gerber_inventory_with_timeout(
     inventory: &ManufacturingInventory,
     timeout: Duration,
 ) -> Result<Vec<GerberProduction>, GerberParseError> {
-    let aggregate_started = Instant::now();
-    inventory.validate().map_err(GerberParseError::Canonical)?;
-    check_gerber_deadline(aggregate_started, timeout, "aggregate")?;
-    let file_timeout = Duration::from_millis(MANUFACTURING_LIMITS.file_timeout_ms);
+    let deadline = ManufacturingDeadline::for_inventory(inventory, timeout);
+    inventory
+        .validate_with_deadline(deadline)
+        .map_err(|error| {
+            if deadline.check("manufacturing-aggregate").is_err() {
+                GerberParseError::Deadline { stage: "aggregate" }
+            } else {
+                GerberParseError::Canonical(error)
+            }
+        })?;
+    check_gerber_deadline(deadline, "aggregate")?;
     let mut aggregate = GerberAggregateAccounting::default();
     let mut result = Vec::new();
     for input in inventory
@@ -5069,20 +7482,16 @@ fn parse_gerber_inventory_with_timeout(
         .iter()
         .filter(|input| input.kind_candidate == ManufacturingKindCandidate::Gerber)
     {
-        check_gerber_deadline(aggregate_started, timeout, "aggregate")?;
-        let file_started = Instant::now();
-        let aggregate_remaining =
-            timeout.saturating_sub(file_started.duration_since(aggregate_started));
-        let aggregate_limited = aggregate_remaining <= file_timeout;
-        let effective_timeout = aggregate_remaining.min(file_timeout);
+        check_gerber_deadline(deadline, "aggregate")?;
+        let file_deadline = deadline.for_input(input);
         let (parsed, source_records, lexical_tokens) =
-            match parse_gerber_document_started(input, file_started, effective_timeout) {
-                Err(GerberParseError::Deadline { .. }) if aggregate_limited => {
+            match parse_gerber_document_with_deadline(input, file_deadline) {
+                Err(GerberParseError::Deadline { .. }) if file_deadline.at == deadline.at => {
                     return Err(GerberParseError::Deadline { stage: "aggregate" });
                 }
                 outcome => outcome?,
             };
-        check_gerber_deadline(aggregate_started, timeout, "aggregate")?;
+        check_gerber_deadline(deadline, "aggregate")?;
         aggregate.add(
             input.size,
             source_records,
@@ -5091,7 +7500,7 @@ fn parse_gerber_inventory_with_timeout(
         )?;
         result.push(parsed);
     }
-    check_gerber_deadline(aggregate_started, timeout, "aggregate")?;
+    check_gerber_deadline(deadline, "aggregate")?;
     Ok(result)
 }
 
@@ -5652,8 +8061,7 @@ struct GerberInterpreter<'a> {
     accounting: GerberParserAccounting,
     parser_issues: Vec<GerberParserIssue>,
     routes: Vec<GerberRouteFileFunctionEvidence>,
-    started: Instant,
-    timeout: Duration,
+    deadline: ManufacturingDeadline,
     document_id: String,
     layer_id: String,
     unit: Option<SourceUnit>,
@@ -5715,8 +8123,7 @@ impl<'a> GerberInterpreter<'a> {
         accounting: GerberParserAccounting,
         parser_issues: Vec<GerberParserIssue>,
         routes: Vec<GerberRouteFileFunctionEvidence>,
-        started: Instant,
-        timeout: Duration,
+        deadline: ManufacturingDeadline,
     ) -> Self {
         let document_id = document_id(&boundary.original_digest, DocumentFormat::Gerber)
             .expect("validated original digest");
@@ -5726,15 +8133,22 @@ impl<'a> GerberInterpreter<'a> {
             .expect("parser accepted a nonempty document");
         let first_provenance =
             gerber_provenance_for(&document_id, &boundary.original_digest, first);
-        let layer_id = layer_id(&document_id, LayerRole::Unknown, &first_provenance.location);
+        let layer_id = layer_id(
+            &document_id,
+            None,
+            LayerRole::Unknown,
+            LayerSide::Unknown,
+            None,
+            Authority::FileContent,
+            &first_provenance.location,
+        );
         Self {
             input,
             boundary,
             accounting,
             parser_issues,
             routes,
-            started,
-            timeout,
+            deadline,
             document_id,
             layer_id,
             unit: None,
@@ -5782,7 +8196,7 @@ impl<'a> GerberInterpreter<'a> {
     }
 
     fn run(mut self) -> Result<GerberProduction, GerberParseError> {
-        let frames = self.boundary.frames.clone();
+        let frames = std::mem::take(&mut self.boundary.frames);
         for frame in &frames {
             self.deadline("interpretation")?;
             if self.terminated {
@@ -5810,12 +8224,15 @@ impl<'a> GerberInterpreter<'a> {
         self.deadline("canonicalization")?;
 
         for warning in &self.boundary.warnings {
-            let frame = frames
-                .iter()
-                .find(|frame| {
-                    warning.byte_start >= frame.byte_start && warning.byte_end <= frame.byte_end
-                })
-                .expect("normalization warning belongs to one frame");
+            let mut matched_frame = None;
+            for frame in &frames {
+                self.deadline("normalization-warning")?;
+                if warning.byte_start >= frame.byte_start && warning.byte_end <= frame.byte_end {
+                    matched_frame = Some(frame);
+                    break;
+                }
+            }
+            let frame = matched_frame.expect("normalization warning belongs to one frame");
             let mut provenance = self.provenance(frame);
             provenance.location.byte_start = warning.byte_start as u64;
             provenance.location.byte_end = warning.byte_end.saturating_sub(1) as u64;
@@ -5858,6 +8275,23 @@ impl<'a> GerberInterpreter<'a> {
             authority: Authority::FileContent,
             provenance: first_provenance.clone(),
         };
+        let block_index_deadline = self.deadline;
+        let mut block_instantiations = HashMap::<&str, Vec<String>>::new();
+        for feature in &self.features {
+            check_gerber_deadline(block_index_deadline, "block-instantiation-index")?;
+            if let Geometry::Flash(flash) = &feature.geometry {
+                block_instantiations
+                    .entry(flash.aperture_id.as_str())
+                    .or_default()
+                    .push(feature.id.clone());
+            }
+        }
+        for block in &mut self.blocks {
+            check_gerber_deadline(block_index_deadline, "block-instantiation-index")?;
+            block.instantiation_feature_ids = block_instantiations
+                .remove(block.aperture_id.as_str())
+                .unwrap_or_default();
+        }
         let expanded_complete =
             self.macros.is_empty() && self.blocks.is_empty() && self.repetitions.is_empty();
         let has_attributes = !self.attributes.is_empty();
@@ -6028,30 +8462,28 @@ impl<'a> GerberInterpreter<'a> {
             reason: None,
         };
         let extents = self.bounds.extent();
-        let started = self.started;
-        let timeout = self.timeout;
-        let mut review = FabricationReview {
-            status: FabricationStatus::Partial,
-            input_outcomes: vec![outcome],
-            documents: vec![document],
-            layers: vec![layer],
-            tools: self.tools,
-            apertures: self.aperture_facts,
-            macros: self.macros,
-            blocks: self.blocks,
-            repetitions: self.repetitions,
-            features: self.features,
-            capabilities: CapabilityLedger {
-                records: capabilities,
-            },
-            omissions,
-            warnings: self.warnings,
-            ..FabricationReview::default()
-        };
-        review
-            .finalize_trusted()
+        let deadline = self.deadline;
+        let mut review = FabricationReview::empty_with_deadline(deadline)
             .map_err(GerberParseError::Canonical)?;
-        check_gerber_deadline(started, timeout, "canonicalization")?;
+        review.status = FabricationStatus::Partial;
+        review.input_outcomes = vec![outcome];
+        review.documents = vec![document];
+        review.layers = vec![layer];
+        review.tools = self.tools;
+        review.apertures = self.aperture_facts;
+        review.macros = self.macros;
+        review.blocks = self.blocks;
+        review.repetitions = self.repetitions;
+        review.features = self.features;
+        review.capabilities = CapabilityLedger {
+            records: capabilities,
+        };
+        review.omissions = omissions;
+        review.warnings = self.warnings;
+        review
+            .finalize_trusted_with_deadline(deadline)
+            .map_err(GerberParseError::Canonical)?;
+        check_gerber_deadline(deadline, "canonicalization")?;
         Ok(GerberProduction {
             review,
             original_digest: self.boundary.original_digest,
@@ -6060,6 +8492,7 @@ impl<'a> GerberInterpreter<'a> {
             normalization_warnings: self.boundary.warnings,
             attributes: self.attributes,
             route_file_functions: self.routes,
+            file_function: None,
             extents,
         })
     }
@@ -6316,7 +8749,7 @@ impl<'a> GerberInterpreter<'a> {
     }
 
     fn deadline(&self, stage: &'static str) -> Result<(), GerberParseError> {
-        check_gerber_deadline(self.started, self.timeout, stage)
+        check_gerber_deadline(self.deadline, stage)
     }
 
     fn semantic(&self, record: u64, reason: &'static str) -> GerberParseError {
@@ -7188,16 +9621,18 @@ impl GerberInterpreter<'_> {
             if self.features.len() == block.feature_start {
                 return Err(self.semantic(frame.record, "empty-aperture-block"));
             }
-            let feature_ids = self.features[block.feature_start..]
-                .iter()
-                .map(|feature| feature.id.clone())
-                .collect::<Vec<_>>();
+            let mut feature_ids = Vec::with_capacity(self.features.len() - block.feature_start);
+            for feature in &self.features[block.feature_start..] {
+                check_gerber_deadline(self.deadline, "aperture-block-close")?;
+                feature_ids.push(feature.id.clone());
+            }
             let mut bounds = GerberBounds::default();
             let mut expansion = GerberExpansionWeight::default();
             for (feature, weight) in self.features[block.feature_start..]
                 .iter()
                 .zip(&self.feature_weights[block.feature_start..])
             {
+                check_gerber_deadline(self.deadline, "aperture-block-close")?;
                 bounds.merge(self.feature_bounds(feature)?);
                 expansion = expansion.checked_add(*weight, frame.record)?;
             }
@@ -7227,10 +9662,19 @@ impl GerberInterpreter<'_> {
                 expansion,
             )?;
             let provenance = self.provenance(&block.start);
+            let id = record_id("block", &self.document_id, &provenance.location);
+            let aperture_id = aperture_id(
+                &self.document_id,
+                ApertureShape::Block,
+                &provenance.location,
+            );
             self.blocks.push(ApertureBlock {
-                id: record_id("block", &self.document_id, &provenance.location),
+                id,
                 document_id: self.document_id.clone(),
+                aperture_id,
                 feature_ids,
+                instantiation_feature_ids: Vec::new(),
+                definition_end: self.provenance(frame).location,
                 provenance,
             });
             return Ok(());
@@ -7289,6 +9733,7 @@ impl GerberInterpreter<'_> {
                 .ok_or_else(|| self.semantic(frame.record, "sr-product-overflow"))?;
             let mut repeated_weight = GerberExpansionWeight::default();
             for weight in &self.feature_weights[repeat.feature_start..] {
+                check_gerber_deadline(self.deadline, "step-repeat-close")?;
                 repeated_weight = repeated_weight.checked_add(*weight, frame.record)?;
             }
             let extra = repeated_weight.checked_mul(grid.saturating_sub(1), frame.record)?;
@@ -7313,12 +9758,11 @@ impl GerberInterpreter<'_> {
                 });
             }
             self.expanded_weight = projected_expanded;
-            let feature_ids = self.features[repeat.feature_start..]
-                .iter()
-                .map(|feature| feature.id.clone())
-                .collect::<Vec<_>>();
+            let mut feature_ids = Vec::with_capacity(self.features.len() - repeat.feature_start);
             let mut base_bounds = GerberBounds::default();
             for feature in &self.features[repeat.feature_start..] {
+                check_gerber_deadline(self.deadline, "step-repeat-close")?;
+                feature_ids.push(feature.id.clone());
                 base_bounds.merge(self.feature_bounds(feature)?);
             }
             let max_x = i128::from(repeat.x_step.0)
@@ -7875,9 +10319,32 @@ fn single_quadrant_sweep(
     let dot = sx * ex + sy * ey;
     dot >= 0
         && match direction {
-            ArcDirection::Clockwise => cross <= 0,
-            ArcDirection::CounterClockwise => cross >= 0,
+            ArcDirection::Clockwise => cross < 0,
+            ArcDirection::CounterClockwise => cross > 0,
         }
+}
+
+fn valid_single_quadrant_arc(
+    start: CanonicalPoint,
+    end: CanonicalPoint,
+    center: CanonicalPoint,
+    direction: ArcDirection,
+    resolution: Picometres,
+) -> bool {
+    if start == end || resolution.0 <= 0 {
+        return false;
+    }
+    let radius_squared = |point: CanonicalPoint| {
+        let x = i128::from(point.x.0) - i128::from(center.x.0);
+        let y = i128::from(point.y.0) - i128::from(center.y.0);
+        (x * x + y * y) as u128
+    };
+    let start_radius = integer_sqrt(radius_squared(start));
+    let end_radius = integer_sqrt(radius_squared(end));
+    start_radius > 0
+        && end_radius > 0
+        && start_radius.abs_diff(end_radius) <= resolution.0 as u128
+        && single_quadrant_sweep(start, end, center, direction)
 }
 
 fn segment_end(segment: &ContourSegment) -> CanonicalPoint {
@@ -7967,11 +10434,22 @@ impl GerberInterpreter<'_> {
                 limit: MANUFACTURING_LIMITS.canonical_allocation_bytes,
             });
         }
-        let id = feature_id(
+        let membership = self
+            .block
+            .as_ref()
+            .map_or(FeatureMembership::TopLevel, |block| {
+                let location = &self.provenance(&block.start).location;
+                FeatureMembership::ApertureBlock {
+                    block_id: record_id("block", &self.document_id, location),
+                    aperture_id: aperture_id(&self.document_id, ApertureShape::Block, location),
+                }
+            });
+        let id = feature_id_with_membership(
             &self.document_id,
             &self.layer_id,
             geometry.kind(),
             &provenance.location,
+            &membership,
         );
         let feature = ManufacturingFeature {
             id,
@@ -7981,6 +10459,7 @@ impl GerberInterpreter<'_> {
             polarity,
             geometry,
             transforms,
+            membership,
             provenance,
         };
         let child_depth = self
@@ -8158,4 +10637,5161 @@ impl GerberInterpreter<'_> {
         }
         Ok(bounds)
     }
+}
+
+#[derive(Clone, Debug)]
+struct X2Attribute {
+    name: String,
+    values: Vec<String>,
+    provenance: ManufacturingProvenance,
+}
+
+fn scoped_x2_attribute_id(attribute: &ScopedX2Attribute) -> String {
+    stable_id(
+        "x2-attribute",
+        &(
+            &attribute.document_id,
+            attribute.scope,
+            attribute.kind,
+            &attribute.values,
+            attribute.deletion,
+            &attribute.target_ids,
+            &attribute.provenance.location,
+        ),
+    )
+    .expect("X2 attribute identity serializes")
+}
+
+fn scoped_x2_attribute_id_with_deadline(
+    attribute: &ScopedX2Attribute,
+    deadline: ManufacturingDeadline,
+) -> Result<String, FabricationError> {
+    stable_id_with_deadline(
+        deadline,
+        "x2-attribute-identity",
+        "x2-attribute",
+        &(
+            &attribute.document_id,
+            attribute.scope,
+            attribute.kind,
+            &attribute.values,
+            attribute.deletion,
+            &attribute.target_ids,
+            &attribute.provenance.location,
+        ),
+    )
+}
+
+fn scoped_x2_attribute(
+    document_id: &str,
+    scope: X2AttributeScope,
+    kind: X2AttributeKind,
+    values: Vec<String>,
+    deletion: bool,
+    provenance: ManufacturingProvenance,
+) -> ScopedX2Attribute {
+    let mut attribute = ScopedX2Attribute {
+        id: String::new(),
+        document_id: document_id.into(),
+        scope,
+        kind,
+        values,
+        deletion,
+        target_ids: Vec::new(),
+        provenance,
+    };
+    attribute.id = scoped_x2_attribute_id(&attribute);
+    attribute
+}
+
+fn x2_attribute(evidence: &GerberAttributeEvidence) -> Result<X2Attribute, FabricationError> {
+    let body = match evidence.kind {
+        GerberAttributeKind::StandardComment => evidence
+            .raw
+            .strip_prefix("G04 #@! ")
+            .and_then(|value| value.strip_suffix('*')),
+        _ => evidence
+            .raw
+            .strip_prefix('%')
+            .and_then(|value| value.strip_suffix("*%")),
+    }
+    .ok_or_else(|| FabricationError::InvalidIdentity("x2-attribute-framing".into()))?;
+    let mut fields = body.split(',');
+    let name = fields.next().unwrap_or_default();
+    if name.is_empty()
+        || name.len() > MANUFACTURING_LIMITS.max_text_bytes
+        || !name.is_ascii()
+        || name.chars().any(char::is_control)
+    {
+        return Err(FabricationError::InvalidIdentity(
+            "x2-attribute-name".into(),
+        ));
+    }
+    let values = fields
+        .map(|value| {
+            if value.len() > MANUFACTURING_LIMITS.max_text_bytes
+                || !value.is_ascii()
+                || value.chars().any(char::is_control)
+            {
+                Err(FabricationError::InvalidIdentity(
+                    "x2-attribute-value".into(),
+                ))
+            } else {
+                Ok(value.to_owned())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(X2Attribute {
+        name: name.to_owned(),
+        values,
+        provenance: evidence.provenance.clone(),
+    })
+}
+
+fn parse_layer_number(value: &str) -> Option<i32> {
+    value
+        .strip_prefix('L')?
+        .parse::<i32>()
+        .ok()
+        .filter(|value| *value > 0)
+}
+
+fn parse_positive_layer(value: &str) -> Option<i32> {
+    value.parse::<i32>().ok().filter(|value| *value > 0)
+}
+
+fn package_file_function(attribute: &X2Attribute) -> Result<PackageFileFunction, FabricationError> {
+    if attribute.name != "TF.FileFunction"
+        || attribute.values.is_empty()
+        || attribute.values.iter().any(String::is_empty)
+    {
+        return Err(FabricationError::InvalidIdentity("x2-file-function".into()));
+    }
+    let fields = &attribute.values;
+    let (role, side, order, plating, from_layer, to_layer, qualifier, operation) = match fields[0]
+        .as_str()
+    {
+        "Copper" if fields.len() == 3 => {
+            let order = parse_layer_number(&fields[1])
+                .ok_or_else(|| FabricationError::InvalidIdentity("x2-copper-layer".into()))?;
+            let side = match fields[2].as_str() {
+                "Top" => LayerSide::Top,
+                "Bot" => LayerSide::Bottom,
+                "Inr" => LayerSide::Inner,
+                _ => {
+                    return Err(FabricationError::InvalidIdentity("x2-copper-side".into()));
+                }
+            };
+            (
+                LayerRole::Copper,
+                side,
+                Some(order),
+                Plating::Unknown,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        "Soldermask" | "Paste" | "Legend" if fields.len() == 2 => {
+            let side = match fields[1].as_str() {
+                "Top" => LayerSide::Top,
+                "Bot" => LayerSide::Bottom,
+                _ => {
+                    return Err(FabricationError::InvalidIdentity("x2-layer-side".into()));
+                }
+            };
+            let role = match fields[0].as_str() {
+                "Soldermask" => LayerRole::SolderMask,
+                "Paste" => LayerRole::Paste,
+                _ => LayerRole::Legend,
+            };
+            (role, side, None, Plating::Unknown, None, None, None, None)
+        }
+        "Profile" if fields.len() == 2 && matches!(fields[1].as_str(), "P" | "NP") => (
+            LayerRole::Profile,
+            LayerSide::NotApplicable,
+            None,
+            Plating::Unknown,
+            None,
+            None,
+            Some(fields[1].clone()),
+            None,
+        ),
+        "Plated" | "NonPlated" if matches!(fields.len(), 4 | 5) => {
+            let from = parse_positive_layer(&fields[1])
+                .ok_or_else(|| FabricationError::InvalidIdentity("x2-file-function-span".into()))?;
+            let to = parse_positive_layer(&fields[2])
+                .ok_or_else(|| FabricationError::InvalidIdentity("x2-file-function-span".into()))?;
+            if from > to {
+                return Err(FabricationError::InvalidIdentity(
+                    "x2-file-function-span".into(),
+                ));
+            }
+            let valid_qualifier = match fields[0].as_str() {
+                "Plated" => matches!(fields[3].as_str(), "PTH" | "Blind" | "Buried"),
+                "NonPlated" => fields[3] == "NPTH",
+                _ => false,
+            };
+            if !valid_qualifier {
+                return Err(FabricationError::InvalidIdentity(
+                    "x2-drill-plating-function".into(),
+                ));
+            }
+            let role = match fields.get(4).map(String::as_str) {
+                None | Some("Drill") => LayerRole::DrillMap,
+                Some("Route") => LayerRole::Route,
+                _ => {
+                    return Err(FabricationError::InvalidIdentity(
+                        "x2-drill-route-function".into(),
+                    ));
+                }
+            };
+            (
+                role,
+                LayerSide::NotApplicable,
+                None,
+                if fields[0] == "Plated" {
+                    Plating::Plated
+                } else {
+                    Plating::NonPlated
+                },
+                Some(from),
+                Some(to),
+                Some(fields[3].clone()),
+                Some(match fields.get(4) {
+                    Some(operation) => format!("{},{}", fields[3], operation),
+                    None => fields[3].clone(),
+                }),
+            )
+        }
+        _ => {
+            return Err(FabricationError::InvalidIdentity(
+                "unsupported-x2-file-function".into(),
+            ));
+        }
+    };
+    Ok(PackageFileFunction {
+        raw: format!("TF.FileFunction,{}", fields.join(",")),
+        role,
+        side,
+        order,
+        plating,
+        from_layer,
+        to_layer,
+        qualifier,
+        operation,
+        provenance: attribute.provenance.clone(),
+    })
+}
+
+fn set_capability(review: &mut FabricationReview, record: CapabilityRecord) {
+    review
+        .capabilities
+        .records
+        .retain(|existing| existing.id != record.id);
+    review.capabilities.records.push(record);
+    review.capabilities.records.sort_by_key(|item| item.id);
+}
+
+fn semantic_capability(
+    id: CapabilityId,
+    state: CapabilityState,
+    authority: Authority,
+    document_id: &str,
+    provenance: Option<&ManufacturingProvenance>,
+    detail: &str,
+) -> CapabilityRecord {
+    CapabilityRecord {
+        id,
+        state,
+        authority,
+        document_ids: if state == CapabilityState::NotProvided {
+            Vec::new()
+        } else {
+            vec![document_id.to_owned()]
+        },
+        provenance: provenance.into_iter().cloned().collect(),
+        detail: detail.into(),
+    }
+}
+
+fn rekey_document_layer(
+    review: &mut FabricationReview,
+    document_id: &str,
+    function: &PackageFileFunction,
+    authority: Authority,
+    deadline: ManufacturingDeadline,
+) -> Result<(), FabricationError> {
+    deadline.check("document-layer-rekey")?;
+    let layer_index = review
+        .layers
+        .iter()
+        .position(|layer| layer.document_id == document_id && layer.role != LayerRole::Copper)
+        .or_else(|| {
+            review
+                .layers
+                .iter()
+                .position(|layer| layer.document_id == document_id)
+        })
+        .ok_or_else(|| FabricationError::DanglingReference("document-layer".into()))?;
+    let layer = &mut review.layers[layer_index];
+    let old_layer_id = layer.id.clone();
+    layer.role = function.role;
+    layer.side = function.side;
+    layer.order = function.order;
+    layer.authority = authority;
+    layer.provenance = function.provenance.clone();
+    layer.id = layer_id(
+        &layer.document_id,
+        layer.name.as_deref(),
+        layer.role,
+        layer.side,
+        layer.order,
+        layer.authority,
+        &layer.provenance.location,
+    );
+    let new_layer_id = layer.id.clone();
+    let mut feature_ids = BTreeMap::new();
+    for feature in &mut review.features {
+        deadline.check("document-layer-rekey")?;
+        if feature.layer_id != old_layer_id {
+            continue;
+        }
+        let old_id = feature.id.clone();
+        feature.layer_id = new_layer_id.clone();
+        feature.id = feature_id_with_membership(
+            &feature.document_id,
+            &feature.layer_id,
+            feature.geometry.kind(),
+            &feature.provenance.location,
+            &feature.membership,
+        );
+        feature_ids.insert(old_id, feature.id.clone());
+    }
+    let replace = |id: &mut String| {
+        if let Some(replacement) = feature_ids.get(id) {
+            *id = replacement.clone();
+        }
+    };
+    for block in &mut review.blocks {
+        deadline.check("document-layer-rekey")?;
+        for id in &mut block.feature_ids {
+            replace(id);
+        }
+        for id in &mut block.instantiation_feature_ids {
+            replace(id);
+        }
+    }
+    for repeat in &mut review.repetitions {
+        deadline.check("document-layer-rekey")?;
+        for id in &mut repeat.feature_ids {
+            replace(id);
+        }
+    }
+    for semantic in &mut review.connectivity {
+        deadline.check("document-layer-rekey")?;
+        replace(&mut semantic.feature_id);
+    }
+    for attribute in &mut review.x2_attributes {
+        deadline.check("document-layer-rekey")?;
+        for target in &mut attribute.target_ids {
+            replace(target);
+        }
+        attribute.id = scoped_x2_attribute_id_with_deadline(attribute, deadline)?;
+    }
+    if let Some(profile) = &mut review.profile {
+        for id in profile
+            .contour_feature_ids
+            .iter_mut()
+            .chain(profile.cutout_feature_ids.iter_mut())
+        {
+            replace(id);
+        }
+    }
+    for id in review
+        .assembly
+        .mask_layer_ids
+        .iter_mut()
+        .chain(review.assembly.paste_layer_ids.iter_mut())
+    {
+        if *id == old_layer_id {
+            *id = new_layer_id.clone();
+        }
+    }
+    for construction in &mut review.construction.layers {
+        if construction.layer_id.as_deref() == Some(old_layer_id.as_str()) {
+            construction.layer_id = Some(new_layer_id.clone());
+        }
+    }
+    Ok(())
+}
+
+enum X2TimelineItem<'a> {
+    Attribute(&'a X2Attribute),
+    Aperture(&'a ApertureDefinition),
+    Feature(&'a ManufacturingFeature),
+}
+
+struct X2ScopeAnalysis {
+    records: Vec<ScopedX2Attribute>,
+    connectivity: Vec<ObjectSemantics>,
+    aperture_any: bool,
+    aperture_complete: bool,
+    object_any: bool,
+    net_complete: bool,
+    component_complete: bool,
+    pin_complete: bool,
+    file_supported: bool,
+    unsupported: Vec<(X2AttributeScope, ManufacturingProvenance)>,
+    component_conflict: Option<(
+        String,
+        ManufacturingProvenance,
+        String,
+        ManufacturingProvenance,
+    )>,
+}
+
+fn analyze_x2_scopes<'a>(
+    document_id: &str,
+    attributes: &'a [X2Attribute],
+    apertures: &'a [ApertureDefinition],
+    features: &'a [ManufacturingFeature],
+    deadline: ManufacturingDeadline,
+) -> Result<X2ScopeAnalysis, FabricationError> {
+    let mut timeline = BTreeMap::new();
+    for (index, attribute) in attributes.iter().enumerate() {
+        deadline.check("x2-timeline")?;
+        timeline.insert(
+            (attribute.provenance.location.record, 0_u8, index),
+            X2TimelineItem::Attribute(attribute),
+        );
+    }
+    for (index, aperture) in apertures.iter().enumerate() {
+        deadline.check("x2-timeline")?;
+        timeline.insert(
+            (aperture.provenance.location.record, 1_u8, index),
+            X2TimelineItem::Aperture(aperture),
+        );
+    }
+    for (index, feature) in features.iter().enumerate() {
+        deadline.check("x2-timeline")?;
+        timeline.insert(
+            (feature.provenance.location.record, 2_u8, index),
+            X2TimelineItem::Feature(feature),
+        );
+    }
+
+    let mut records = Vec::<ScopedX2Attribute>::new();
+    let mut connectivity = Vec::new();
+    let mut aperture_active = None::<usize>;
+    let mut object_active = BTreeMap::<X2AttributeKind, usize>::new();
+    let mut aperture_any = false;
+    let mut aperture_supported = true;
+    let mut aperture_count = 0_usize;
+    let mut aperture_covered = 0_usize;
+    let mut object_any = false;
+    let mut object_supported = true;
+    let mut feature_count = 0_usize;
+    let mut net_covered = 0_usize;
+    let mut component_covered = 0_usize;
+    let mut pin_covered = 0_usize;
+    let mut file_supported = true;
+    let mut unsupported = Vec::new();
+    let mut component_conflict = None;
+
+    for (_, item) in timeline {
+        deadline.check("x2-timeline")?;
+        match item {
+            X2TimelineItem::Attribute(attribute) => {
+                let valid_values = |count: usize| {
+                    attribute.values.len() == count
+                        && attribute.values.iter().all(|value| !value.is_empty())
+                };
+                let push_record =
+                    |records: &mut Vec<ScopedX2Attribute>, scope, kind, values, deletion| {
+                        records.push(scoped_x2_attribute(
+                            document_id,
+                            scope,
+                            kind,
+                            values,
+                            deletion,
+                            attribute.provenance.clone(),
+                        ));
+                        records.len() - 1
+                    };
+                match attribute.name.as_str() {
+                    "TF.FileFunction"
+                        if !attribute.values.is_empty()
+                            && attribute.values.iter().all(|value| !value.is_empty()) =>
+                    {
+                        let index = push_record(
+                            &mut records,
+                            X2AttributeScope::File,
+                            X2AttributeKind::FileFunction,
+                            attribute.values.clone(),
+                            false,
+                        );
+                        records[index].target_ids.push(document_id.into());
+                    }
+                    name if name.starts_with("TF") => {
+                        file_supported = false;
+                        unsupported.push((X2AttributeScope::File, attribute.provenance.clone()));
+                    }
+                    "TA.AperFunction" if valid_values(1) => {
+                        aperture_any = true;
+                        aperture_active = Some(push_record(
+                            &mut records,
+                            X2AttributeScope::Aperture,
+                            X2AttributeKind::ApertureFunction,
+                            attribute.values.clone(),
+                            false,
+                        ));
+                    }
+                    "TO.N" if valid_values(1) => {
+                        object_any = true;
+                        let index = push_record(
+                            &mut records,
+                            X2AttributeScope::Object,
+                            X2AttributeKind::Net,
+                            attribute.values.clone(),
+                            false,
+                        );
+                        object_active.insert(X2AttributeKind::Net, index);
+                    }
+                    "TO.C" if valid_values(1) => {
+                        object_any = true;
+                        if let Some(previous) = object_active
+                            .get(&X2AttributeKind::Component)
+                            .and_then(|index| records.get(*index))
+                            .filter(|previous| previous.values[0] != attribute.values[0])
+                        {
+                            object_supported = false;
+                            component_conflict.get_or_insert_with(|| {
+                                (
+                                    previous.values[0].clone(),
+                                    previous.provenance.clone(),
+                                    attribute.values[0].clone(),
+                                    attribute.provenance.clone(),
+                                )
+                            });
+                        }
+                        let index = push_record(
+                            &mut records,
+                            X2AttributeScope::Object,
+                            X2AttributeKind::Component,
+                            attribute.values.clone(),
+                            false,
+                        );
+                        object_active.insert(X2AttributeKind::Component, index);
+                    }
+                    "TO.P" if valid_values(2) => {
+                        object_any = true;
+                        if let Some(previous) = object_active
+                            .get(&X2AttributeKind::Component)
+                            .and_then(|index| records.get(*index))
+                            .filter(|previous| previous.values[0] != attribute.values[0])
+                        {
+                            object_supported = false;
+                            component_conflict.get_or_insert_with(|| {
+                                (
+                                    previous.values[0].clone(),
+                                    previous.provenance.clone(),
+                                    attribute.values[0].clone(),
+                                    attribute.provenance.clone(),
+                                )
+                            });
+                        }
+                        let component = push_record(
+                            &mut records,
+                            X2AttributeScope::Object,
+                            X2AttributeKind::Component,
+                            vec![attribute.values[0].clone()],
+                            false,
+                        );
+                        let pin = push_record(
+                            &mut records,
+                            X2AttributeScope::Object,
+                            X2AttributeKind::Pin,
+                            vec![attribute.values[1].clone()],
+                            false,
+                        );
+                        object_active.insert(X2AttributeKind::Component, component);
+                        object_active.insert(X2AttributeKind::Pin, pin);
+                    }
+                    "TD" if attribute.values.is_empty() => {
+                        aperture_any = true;
+                        object_any = true;
+                        push_record(
+                            &mut records,
+                            X2AttributeScope::Aperture,
+                            X2AttributeKind::Reset,
+                            Vec::new(),
+                            true,
+                        );
+                        push_record(
+                            &mut records,
+                            X2AttributeScope::Object,
+                            X2AttributeKind::Reset,
+                            Vec::new(),
+                            true,
+                        );
+                        aperture_active = None;
+                        object_active.clear();
+                    }
+                    "TD.AperFunction" if attribute.values.is_empty() => {
+                        aperture_any = true;
+                        push_record(
+                            &mut records,
+                            X2AttributeScope::Aperture,
+                            X2AttributeKind::ApertureFunction,
+                            Vec::new(),
+                            true,
+                        );
+                        aperture_active = None;
+                    }
+                    "TD.N" | "TD.C" | "TD.P" if attribute.values.is_empty() => {
+                        object_any = true;
+                        let kind = match attribute.name.as_str() {
+                            "TD.N" => X2AttributeKind::Net,
+                            "TD.C" => X2AttributeKind::Component,
+                            _ => X2AttributeKind::Pin,
+                        };
+                        push_record(
+                            &mut records,
+                            X2AttributeScope::Object,
+                            kind,
+                            Vec::new(),
+                            true,
+                        );
+                        object_active.remove(&kind);
+                    }
+                    name if name.starts_with("TA") => {
+                        aperture_any = true;
+                        aperture_supported = false;
+                        unsupported
+                            .push((X2AttributeScope::Aperture, attribute.provenance.clone()));
+                    }
+                    name if name.starts_with("TO") => {
+                        object_any = true;
+                        object_supported = false;
+                        unsupported.push((X2AttributeScope::Object, attribute.provenance.clone()));
+                    }
+                    name if name.starts_with("TD") => {
+                        aperture_any = true;
+                        object_any = true;
+                        aperture_supported = false;
+                        object_supported = false;
+                        unsupported
+                            .push((X2AttributeScope::Aperture, attribute.provenance.clone()));
+                        unsupported.push((X2AttributeScope::Object, attribute.provenance.clone()));
+                    }
+                    _ => {}
+                }
+            }
+            X2TimelineItem::Aperture(aperture) => {
+                aperture_count += 1;
+                if let Some(index) = aperture_active {
+                    records[index].target_ids.push(aperture.id.clone());
+                    aperture_covered += 1;
+                }
+            }
+            X2TimelineItem::Feature(feature) => {
+                feature_count += 1;
+                let value = |kind| {
+                    object_active
+                        .get(&kind)
+                        .and_then(|index| records.get(*index))
+                        .map(|record| record.values[0].clone())
+                };
+                let net = value(X2AttributeKind::Net);
+                let component = value(X2AttributeKind::Component);
+                let pin = value(X2AttributeKind::Pin);
+                net_covered += usize::from(net.is_some());
+                component_covered += usize::from(component.is_some());
+                pin_covered += usize::from(pin.is_some());
+                for index in object_active.values() {
+                    records[*index].target_ids.push(feature.id.clone());
+                }
+                if !object_active.is_empty() {
+                    let provenance = object_active
+                        .values()
+                        .filter_map(|index| records.get(*index))
+                        .max_by_key(|record| record.provenance.location.record)
+                        .expect("nonempty X2 object state")
+                        .provenance
+                        .clone();
+                    connectivity.push(ObjectSemantics {
+                        feature_id: feature.id.clone(),
+                        net,
+                        component,
+                        pin,
+                        provenance,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(X2ScopeAnalysis {
+        records,
+        connectivity,
+        aperture_any,
+        aperture_complete: aperture_supported
+            && aperture_count > 0
+            && aperture_count == aperture_covered,
+        object_any,
+        net_complete: object_supported && feature_count > 0 && net_covered == feature_count,
+        component_complete: object_supported
+            && feature_count > 0
+            && component_covered == feature_count,
+        pin_complete: object_supported && feature_count > 0 && pin_covered == feature_count,
+        file_supported,
+        unsupported,
+        component_conflict,
+    })
+}
+
+pub fn apply_gerber_x2(production: &mut GerberProduction) -> Result<(), FabricationError> {
+    apply_gerber_x2_with_deadline(
+        production,
+        ManufacturingDeadline::from_timeout(Duration::from_millis(
+            MANUFACTURING_LIMITS.aggregate_timeout_ms,
+        )),
+    )
+}
+
+fn apply_gerber_x2_with_deadline(
+    production: &mut GerberProduction,
+    deadline: ManufacturingDeadline,
+) -> Result<(), FabricationError> {
+    deadline.check("x2-analysis")?;
+    let mut attributes = Vec::with_capacity(production.attributes.len());
+    for attribute in &production.attributes {
+        deadline.check("x2-attribute-index")?;
+        attributes.push(x2_attribute(attribute)?);
+    }
+    let mut file_functions = Vec::new();
+    for attribute in &attributes {
+        deadline.check("x2-file-functions")?;
+        if attribute.name == "TF.FileFunction" {
+            file_functions.push(package_file_function(attribute)?);
+        }
+    }
+    let first_provenance = production
+        .review
+        .documents
+        .first()
+        .map(inventory_provenance);
+    let document_id = production
+        .review
+        .documents
+        .first()
+        .map(|document| document.id.clone())
+        .ok_or_else(|| FabricationError::DanglingReference("gerber-document".into()))?;
+    checked_retain_with_deadline(
+        &mut production.review.omissions,
+        deadline,
+        "x2-omission-retention",
+        |omission| {
+            !omission
+                .affected_capabilities
+                .contains(&CapabilityId::X2FileAttributes)
+        },
+    )?;
+    if file_functions.len() == 1 {
+        let function = file_functions[0].clone();
+        rekey_document_layer(
+            &mut production.review,
+            &document_id,
+            &function,
+            Authority::X2,
+            deadline,
+        )?;
+        let state = CapabilityState::Complete;
+        set_capability(
+            &mut production.review,
+            semantic_capability(
+                CapabilityId::X2FileAttributes,
+                state,
+                Authority::X2,
+                &document_id,
+                Some(&function.provenance),
+                "One typed FileFunction establishes this document role only without unsupported file attributes.",
+            ),
+        );
+        set_capability(
+            &mut production.review,
+            semantic_capability(
+                CapabilityId::LayerRoles,
+                state,
+                Authority::X2,
+                &document_id,
+                Some(&function.provenance),
+                "The document role is explicitly supplied by X2 FileFunction.",
+            ),
+        );
+        production.file_function = Some(function);
+    } else {
+        let state = if file_functions.is_empty() {
+            CapabilityState::NotProvided
+        } else {
+            CapabilityState::Partial
+        };
+        let provenance = file_functions
+            .first()
+            .map(|function| &function.provenance)
+            .or(first_provenance.as_ref());
+        for id in [CapabilityId::X2FileAttributes, CapabilityId::LayerRoles] {
+            set_capability(
+                &mut production.review,
+                semantic_capability(
+                    id,
+                    state,
+                    Authority::X2,
+                    &document_id,
+                    provenance,
+                    "FileFunction is absent, duplicated, or conflicting and cannot establish authority.",
+                ),
+            );
+        }
+        if let Some(first) = file_functions.first() {
+            for duplicate in file_functions.iter().skip(1) {
+                deadline.check("x2-file-functions")?;
+                if same_function(first, duplicate) {
+                    production.review.omissions.push(Omission {
+                        id: stable_id(
+                            "omission",
+                            &(
+                                &document_id,
+                                "duplicate-x2-file-function",
+                                &first.provenance.location,
+                                &duplicate.provenance.location,
+                            ),
+                        )?,
+                        kind: OmissionKind::InvalidRecord,
+                        affected_capabilities: vec![
+                            CapabilityId::X2FileAttributes,
+                            CapabilityId::LayerRoles,
+                        ],
+                        provenance: duplicate.provenance.clone(),
+                        detail: "Duplicate typed FileFunction records cannot establish document role authority."
+                            .into(),
+                    });
+                } else {
+                    production.review.conflicts.push(Conflict {
+                        id: stable_id(
+                            "conflict",
+                            &(
+                                &document_id,
+                                "conflicting-x2-file-function",
+                                &first.provenance.location,
+                                &duplicate.provenance.location,
+                            ),
+                        )?,
+                        kind: ConflictKind::LayerRole,
+                        affected_capabilities: vec![
+                            CapabilityId::X2FileAttributes,
+                            CapabilityId::LayerRoles,
+                        ],
+                        left: ConflictFact {
+                            canonical_value: first.raw.clone(),
+                            authority: Authority::X2,
+                            provenance: first.provenance.clone(),
+                        },
+                        right: ConflictFact {
+                            canonical_value: duplicate.raw.clone(),
+                            authority: Authority::X2,
+                            provenance: duplicate.provenance.clone(),
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    let analysis = analyze_x2_scopes(
+        &document_id,
+        &attributes,
+        &production.review.apertures,
+        &production.review.features,
+        deadline,
+    )?;
+    if !analysis.file_supported {
+        let provenance = file_functions
+            .first()
+            .map(|function| &function.provenance)
+            .or(first_provenance.as_ref());
+        for id in [CapabilityId::X2FileAttributes, CapabilityId::LayerRoles] {
+            set_capability(
+                &mut production.review,
+                semantic_capability(
+                    id,
+                    CapabilityState::Partial,
+                    Authority::X2,
+                    &document_id,
+                    provenance,
+                    "Unsupported or malformed X2 file attributes prevent complete role authority.",
+                ),
+            );
+        }
+    }
+    let mut aperture_provenance = None;
+    let mut object_provenance = None;
+    for attribute in &attributes {
+        deadline.check("x2-attribute-provenance")?;
+        if aperture_provenance.is_none()
+            && (attribute.name.starts_with("TA") || attribute.name.starts_with("TD"))
+        {
+            aperture_provenance = Some(&attribute.provenance);
+        }
+        if object_provenance.is_none()
+            && (attribute.name.starts_with("TO") || attribute.name.starts_with("TD"))
+        {
+            object_provenance = Some(&attribute.provenance);
+        }
+        if aperture_provenance.is_some() && object_provenance.is_some() {
+            break;
+        }
+    }
+    let aperture_state = if !analysis.aperture_any {
+        CapabilityState::NotProvided
+    } else if analysis.aperture_complete {
+        CapabilityState::Complete
+    } else {
+        CapabilityState::Partial
+    };
+    set_capability(
+        &mut production.review,
+        semantic_capability(
+            CapabilityId::X2ApertureAttributes,
+            aperture_state,
+            Authority::X2,
+            &document_id,
+            aperture_provenance,
+            "Aperture attributes are complete only when ordered nonempty scope covers every aperture after resets and deletions.",
+        ),
+    );
+
+    production.review.connectivity = analysis.connectivity;
+    let object_state = |complete| {
+        if !analysis.object_any {
+            CapabilityState::NotProvided
+        } else if complete {
+            CapabilityState::Complete
+        } else {
+            CapabilityState::Partial
+        }
+    };
+    for (id, complete, detail) in [
+        (
+            CapabilityId::Connectivity,
+            analysis.net_complete,
+            "Every eligible feature must have an explicit scoped nonempty net attribute.",
+        ),
+        (
+            CapabilityId::Components,
+            analysis.component_complete,
+            "Every eligible feature must have an explicit consistent scoped nonempty component attribute.",
+        ),
+        (
+            CapabilityId::Pins,
+            analysis.pin_complete,
+            "Every eligible feature must have an explicit scoped nonempty pin attribute.",
+        ),
+    ] {
+        set_capability(
+            &mut production.review,
+            semantic_capability(
+                id,
+                object_state(complete),
+                Authority::X2,
+                &document_id,
+                object_provenance,
+                detail,
+            ),
+        );
+    }
+    set_capability(
+        &mut production.review,
+        semantic_capability(
+            CapabilityId::X2ObjectAttributes,
+            object_state(
+                analysis.net_complete && analysis.component_complete && analysis.pin_complete,
+            ),
+            Authority::X2,
+            &document_id,
+            object_provenance,
+            "Object attributes are complete only with ordered, nonempty, conflict-free net/component/pin coverage after resets and deletions.",
+        ),
+    );
+
+    if let Some((left, left_provenance, right, right_provenance)) = analysis.component_conflict {
+        production.review.conflicts.push(Conflict {
+            id: stable_id(
+                "conflict",
+                &(
+                    &document_id,
+                    "x2-component-scope",
+                    &left_provenance.location,
+                    &right_provenance.location,
+                ),
+            )?,
+            kind: ConflictKind::Connectivity,
+            affected_capabilities: vec![CapabilityId::X2ObjectAttributes, CapabilityId::Components],
+            left: ConflictFact {
+                canonical_value: left,
+                authority: Authority::X2,
+                provenance: left_provenance,
+            },
+            right: ConflictFact {
+                canonical_value: right,
+                authority: Authority::X2,
+                provenance: right_provenance,
+            },
+        });
+    }
+    for (scope, provenance) in analysis.unsupported {
+        let capability = match scope {
+            X2AttributeScope::File => CapabilityId::X2FileAttributes,
+            X2AttributeScope::Aperture => CapabilityId::X2ApertureAttributes,
+            X2AttributeScope::Object => CapabilityId::X2ObjectAttributes,
+        };
+        production.review.omissions.push(Omission {
+            id: stable_id(
+                "omission",
+                &("x2-scoped-attribute", scope, &provenance.location),
+            )?,
+            kind: OmissionKind::UnsupportedRecord,
+            affected_capabilities: vec![capability],
+            provenance,
+            detail:
+                "Unsupported, empty, or malformed scoped X2 attribute prevents complete coverage."
+                    .into(),
+        });
+    }
+    production.review.x2_attributes = analysis.records;
+    for attribute in &mut production.review.x2_attributes {
+        deadline.check("x2-attribute-identity")?;
+        attribute.id = scoped_x2_attribute_id_with_deadline(attribute, deadline)?;
+    }
+    production.review.physical_bounds =
+        derive_release_physical_bounds(&production.review, ReconciliationBudget { deadline })?;
+    production.review.refresh_digests_with_deadline(deadline)?;
+    production.review.validate_with_deadline(deadline)
+}
+
+pub const XNC_ADAPTER_VERSION: &str = "xnc-2021.11-ratemypcb-1";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XncDialect {
+    Strict,
+    KicadLegacy,
+    LibrePcbLegacy,
+}
+
+#[derive(Debug)]
+pub enum XncParseError {
+    Resource {
+        resource: &'static str,
+        observed: u64,
+        limit: u64,
+    },
+    Invalid {
+        record: u64,
+        reason: &'static str,
+    },
+    Unsupported {
+        record: u64,
+        command: String,
+    },
+    Deadline {
+        stage: &'static str,
+    },
+    Canonical(FabricationError),
+}
+
+impl std::fmt::Display for XncParseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for XncParseError {}
+
+#[derive(Clone, Debug)]
+pub struct XncProduction {
+    pub review: FabricationReview,
+    pub dialect: XncDialect,
+    pub file_function: Option<PackageFileFunction>,
+    pub extents: Option<Extent>,
+}
+
+#[derive(Clone, Debug)]
+struct XncLine {
+    record: u64,
+    byte_start: usize,
+    byte_end: usize,
+    text: String,
+}
+
+#[derive(Clone)]
+struct XncToolDefinition {
+    code: u16,
+    source_code: String,
+    diameter: Picometres,
+    provenance: ManufacturingProvenance,
+}
+
+fn xnc_error(record: u64, reason: &'static str) -> XncParseError {
+    XncParseError::Invalid { record, reason }
+}
+
+fn check_xnc_deadline(
+    deadline: ManufacturingDeadline,
+    stage: &'static str,
+) -> Result<(), XncParseError> {
+    if Instant::now() >= deadline.at {
+        Err(XncParseError::Deadline { stage })
+    } else {
+        Ok(())
+    }
+}
+
+fn xnc_lines(
+    bytes: &[u8],
+    deadline: ManufacturingDeadline,
+) -> Result<(Vec<XncLine>, u64, usize, u64, usize), XncParseError> {
+    if bytes.len() as u64 > MANUFACTURING_LIMITS.raw_bytes_per_file {
+        return Err(XncParseError::Resource {
+            resource: "raw-bytes",
+            observed: bytes.len() as u64,
+            limit: MANUFACTURING_LIMITS.raw_bytes_per_file,
+        });
+    }
+    check_xnc_deadline(deadline, "xnc-framing")?;
+    let mut lines = Vec::new();
+    let mut tokens = 0_u64;
+    let mut max_line = 0_usize;
+    let mut metadata_bytes = 0_u64;
+    let mut max_text_bytes = 0_usize;
+    let mut start = 0_usize;
+    while start < bytes.len() {
+        if start % 4_096 == 0 {
+            check_xnc_deadline(deadline, "xnc-framing")?;
+        }
+        let newline = bytes[start..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(bytes.len(), |offset| start + offset);
+        let mut end = newline;
+        if end > start && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        let line_bytes = &bytes[start..end];
+        max_line = max_line.max(line_bytes.len());
+        if line_bytes.len() > MANUFACTURING_LIMITS.max_line_bytes {
+            return Err(XncParseError::Resource {
+                resource: "line-bytes",
+                observed: line_bytes.len() as u64,
+                limit: MANUFACTURING_LIMITS.max_line_bytes as u64,
+            });
+        }
+        if line_bytes
+            .iter()
+            .any(|byte| !byte.is_ascii() || (*byte < b' ' && *byte != b'\t') || *byte == 0x7f)
+        {
+            return Err(xnc_error(lines.len() as u64, "invalid-byte"));
+        }
+        let text = std::str::from_utf8(line_bytes)
+            .map_err(|_| xnc_error(lines.len() as u64, "invalid-utf8"))?
+            .trim()
+            .to_owned();
+        if !text.is_empty() {
+            if text.starts_with(';') {
+                metadata_bytes = metadata_bytes.checked_add(text.len() as u64).ok_or(
+                    XncParseError::Resource {
+                        resource: "metadata-bytes",
+                        observed: u64::MAX,
+                        limit: MANUFACTURING_LIMITS.metadata_bytes_per_file,
+                    },
+                )?;
+                max_text_bytes = max_text_bytes.max(text.len());
+                if metadata_bytes > MANUFACTURING_LIMITS.metadata_bytes_per_file
+                    || text.len() > MANUFACTURING_LIMITS.max_text_bytes
+                {
+                    return Err(XncParseError::Resource {
+                        resource: "metadata-bytes",
+                        observed: metadata_bytes,
+                        limit: MANUFACTURING_LIMITS.metadata_bytes_per_file,
+                    });
+                }
+            }
+            tokens = tokens
+                .checked_add(
+                    text.as_bytes()
+                        .windows(2)
+                        .filter(|pair| {
+                            pair[0].is_ascii_alphanumeric() != pair[1].is_ascii_alphanumeric()
+                        })
+                        .count() as u64
+                        + 1,
+                )
+                .ok_or(XncParseError::Resource {
+                    resource: "lexical-tokens",
+                    observed: u64::MAX,
+                    limit: MANUFACTURING_LIMITS.lexical_tokens_per_file,
+                })?;
+            if tokens > MANUFACTURING_LIMITS.lexical_tokens_per_file {
+                return Err(XncParseError::Resource {
+                    resource: "lexical-tokens",
+                    observed: tokens,
+                    limit: MANUFACTURING_LIMITS.lexical_tokens_per_file,
+                });
+            }
+            if lines.len() as u64 >= MANUFACTURING_LIMITS.records_per_file {
+                return Err(XncParseError::Resource {
+                    resource: "records",
+                    observed: lines.len() as u64 + 1,
+                    limit: MANUFACTURING_LIMITS.records_per_file,
+                });
+            }
+            lines.push(XncLine {
+                record: lines.len() as u64,
+                byte_start: start,
+                byte_end: end.saturating_sub(1),
+                text,
+            });
+        }
+        start = newline.saturating_add(1);
+    }
+    Ok((lines, tokens, max_line, metadata_bytes, max_text_bytes))
+}
+
+fn xnc_provenance(document_id: &str, digest: &str, line: &XncLine) -> ManufacturingProvenance {
+    ManufacturingProvenance {
+        document_id: document_id.into(),
+        artifact_digest: digest.into(),
+        producer: "ratemypcb-xnc".into(),
+        producer_version: XNC_ADAPTER_VERSION.into(),
+        location: StructuralLocation {
+            record: line.record,
+            subrecord: None,
+            byte_start: line.byte_start as u64,
+            byte_end: line.byte_end as u64,
+        },
+        source_lexeme: None,
+    }
+}
+
+fn xnc_attribute(line: &XncLine, document_id: &str, digest: &str) -> Option<X2Attribute> {
+    let body = line.text.strip_prefix("; #@! ")?;
+    let mut fields = body.split(',');
+    Some(X2Attribute {
+        name: fields.next()?.to_owned(),
+        values: fields.map(str::to_owned).collect(),
+        provenance: xnc_provenance(document_id, digest, line),
+    })
+}
+
+fn xnc_dialect(
+    lines: &[XncLine],
+    deadline: ManufacturingDeadline,
+) -> Result<XncDialect, XncParseError> {
+    let mut generation = None;
+    for line in lines {
+        check_xnc_deadline(deadline, "xnc-dialect")?;
+        let Some(value) = line.text.strip_prefix("; #@! TF.GenerationSoftware,") else {
+            continue;
+        };
+        if generation.replace((line, value)).is_some() {
+            return Err(xnc_error(line.record, "duplicate-generation-signature"));
+        }
+    }
+    let Some((line, value)) = generation else {
+        return Ok(XncDialect::Strict);
+    };
+    match value {
+        "Kicad,Pcbnew,9.0" | "Kicad,Pcbnew,(5.99.0-10065-g0a0935e0f3-dirty)" => {
+            Ok(XncDialect::KicadLegacy)
+        }
+        "LibrePCB,LibrePCB,1.0" | "LibrePCB,LibrePCB,0.2.0-unstable" => {
+            Ok(XncDialect::LibrePcbLegacy)
+        }
+        _ if value == "xxxx,yyyy,zzzz"
+            || value.starts_with("Kicad,")
+            || value.starts_with("LibrePCB,") =>
+        {
+            Err(XncParseError::Unsupported {
+                record: line.record,
+                command: bounded_command(&line.text),
+            })
+        }
+        _ => Ok(XncDialect::Strict),
+    }
+}
+
+fn xnc_tool_code(value: &str, dialect: XncDialect) -> Option<u16> {
+    let digits = value.strip_prefix('T')?;
+    let valid_width = match dialect {
+        XncDialect::Strict => digits.len() == 2,
+        XncDialect::KicadLegacy | XncDialect::LibrePcbLegacy => (1..=2).contains(&digits.len()),
+    };
+    valid_width
+        .then(|| digits.parse::<u16>().ok())
+        .flatten()
+        .filter(|code| (1..=MANUFACTURING_LIMITS.strict_tool_max).contains(code))
+}
+
+fn xnc_number_profile(value: &str) -> Option<(u8, u8)> {
+    let unsigned = value.strip_prefix(['-', '+']).unwrap_or(value);
+    let (integer, decimal) = unsigned.split_once('.')?;
+    if integer.is_empty()
+        || decimal.is_empty()
+        || !integer.bytes().all(|byte| byte.is_ascii_digit())
+        || !decimal.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    Some((
+        u8::try_from(integer.len()).ok()?.max(1),
+        u8::try_from(decimal.len()).ok()?,
+    ))
+}
+
+fn xnc_length(value: &str, unit: SourceUnit, record: u64) -> Result<Picometres, XncParseError> {
+    if value.len() > MANUFACTURING_LIMITS.max_numeric_bytes || xnc_number_profile(value).is_none() {
+        return Err(xnc_error(record, "invalid-explicit-decimal"));
+    }
+    Picometres::parse_decimal(value, unit).map_err(XncParseError::Canonical)
+}
+
+fn xnc_fields(source: &str, record: u64) -> Result<BTreeMap<u8, &str>, XncParseError> {
+    let bytes = source.as_bytes();
+    let mut position = 0_usize;
+    let mut fields = BTreeMap::new();
+    while position < bytes.len() {
+        let tag = bytes[position];
+        if !tag.is_ascii_uppercase() {
+            return Err(xnc_error(record, "invalid-coordinate-tag"));
+        }
+        position += 1;
+        let start = position;
+        while position < bytes.len() && !bytes[position].is_ascii_uppercase() {
+            position += 1;
+        }
+        if start == position || fields.insert(tag, &source[start..position]).is_some() {
+            return Err(xnc_error(record, "empty-or-duplicate-coordinate-field"));
+        }
+    }
+    Ok(fields)
+}
+
+fn xnc_point(
+    source: &str,
+    unit: SourceUnit,
+    record: u64,
+) -> Result<(CanonicalPoint, u8, u8), XncParseError> {
+    let fields = xnc_fields(source, record)?;
+    if fields.len() != 2 || !fields.contains_key(&b'X') || !fields.contains_key(&b'Y') {
+        return Err(xnc_error(record, "coordinates-require-x-and-y"));
+    }
+    let x = fields[&b'X'];
+    let y = fields[&b'Y'];
+    let (xi, xd) = xnc_number_profile(x).ok_or_else(|| xnc_error(record, "invalid-x"))?;
+    let (yi, yd) = xnc_number_profile(y).ok_or_else(|| xnc_error(record, "invalid-y"))?;
+    Ok((
+        CanonicalPoint {
+            x: xnc_length(x, unit, record)?,
+            y: xnc_length(y, unit, record)?,
+        },
+        xi.max(yi),
+        xd.max(yd),
+    ))
+}
+
+fn integer_sqrt(value: u128) -> u128 {
+    if value < 2 {
+        return value;
+    }
+    let mut current = 1_u128 << (value.ilog2() / 2 + 1);
+    loop {
+        let next = (current + value / current) / 2;
+        if next >= current {
+            return current;
+        }
+        current = next;
+    }
+}
+
+fn xnc_radius_center(
+    start: CanonicalPoint,
+    end: CanonicalPoint,
+    radius: Picometres,
+    direction: ArcDirection,
+    record: u64,
+) -> Result<CanonicalPoint, XncParseError> {
+    if radius.0 <= 0 {
+        return Err(xnc_error(record, "non-positive-arc-radius"));
+    }
+    let dx = i128::from(end.x.0) - i128::from(start.x.0);
+    let dy = i128::from(end.y.0) - i128::from(start.y.0);
+    let chord_squared = dx
+        .checked_mul(dx)
+        .and_then(|x| dy.checked_mul(dy).and_then(|y| x.checked_add(y)))
+        .ok_or_else(|| xnc_error(record, "arc-radius-overflow"))?;
+    let radius = i128::from(radius.0);
+    let discriminant = radius
+        .checked_mul(radius)
+        .and_then(|value| value.checked_mul(4))
+        .and_then(|value| value.checked_sub(chord_squared))
+        .filter(|value| *value >= 0)
+        .ok_or_else(|| xnc_error(record, "arc-radius-too-small"))?;
+    let chord = integer_sqrt(chord_squared as u128) as i128;
+    if chord == 0 {
+        return Err(xnc_error(record, "zero-length-arc"));
+    }
+    let height = integer_sqrt(discriminant as u128) as i128;
+    let denominator = chord
+        .checked_mul(2)
+        .ok_or_else(|| xnc_error(record, "arc-center-overflow"))?;
+    let mut candidates = BTreeSet::new();
+    for sign in [-1_i128, 1] {
+        let x_numerator = (i128::from(start.x.0) + i128::from(end.x.0))
+            .checked_mul(chord)
+            .and_then(|value| value.checked_add(sign * -dy * height))
+            .ok_or_else(|| xnc_error(record, "arc-center-overflow"))?;
+        let y_numerator = (i128::from(start.y.0) + i128::from(end.y.0))
+            .checked_mul(chord)
+            .and_then(|value| value.checked_add(sign * dx * height))
+            .ok_or_else(|| xnc_error(record, "arc-center-overflow"))?;
+        let center = CanonicalPoint::new(
+            i64::try_from(rounded_div(x_numerator, denominator))
+                .map_err(|_| xnc_error(record, "arc-center-overflow"))?,
+            i64::try_from(rounded_div(y_numerator, denominator))
+                .map_err(|_| xnc_error(record, "arc-center-overflow"))?,
+        );
+        if single_quadrant_sweep(start, end, center, direction) {
+            candidates.insert(center);
+        }
+    }
+    if candidates.len() != 1 {
+        return Err(xnc_error(record, "ambiguous-radius-arc"));
+    }
+    Ok(*candidates.first().expect("one XNC arc center"))
+}
+
+fn xnc_feature(
+    document_id: &str,
+    layer_id: &str,
+    tool_id: &str,
+    geometry: Geometry,
+    provenance: ManufacturingProvenance,
+) -> ManufacturingFeature {
+    ManufacturingFeature {
+        id: feature_id(document_id, layer_id, geometry.kind(), &provenance.location),
+        document_id: document_id.into(),
+        layer_id: layer_id.into(),
+        tool_id: Some(tool_id.into()),
+        polarity: LayerPolarity::Unknown,
+        geometry,
+        transforms: TransformChain::default(),
+        membership: FeatureMembership::TopLevel,
+        provenance,
+    }
+}
+
+fn xnc_tool_radius(width: Picometres, record: u64) -> Result<i64, XncParseError> {
+    if width.0 <= 0 {
+        return Err(xnc_error(record, "non-positive-tool-width"));
+    }
+    width
+        .0
+        .checked_add(1)
+        .map(|value| value / 2)
+        .ok_or_else(|| xnc_error(record, "tool-radius-overflow"))
+}
+
+fn xnc_include_physical_point(
+    bounds: &mut GerberBounds,
+    point: CanonicalPoint,
+    padding: i64,
+    record: u64,
+) -> Result<(), XncParseError> {
+    bounds
+        .include_box(
+            point
+                .x
+                .0
+                .checked_sub(padding)
+                .ok_or_else(|| xnc_error(record, "physical-extent-overflow"))?,
+            point
+                .y
+                .0
+                .checked_sub(padding)
+                .ok_or_else(|| xnc_error(record, "physical-extent-overflow"))?,
+            point
+                .x
+                .0
+                .checked_add(padding)
+                .ok_or_else(|| xnc_error(record, "physical-extent-overflow"))?,
+            point
+                .y
+                .0
+                .checked_add(padding)
+                .ok_or_else(|| xnc_error(record, "physical-extent-overflow"))?,
+        )
+        .map_err(|_| xnc_error(record, "physical-extent-out-of-range"))
+}
+
+fn polar_half(vector: (i128, i128)) -> u8 {
+    u8::from(vector.1 < 0 || vector.1 == 0 && vector.0 < 0)
+}
+
+fn polar_order(left: (i128, i128), right: (i128, i128)) -> Ordering {
+    polar_half(left).cmp(&polar_half(right)).then_with(|| {
+        let cross = left.0 * right.1 - left.1 * right.0;
+        if cross > 0 {
+            Ordering::Less
+        } else if cross < 0 {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    })
+}
+
+fn counter_clockwise_sweep_contains(
+    start: (i128, i128),
+    end: (i128, i128),
+    candidate: (i128, i128),
+) -> bool {
+    if polar_order(start, end) != Ordering::Greater {
+        polar_order(start, candidate) != Ordering::Greater
+            && polar_order(candidate, end) != Ordering::Greater
+    } else {
+        polar_order(start, candidate) != Ordering::Greater
+            || polar_order(candidate, end) != Ordering::Greater
+    }
+}
+
+fn xnc_arc_sweep_contains(arc: &CanonicalArc, candidate: (i128, i128)) -> bool {
+    let start = (
+        i128::from(arc.start.x.0) - i128::from(arc.center.x.0),
+        i128::from(arc.start.y.0) - i128::from(arc.center.y.0),
+    );
+    let end = (
+        i128::from(arc.end.x.0) - i128::from(arc.center.x.0),
+        i128::from(arc.end.y.0) - i128::from(arc.center.y.0),
+    );
+    match arc.direction {
+        ArcDirection::CounterClockwise => counter_clockwise_sweep_contains(start, end, candidate),
+        ArcDirection::Clockwise => counter_clockwise_sweep_contains(end, start, candidate),
+    }
+}
+
+fn xnc_arc_radius(arc: &CanonicalArc, record: u64) -> Result<i64, XncParseError> {
+    let squared = |point: CanonicalPoint| -> Result<u128, XncParseError> {
+        let x = i128::from(point.x.0) - i128::from(arc.center.x.0);
+        let y = i128::from(point.y.0) - i128::from(arc.center.y.0);
+        x.checked_mul(x)
+            .and_then(|x| y.checked_mul(y).and_then(|y| x.checked_add(y)))
+            .and_then(|value| u128::try_from(value).ok())
+            .ok_or_else(|| xnc_error(record, "arc-radius-overflow"))
+    };
+    let squared = squared(arc.start)?.max(squared(arc.end)?);
+    let floor = integer_sqrt(squared);
+    let radius = floor
+        .checked_add(u128::from(floor.checked_mul(floor) != Some(squared)))
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or_else(|| xnc_error(record, "arc-radius-overflow"))?;
+    if radius <= 0 {
+        return Err(xnc_error(record, "non-positive-arc-radius"));
+    }
+    Ok(radius)
+}
+
+fn xnc_segment_bounds(
+    bounds: &mut GerberBounds,
+    segment: &ContourSegment,
+    record: u64,
+    deadline: ManufacturingDeadline,
+) -> Result<(), XncParseError> {
+    check_xnc_deadline(deadline, "xnc-physical-bounds")?;
+    match segment {
+        ContourSegment::Line(line) => {
+            let padding = xnc_tool_radius(
+                line.width
+                    .ok_or_else(|| xnc_error(record, "route-without-tool-width"))?,
+                record,
+            )?;
+            xnc_include_physical_point(bounds, line.start, padding, record)?;
+            xnc_include_physical_point(bounds, line.end, padding, record)
+        }
+        ContourSegment::Arc(arc) => {
+            let padding = xnc_tool_radius(
+                arc.width
+                    .ok_or_else(|| xnc_error(record, "route-without-tool-width"))?,
+                record,
+            )?;
+            xnc_include_physical_point(bounds, arc.start, padding, record)?;
+            xnc_include_physical_point(bounds, arc.end, padding, record)?;
+            let radius = xnc_arc_radius(arc, record)?;
+            for (direction, vector) in [
+                ((1_i64, 0_i64), (1_i128, 0_i128)),
+                ((0, 1), (0, 1)),
+                ((-1, 0), (-1, 0)),
+                ((0, -1), (0, -1)),
+            ] {
+                if xnc_arc_sweep_contains(arc, vector) {
+                    let point =
+                        CanonicalPoint::new(
+                            arc.center
+                                .x
+                                .0
+                                .checked_add(
+                                    direction.0.checked_mul(radius).ok_or_else(|| {
+                                        xnc_error(record, "physical-extent-overflow")
+                                    })?,
+                                )
+                                .ok_or_else(|| xnc_error(record, "physical-extent-overflow"))?,
+                            arc.center
+                                .y
+                                .0
+                                .checked_add(
+                                    direction.1.checked_mul(radius).ok_or_else(|| {
+                                        xnc_error(record, "physical-extent-overflow")
+                                    })?,
+                                )
+                                .ok_or_else(|| xnc_error(record, "physical-extent-overflow"))?,
+                        );
+                    xnc_include_physical_point(bounds, point, padding, record)?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn xnc_physical_bounds<'a>(
+    features: impl IntoIterator<Item = &'a ManufacturingFeature>,
+    deadline: ManufacturingDeadline,
+) -> Result<GerberBounds, XncParseError> {
+    let mut bounds = GerberBounds::default();
+    for feature in features {
+        check_xnc_deadline(deadline, "xnc-physical-bounds")?;
+        let record = feature.provenance.location.record;
+        match &feature.geometry {
+            Geometry::Drill(drill) => xnc_include_physical_point(
+                &mut bounds,
+                drill.position,
+                xnc_tool_radius(drill.diameter, record)?,
+                record,
+            )?,
+            Geometry::Slot(slot) => {
+                let padding = xnc_tool_radius(slot.width, record)?;
+                xnc_include_physical_point(&mut bounds, slot.start, padding, record)?;
+                xnc_include_physical_point(&mut bounds, slot.end, padding, record)?;
+            }
+            Geometry::Route(route) => {
+                for segment in &route.segments {
+                    xnc_segment_bounds(&mut bounds, segment, record, deadline)?;
+                }
+            }
+            _ => return Err(xnc_error(record, "unsupported-xnc-geometry")),
+        }
+    }
+    Ok(bounds)
+}
+
+fn physical_half_ceil(value: i64) -> Result<i64, FabricationError> {
+    if value < 0 {
+        return Err(FabricationError::CoordinateOutOfRange);
+    }
+    value
+        .checked_add(1)
+        .map(|value| value / 2)
+        .ok_or(FabricationError::ArithmeticOverflow)
+}
+
+fn physical_bounds_id_with_deadline(
+    bounds: &DocumentPhysicalBounds,
+    deadline: ManufacturingDeadline,
+) -> Result<String, FabricationError> {
+    stable_id_with_deadline(
+        deadline,
+        "physical-bounds-identity",
+        "physical-bounds",
+        &(
+            &bounds.document_id,
+            &bounds.artifact_digest,
+            bounds.format,
+            &bounds.extent,
+            bounds.resolution,
+            &bounds.geometry_digest,
+            &bounds.source_locations,
+            canonical_provenance(&bounds.provenance),
+        ),
+    )
+}
+
+fn physical_include_point(
+    bounds: &mut GerberBounds,
+    point: CanonicalPoint,
+    padding: i64,
+) -> Result<(), FabricationError> {
+    bounds
+        .include_box(
+            point
+                .x
+                .0
+                .checked_sub(padding)
+                .ok_or(FabricationError::ArithmeticOverflow)?,
+            point
+                .y
+                .0
+                .checked_sub(padding)
+                .ok_or(FabricationError::ArithmeticOverflow)?,
+            point
+                .x
+                .0
+                .checked_add(padding)
+                .ok_or(FabricationError::ArithmeticOverflow)?,
+            point
+                .y
+                .0
+                .checked_add(padding)
+                .ok_or(FabricationError::ArithmeticOverflow)?,
+        )
+        .map_err(|_| FabricationError::CoordinateOutOfRange)
+}
+
+fn transformed_physical_point(
+    transforms: &TransformChain,
+    point: CanonicalPoint,
+    offset: CanonicalPoint,
+) -> Result<(CanonicalPoint, i64), FabricationError> {
+    let materialized = transforms.materialize(point)?;
+    let error = materialized
+        .quantization
+        .iter()
+        .try_fold(0_u64, |total, item| total.checked_add(item.max_error_pm))
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or(FabricationError::ArithmeticOverflow)?;
+    Ok((
+        CanonicalPoint::new(
+            materialized
+                .point
+                .x
+                .0
+                .checked_add(offset.x.0)
+                .ok_or(FabricationError::ArithmeticOverflow)?,
+            materialized
+                .point
+                .y
+                .0
+                .checked_add(offset.y.0)
+                .ok_or(FabricationError::ArithmeticOverflow)?,
+        ),
+        error,
+    ))
+}
+
+fn transformed_physical_padding(
+    width: Option<Picometres>,
+    transforms: &TransformChain,
+) -> Result<i64, FabricationError> {
+    let Some(width) = width else {
+        return Ok(0);
+    };
+    validate_positive_length(width)?;
+    let mut numerator = i128::from(width.0);
+    let mut denominator = 1_i128;
+    for operation in &transforms.operations {
+        if let TransformOperation::Scale {
+            numerator: scale_numerator,
+            denominator: scale_denominator,
+        } = *operation
+        {
+            if scale_numerator == 0 || scale_denominator == 0 {
+                return Err(FabricationError::InvalidScale);
+            }
+            numerator = numerator
+                .checked_mul(i128::from(scale_numerator).abs())
+                .ok_or(FabricationError::ArithmeticOverflow)?;
+            denominator = denominator
+                .checked_mul(i128::from(scale_denominator).abs())
+                .ok_or(FabricationError::ArithmeticOverflow)?;
+        }
+    }
+    let scaled = numerator
+        .checked_add(denominator - 1)
+        .ok_or(FabricationError::ArithmeticOverflow)?
+        / denominator;
+    let scaled = i64::try_from(scaled).map_err(|_| FabricationError::ArithmeticOverflow)?;
+    physical_half_ceil(scaled).map_err(|_| FabricationError::ArithmeticOverflow)
+}
+
+fn physical_arc_radius(arc: &CanonicalArc) -> Result<i64, FabricationError> {
+    let squared = |point: CanonicalPoint| -> Result<u128, FabricationError> {
+        let x = i128::from(point.x.0) - i128::from(arc.center.x.0);
+        let y = i128::from(point.y.0) - i128::from(arc.center.y.0);
+        x.checked_mul(x)
+            .and_then(|x| y.checked_mul(y).and_then(|y| x.checked_add(y)))
+            .and_then(|value| u128::try_from(value).ok())
+            .ok_or(FabricationError::ArithmeticOverflow)
+    };
+    let squared = squared(arc.start)?.max(squared(arc.end)?);
+    let floor = integer_sqrt(squared);
+    let radius = floor
+        .checked_add(u128::from(floor.checked_mul(floor) != Some(squared)))
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or(FabricationError::ArithmeticOverflow)?;
+    if radius <= 0 {
+        return Err(FabricationError::InvalidIdentity(
+            "physical-arc-radius".into(),
+        ));
+    }
+    Ok(radius)
+}
+
+fn physical_segment_bounds(
+    bounds: &mut GerberBounds,
+    segment: &ContourSegment,
+    transforms: &TransformChain,
+    offset: CanonicalPoint,
+    budget: ReconciliationBudget,
+) -> Result<(), FabricationError> {
+    budget.check()?;
+    match segment {
+        ContourSegment::Line(line) => {
+            let padding = transformed_physical_padding(line.width, transforms)?;
+            for point in [line.start, line.end] {
+                let (point, error) = transformed_physical_point(transforms, point, offset)?;
+                physical_include_point(
+                    bounds,
+                    point,
+                    padding
+                        .checked_add(error)
+                        .ok_or(FabricationError::ArithmeticOverflow)?,
+                )?;
+            }
+        }
+        ContourSegment::Arc(arc) => {
+            let (start, start_error) = transformed_physical_point(transforms, arc.start, offset)?;
+            let (end, end_error) = transformed_physical_point(transforms, arc.end, offset)?;
+            let (center, center_error) =
+                transformed_physical_point(transforms, arc.center, offset)?;
+            let mirrored = transforms
+                .operations
+                .iter()
+                .fold(false, |mirrored, operation| {
+                    if let TransformOperation::Mirror { x, y } = operation {
+                        mirrored ^ (*x ^ *y)
+                    } else {
+                        mirrored
+                    }
+                });
+            let direction = if mirrored {
+                match arc.direction {
+                    ArcDirection::Clockwise => ArcDirection::CounterClockwise,
+                    ArcDirection::CounterClockwise => ArcDirection::Clockwise,
+                }
+            } else {
+                arc.direction
+            };
+            let transformed = CanonicalArc {
+                start,
+                end,
+                center,
+                direction,
+                quadrant: arc.quadrant,
+                width: arc.width,
+                source_resolution: arc.source_resolution,
+            };
+            let padding = transformed_physical_padding(arc.width, transforms)?;
+            physical_include_point(
+                bounds,
+                start,
+                padding
+                    .checked_add(start_error)
+                    .ok_or(FabricationError::ArithmeticOverflow)?,
+            )?;
+            physical_include_point(
+                bounds,
+                end,
+                padding
+                    .checked_add(end_error)
+                    .ok_or(FabricationError::ArithmeticOverflow)?,
+            )?;
+            let radius = physical_arc_radius(&transformed)?;
+            for (direction, vector) in [
+                ((1_i64, 0_i64), (1_i128, 0_i128)),
+                ((0, 1), (0, 1)),
+                ((-1, 0), (-1, 0)),
+                ((0, -1), (0, -1)),
+            ] {
+                budget.check()?;
+                if (transformed.quadrant == QuadrantMode::Multi
+                    && transformed.start == transformed.end)
+                    || xnc_arc_sweep_contains(&transformed, vector)
+                {
+                    let point = CanonicalPoint::new(
+                        center
+                            .x
+                            .0
+                            .checked_add(
+                                direction
+                                    .0
+                                    .checked_mul(radius)
+                                    .ok_or(FabricationError::ArithmeticOverflow)?,
+                            )
+                            .ok_or(FabricationError::ArithmeticOverflow)?,
+                        center
+                            .y
+                            .0
+                            .checked_add(
+                                direction
+                                    .1
+                                    .checked_mul(radius)
+                                    .ok_or(FabricationError::ArithmeticOverflow)?,
+                            )
+                            .ok_or(FabricationError::ArithmeticOverflow)?,
+                    );
+                    physical_include_point(
+                        bounds,
+                        point,
+                        padding
+                            .checked_add(center_error)
+                            .ok_or(FabricationError::ArithmeticOverflow)?,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn macro_primitive_radius(
+    code: &str,
+    values: &[GerberRational],
+    unit: SourceUnit,
+) -> Result<i64, FabricationError> {
+    let length = |index: usize| -> Result<i64, FabricationError> {
+        values
+            .get(index)
+            .ok_or_else(|| FabricationError::InvalidIdentity("macro-argument".into()))?
+            .to_picometres(unit)
+            .map(|value| value.0)
+            .map_err(|_| FabricationError::InvalidNumber)
+    };
+    let integer = |index: usize| -> Result<i64, FabricationError> {
+        values
+            .get(index)
+            .ok_or_else(|| FabricationError::InvalidIdentity("macro-argument".into()))?
+            .exact_i64()
+            .map_err(|_| FabricationError::InvalidNumber)
+    };
+    let radial = |points: &[(i64, i64)], padding: i64| -> Result<i64, FabricationError> {
+        points.iter().try_fold(padding, |radius, (x, y)| {
+            x.abs()
+                .checked_add(y.abs())
+                .and_then(|point| point.checked_add(padding))
+                .map(|point| radius.max(point))
+                .ok_or(FabricationError::ArithmeticOverflow)
+        })
+    };
+    match code {
+        "1" => radial(&[(length(2)?, length(3)?)], physical_half_ceil(length(1)?)?),
+        "20" => radial(
+            &[(length(2)?, length(3)?), (length(4)?, length(5)?)],
+            physical_half_ceil(length(1)?)?,
+        ),
+        "21" => radial(
+            &[(length(3)?, length(4)?)],
+            physical_half_ceil(length(1)?.max(length(2)?))?,
+        ),
+        "4" => {
+            let vertices =
+                usize::try_from(integer(1)?).map_err(|_| FabricationError::InvalidNumber)?;
+            let mut radius = 0_i64;
+            for index in 0..=vertices {
+                radius = radius.max(radial(
+                    &[(length(2 + index * 2)?, length(3 + index * 2)?)],
+                    0,
+                )?);
+            }
+            Ok(radius)
+        }
+        "5" => radial(&[(length(2)?, length(3)?)], physical_half_ceil(length(4)?)?),
+        "6" => radial(
+            &[(length(0)?, length(1)?)],
+            physical_half_ceil(length(2)?.max(length(7)?))?,
+        ),
+        "7" => radial(&[(length(0)?, length(1)?)], physical_half_ceil(length(2)?)?),
+        _ => Err(FabricationError::InvalidIdentity(
+            "unsupported-macro-primitive".into(),
+        )),
+    }
+}
+
+fn macro_aperture_bounds(
+    review: &FabricationReview,
+    aperture: &ApertureDefinition,
+    unit: SourceUnit,
+    budget: ReconciliationBudget,
+) -> Result<GerberBounds, FabricationError> {
+    let macro_id = aperture
+        .macro_id
+        .as_deref()
+        .ok_or_else(|| FabricationError::DanglingReference(aperture.id.clone()))?;
+    let mut definition = None;
+    for candidate in &review.macros {
+        budget.check()?;
+        if candidate.id == macro_id {
+            definition = Some(candidate);
+            break;
+        }
+    }
+    let definition =
+        definition.ok_or_else(|| FabricationError::DanglingReference(macro_id.into()))?;
+    let mut variables = BTreeMap::new();
+    for (index, value) in aperture.macro_arguments.iter().enumerate() {
+        budget.check()?;
+        let numerator = value
+            .numerator
+            .parse::<i128>()
+            .map_err(|_| FabricationError::InvalidNumber)?;
+        let value = GerberRational::new(numerator, i128::from(value.denominator))
+            .map_err(|_| FabricationError::InvalidNumber)?;
+        variables.insert(index as u32 + 1, value);
+    }
+    let mut bounds = GerberBounds::default();
+    for operation in &definition.operations {
+        budget.check()?;
+        if let Some(assignment) = operation.strip_prefix('$') {
+            let (number, expression) = assignment
+                .split_once('=')
+                .ok_or_else(|| FabricationError::InvalidIdentity(definition.id.clone()))?;
+            let number = number
+                .parse::<u32>()
+                .map_err(|_| FabricationError::InvalidNumber)?;
+            let (value, _) = GerberExpressionParser::parse(expression, &variables)
+                .map_err(|_| FabricationError::InvalidNumber)?;
+            variables.insert(
+                number,
+                value.ok_or_else(|| FabricationError::InvalidIdentity(definition.id.clone()))?,
+            );
+            continue;
+        }
+        if operation.starts_with('0') {
+            continue;
+        }
+        let mut fields = Vec::new();
+        for field in operation.split(',') {
+            budget.check()?;
+            fields.push(field);
+        }
+        let mut values = Vec::with_capacity(fields.len().saturating_sub(1));
+        for field in &fields[1..] {
+            budget.check()?;
+            values.push(
+                GerberExpressionParser::parse(field, &variables)
+                    .map_err(|_| FabricationError::InvalidNumber)?
+                    .0
+                    .ok_or_else(|| FabricationError::InvalidIdentity(definition.id.clone()))?,
+            );
+        }
+        let radius = macro_primitive_radius(fields[0], &values, unit)?;
+        bounds
+            .include_box(-radius, -radius, radius, radius)
+            .map_err(|_| FabricationError::CoordinateOutOfRange)?;
+    }
+    Ok(bounds)
+}
+
+fn aperture_local_bounds(
+    review: &FabricationReview,
+    feature_index: &BTreeMap<&str, &ManufacturingFeature>,
+    aperture: &ApertureDefinition,
+    unit: SourceUnit,
+    budget: ReconciliationBudget,
+    aperture_stack: &mut BTreeSet<String>,
+) -> Result<GerberBounds, FabricationError> {
+    budget.check()?;
+    if !aperture_stack.insert(aperture.id.clone()) {
+        return Err(FabricationError::InvalidIdentity(
+            "recursive-aperture".into(),
+        ));
+    }
+    let result = match aperture.shape {
+        ApertureShape::Circle | ApertureShape::Polygon => {
+            let diameter = aperture
+                .dimensions
+                .first()
+                .copied()
+                .ok_or_else(|| FabricationError::InvalidIdentity(aperture.id.clone()))?;
+            let radius = physical_half_ceil(diameter.0)?;
+            let mut bounds = GerberBounds::default();
+            bounds
+                .include_box(-radius, -radius, radius, radius)
+                .map_err(|_| FabricationError::CoordinateOutOfRange)?;
+            Ok(bounds)
+        }
+        ApertureShape::Rectangle | ApertureShape::Obround => {
+            let [width, height, ..] = aperture.dimensions.as_slice() else {
+                return Err(FabricationError::InvalidIdentity(aperture.id.clone()));
+            };
+            let half_width = physical_half_ceil(width.0)?;
+            let half_height = physical_half_ceil(height.0)?;
+            let mut bounds = GerberBounds::default();
+            bounds
+                .include_box(-half_width, -half_height, half_width, half_height)
+                .map_err(|_| FabricationError::CoordinateOutOfRange)?;
+            Ok(bounds)
+        }
+        ApertureShape::Macro => macro_aperture_bounds(review, aperture, unit, budget),
+        ApertureShape::Block => {
+            let mut block = None;
+            for candidate in &review.blocks {
+                budget.check()?;
+                if candidate.document_id == aperture.document_id
+                    && candidate.aperture_id == aperture.id
+                    && candidate.provenance.location == aperture.provenance.location
+                {
+                    block = Some(candidate);
+                    break;
+                }
+            }
+            let block =
+                block.ok_or_else(|| FabricationError::DanglingReference(aperture.id.clone()))?;
+            let mut bounds = GerberBounds::default();
+            for (index, feature_id) in block.feature_ids.iter().enumerate() {
+                if index % 1024 == 0 {
+                    budget.check()?;
+                }
+                let feature = feature_index
+                    .get(feature_id.as_str())
+                    .copied()
+                    .filter(|feature| {
+                        feature.document_id == block.document_id
+                            && matches!(
+                                &feature.membership,
+                                FeatureMembership::ApertureBlock { block_id, aperture_id }
+                                    if block_id == &block.id && aperture_id == &block.aperture_id
+                            )
+                    })
+                    .ok_or_else(|| FabricationError::InvalidIdentity("block-membership".into()))?;
+                bounds.merge(physical_feature_bounds(
+                    review,
+                    feature_index,
+                    feature,
+                    CanonicalPoint::default(),
+                    unit,
+                    budget,
+                    aperture_stack,
+                )?);
+            }
+            Ok(bounds)
+        }
+        ApertureShape::Unknown => Err(FabricationError::InvalidIdentity(
+            "unknown-aperture-bounds".into(),
+        )),
+    };
+    aperture_stack.remove(&aperture.id);
+    result
+}
+
+fn physical_aperture_width(
+    review: &FabricationReview,
+    feature_index: &BTreeMap<&str, &ManufacturingFeature>,
+    feature: &ManufacturingFeature,
+    unit: SourceUnit,
+    budget: ReconciliationBudget,
+    aperture_stack: &mut BTreeSet<String>,
+) -> Result<Option<Picometres>, FabricationError> {
+    let Some(tool_id) = feature.tool_id.as_deref() else {
+        return Ok(None);
+    };
+    let mut tool = None;
+    for candidate in &review.tools {
+        budget.check()?;
+        if candidate.id == tool_id && candidate.kind == ToolKind::Aperture {
+            tool = Some(candidate);
+            break;
+        }
+    }
+    let Some(tool) = tool else {
+        return Ok(None);
+    };
+    let mut aperture = None;
+    for candidate in &review.apertures {
+        budget.check()?;
+        if candidate.document_id == tool.document_id
+            && candidate.provenance.location == tool.provenance.location
+        {
+            aperture = Some(candidate);
+            break;
+        }
+    }
+    let aperture = aperture.ok_or_else(|| FabricationError::DanglingReference(tool.id.clone()))?;
+    let extent = aperture_local_bounds(
+        review,
+        feature_index,
+        aperture,
+        unit,
+        budget,
+        aperture_stack,
+    )?
+    .extent()
+    .ok_or_else(|| FabricationError::InvalidIdentity(aperture.id.clone()))?;
+    let radius = [
+        extent.min.x.0.unsigned_abs(),
+        extent.min.y.0.unsigned_abs(),
+        extent.max.x.0.unsigned_abs(),
+        extent.max.y.0.unsigned_abs(),
+    ]
+    .into_iter()
+    .max()
+    .and_then(|radius| i64::try_from(radius).ok())
+    .ok_or(FabricationError::ArithmeticOverflow)?;
+    let width = radius
+        .checked_mul(2)
+        .map(Picometres)
+        .ok_or(FabricationError::ArithmeticOverflow)?;
+    validate_positive_length(width)?;
+    Ok(Some(width))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn physical_feature_segment_bounds(
+    review: &FabricationReview,
+    feature_index: &BTreeMap<&str, &ManufacturingFeature>,
+    feature: &ManufacturingFeature,
+    segment: &ContourSegment,
+    offset: CanonicalPoint,
+    unit: SourceUnit,
+    budget: ReconciliationBudget,
+    aperture_stack: &mut BTreeSet<String>,
+) -> Result<GerberBounds, FabricationError> {
+    let mut segment = segment.clone();
+    match &mut segment {
+        ContourSegment::Line(line) if line.width.is_none() => {
+            line.width = physical_aperture_width(
+                review,
+                feature_index,
+                feature,
+                unit,
+                budget,
+                aperture_stack,
+            )?;
+        }
+        ContourSegment::Arc(arc) if arc.width.is_none() => {
+            arc.width = physical_aperture_width(
+                review,
+                feature_index,
+                feature,
+                unit,
+                budget,
+                aperture_stack,
+            )?;
+        }
+        _ => {}
+    }
+    let mut bounds = GerberBounds::default();
+    physical_segment_bounds(&mut bounds, &segment, &feature.transforms, offset, budget)?;
+    Ok(bounds)
+}
+
+fn physical_feature_bounds(
+    review: &FabricationReview,
+    feature_index: &BTreeMap<&str, &ManufacturingFeature>,
+    feature: &ManufacturingFeature,
+    offset: CanonicalPoint,
+    unit: SourceUnit,
+    budget: ReconciliationBudget,
+    aperture_stack: &mut BTreeSet<String>,
+) -> Result<GerberBounds, FabricationError> {
+    budget.check()?;
+    let mut bounds = GerberBounds::default();
+    match &feature.geometry {
+        Geometry::Point(point) => {
+            let (point, error) = transformed_physical_point(&feature.transforms, *point, offset)?;
+            physical_include_point(&mut bounds, point, error)?;
+        }
+        Geometry::Line(line) => bounds.merge(physical_feature_segment_bounds(
+            review,
+            feature_index,
+            feature,
+            &ContourSegment::Line(line.clone()),
+            offset,
+            unit,
+            budget,
+            aperture_stack,
+        )?),
+        Geometry::Arc(arc) => bounds.merge(physical_feature_segment_bounds(
+            review,
+            feature_index,
+            feature,
+            &ContourSegment::Arc(arc.clone()),
+            offset,
+            unit,
+            budget,
+            aperture_stack,
+        )?),
+        Geometry::Contour(contour) => {
+            for segment in &contour.segments {
+                bounds.merge(physical_feature_segment_bounds(
+                    review,
+                    feature_index,
+                    feature,
+                    segment,
+                    offset,
+                    unit,
+                    budget,
+                    aperture_stack,
+                )?);
+            }
+        }
+        Geometry::Region(region) => {
+            for contour in &region.contours {
+                for segment in &contour.segments {
+                    physical_segment_bounds(
+                        &mut bounds,
+                        segment,
+                        &feature.transforms,
+                        offset,
+                        budget,
+                    )?;
+                }
+            }
+        }
+        Geometry::Flash(flash) => {
+            let mut aperture = None;
+            for candidate in &review.apertures {
+                budget.check()?;
+                if candidate.id == flash.aperture_id {
+                    aperture = Some(candidate);
+                    break;
+                }
+            }
+            let aperture = aperture
+                .ok_or_else(|| FabricationError::DanglingReference(flash.aperture_id.clone()))?;
+            let local = aperture_local_bounds(
+                review,
+                feature_index,
+                aperture,
+                unit,
+                budget,
+                aperture_stack,
+            )?;
+            let extent = local
+                .extent()
+                .ok_or_else(|| FabricationError::InvalidIdentity(aperture.id.clone()))?;
+            for local in [
+                extent.min,
+                CanonicalPoint::new(extent.min.x.0, extent.max.y.0),
+                CanonicalPoint::new(extent.max.x.0, extent.min.y.0),
+                extent.max,
+            ] {
+                budget.check()?;
+                let point = CanonicalPoint::new(
+                    flash
+                        .position
+                        .x
+                        .0
+                        .checked_add(local.x.0)
+                        .ok_or(FabricationError::ArithmeticOverflow)?,
+                    flash
+                        .position
+                        .y
+                        .0
+                        .checked_add(local.y.0)
+                        .ok_or(FabricationError::ArithmeticOverflow)?,
+                );
+                let (point, error) =
+                    transformed_physical_point(&feature.transforms, point, offset)?;
+                physical_include_point(&mut bounds, point, error)?;
+            }
+        }
+        Geometry::Drill(drill) => {
+            let (point, error) =
+                transformed_physical_point(&feature.transforms, drill.position, offset)?;
+            let padding = transformed_physical_padding(Some(drill.diameter), &feature.transforms)?;
+            physical_include_point(
+                &mut bounds,
+                point,
+                padding
+                    .checked_add(error)
+                    .ok_or(FabricationError::ArithmeticOverflow)?,
+            )?;
+        }
+        Geometry::Route(route) => {
+            for segment in &route.segments {
+                bounds.merge(physical_feature_segment_bounds(
+                    review,
+                    feature_index,
+                    feature,
+                    segment,
+                    offset,
+                    unit,
+                    budget,
+                    aperture_stack,
+                )?);
+            }
+        }
+        Geometry::Slot(slot) => {
+            let padding = transformed_physical_padding(Some(slot.width), &feature.transforms)?;
+            for source in [slot.start, slot.end] {
+                let (point, error) =
+                    transformed_physical_point(&feature.transforms, source, offset)?;
+                physical_include_point(
+                    &mut bounds,
+                    point,
+                    padding
+                        .checked_add(error)
+                        .ok_or(FabricationError::ArithmeticOverflow)?,
+                )?;
+            }
+        }
+    }
+    Ok(bounds)
+}
+
+fn definition_features_for_physical_bounds<'a>(
+    review: &'a FabricationReview,
+    document: &ManufacturingDocument,
+    budget: ReconciliationBudget,
+) -> Result<HashSet<&'a str>, FabricationError> {
+    let mut features = HashMap::new();
+    for feature in review
+        .features
+        .iter()
+        .filter(|feature| feature.document_id == document.id)
+    {
+        budget.check()?;
+        features.insert(feature.id.as_str(), feature);
+    }
+    let mut apertures = HashMap::new();
+    for aperture in review
+        .apertures
+        .iter()
+        .filter(|aperture| aperture.document_id == document.id)
+    {
+        budget.check()?;
+        apertures.insert(aperture.id.as_str(), aperture);
+    }
+    let mut memberships = HashSet::new();
+    let mut block_ids = BTreeSet::new();
+    for block in review
+        .blocks
+        .iter()
+        .filter(|block| block.document_id == document.id)
+    {
+        budget.check()?;
+        let aperture_matches = apertures
+            .get(block.aperture_id.as_str())
+            .is_some_and(|aperture| {
+                aperture.shape == ApertureShape::Block
+                    && aperture.provenance.location == block.provenance.location
+            });
+        if !block_ids.insert(block.id.as_str())
+            || block.id != record_id("block", &document.id, &block.provenance.location)
+            || block.aperture_id
+                != aperture_id(
+                    &document.id,
+                    ApertureShape::Block,
+                    &block.provenance.location,
+                )
+            || !aperture_matches
+            || block.provenance.location.byte_end >= block.definition_end.byte_start
+        {
+            return Err(FabricationError::InvalidIdentity("block-membership".into()));
+        }
+        for feature_id in &block.feature_ids {
+            budget.check()?;
+            let feature = features
+                .get(feature_id.as_str())
+                .copied()
+                .ok_or_else(|| FabricationError::InvalidIdentity("block-membership".into()))?;
+            if !memberships.insert(feature.id.as_str())
+                || !matches!(
+                    &feature.membership,
+                    FeatureMembership::ApertureBlock { block_id, aperture_id }
+                        if block_id == &block.id && aperture_id == &block.aperture_id
+                )
+                || block.provenance.location.byte_end >= feature.provenance.location.byte_start
+                || feature.provenance.location.byte_end >= block.definition_end.byte_start
+            {
+                return Err(FabricationError::InvalidIdentity("block-membership".into()));
+            }
+        }
+    }
+    for feature in features.values() {
+        budget.check()?;
+        match &feature.membership {
+            FeatureMembership::TopLevel if memberships.contains(feature.id.as_str()) => {
+                return Err(FabricationError::InvalidIdentity("block-membership".into()));
+            }
+            FeatureMembership::ApertureBlock { block_id, .. }
+                if !block_ids.contains(block_id.as_str())
+                    || !memberships.contains(feature.id.as_str()) =>
+            {
+                return Err(FabricationError::InvalidIdentity("block-membership".into()));
+            }
+            _ => {}
+        }
+    }
+    // This set validates parser-shaped membership, but it is never exclusion authority:
+    // report reviews do not retain the bytes needed to prove the claimed ranges.
+    Ok(memberships)
+}
+
+fn conservative_document_geometry_digest(
+    review: &FabricationReview,
+    document: &ManufacturingDocument,
+    budget: ReconciliationBudget,
+) -> Result<String, FabricationError> {
+    let mut apertures = BTreeMap::new();
+    for aperture in &review.apertures {
+        budget.check()?;
+        if aperture.document_id == document.id {
+            apertures.insert(
+                aperture.id.as_str(),
+                (
+                    aperture.shape,
+                    &aperture.dimensions,
+                    aperture.polygon_vertices,
+                    aperture.polygon_rotation_microdegrees,
+                    &aperture.macro_id,
+                    &aperture.macro_arguments,
+                ),
+            );
+        }
+    }
+    let mut macros = BTreeMap::new();
+    for definition in &review.macros {
+        budget.check()?;
+        if definition.document_id == document.id {
+            macros.insert(
+                definition.id.as_str(),
+                (
+                    &definition.name,
+                    &definition.variables,
+                    &definition.operations,
+                ),
+            );
+        }
+    }
+    let mut blocks = BTreeMap::new();
+    for block in &review.blocks {
+        budget.check()?;
+        if block.document_id == document.id {
+            blocks.insert(
+                block.id.as_str(),
+                (
+                    &block.aperture_id,
+                    &block.feature_ids,
+                    &block.instantiation_feature_ids,
+                    &block.definition_end,
+                ),
+            );
+        }
+    }
+    let mut repetitions = BTreeMap::new();
+    for repeat in &review.repetitions {
+        budget.check()?;
+        if repeat.document_id == document.id {
+            repetitions.insert(
+                repeat.id.as_str(),
+                (
+                    &repeat.feature_ids,
+                    repeat.x_count,
+                    repeat.y_count,
+                    repeat.x_step,
+                    repeat.y_step,
+                ),
+            );
+        }
+    }
+    let mut features = BTreeMap::new();
+    for feature in &review.features {
+        budget.check()?;
+        if feature.document_id == document.id {
+            features.insert(
+                feature.id.as_str(),
+                (
+                    &feature.tool_id,
+                    feature.polarity,
+                    &feature.geometry,
+                    &feature.transforms,
+                    &feature.membership,
+                ),
+            );
+        }
+    }
+    hash_serialized_with_deadline(
+        budget.deadline,
+        "physical-geometry-digest",
+        &(
+            "physical-geometry-v5-conservative-unproven-definitions",
+            &document.id,
+            &document.artifact_digest,
+            apertures,
+            macros,
+            blocks,
+            repetitions,
+            features,
+        ),
+    )
+}
+
+fn derive_document_physical_bounds(
+    review: &FabricationReview,
+    document: &ManufacturingDocument,
+    budget: ReconciliationBudget,
+) -> Result<Option<DocumentPhysicalBounds>, FabricationError> {
+    if !matches!(
+        document.format,
+        DocumentFormat::Gerber | DocumentFormat::Excellon
+    ) {
+        return Ok(None);
+    }
+    let Some(numeric_format) = document.numeric_format.as_ref() else {
+        return Ok(None);
+    };
+    let definition_features = definition_features_for_physical_bounds(review, document, budget)?;
+    let conservative_full_extent = definition_features.len() > MANUFACTURING_LIMITS.macros;
+    let mut bounds = GerberBounds::default();
+    if conservative_full_extent {
+        // ponytail: without byte-anchored proof, large definition sets use the full
+        // coordinate contract instead of expensive narrowing. Reparse bytes to regain precision.
+        bounds
+            .include_box(
+                -MAX_COORDINATE_PM,
+                -MAX_COORDINATE_PM,
+                MAX_COORDINATE_PM,
+                MAX_COORDINATE_PM,
+            )
+            .map_err(|_| FabricationError::CoordinateOutOfRange)?;
+        let extent = bounds.extent().expect("full coordinate extent");
+        let geometry_digest = conservative_document_geometry_digest(review, document, budget)?;
+        let mut result = DocumentPhysicalBounds {
+            id: String::new(),
+            document_id: document.id.clone(),
+            artifact_digest: document.artifact_digest.clone(),
+            format: document.format,
+            extent,
+            resolution: numeric_format.resolution,
+            geometry_digest,
+            source_locations: vec![inventory_provenance(document).location.clone()],
+            provenance: inventory_provenance(document),
+        };
+        result.id = physical_bounds_id_with_deadline(&result, budget.deadline)?;
+        return Ok(Some(result));
+    } else {
+        let mut physical_features = Vec::new();
+        for feature in &review.features {
+            budget.check()?;
+            if feature.document_id == document.id {
+                // Definition membership is deliberately not an exclusion predicate.
+                physical_features.push(feature);
+            }
+        }
+        let mut document_repeats = Vec::new();
+        for repeat in &review.repetitions {
+            budget.check()?;
+            if repeat.document_id == document.id {
+                document_repeats.push(repeat);
+            }
+        }
+        if physical_features.is_empty() && document_repeats.is_empty() {
+            return Ok(None);
+        }
+        let mut feature_index = BTreeMap::new();
+        for feature in &review.features {
+            budget.check()?;
+            if feature_index.insert(feature.id.as_str(), feature).is_some() {
+                return Err(FabricationError::DuplicateId(feature.id.clone()));
+            }
+        }
+        let mut aperture_stack = BTreeSet::new();
+        for feature in physical_features {
+            budget.check()?;
+            bounds.merge(physical_feature_bounds(
+                review,
+                &feature_index,
+                feature,
+                CanonicalPoint::default(),
+                numeric_format.unit,
+                budget,
+                &mut aperture_stack,
+            )?);
+        }
+        for repeat in document_repeats {
+            budget.check()?;
+            let max_x = repeat_max_offset(repeat.x_step, repeat.x_count)?;
+            let max_y = repeat_max_offset(repeat.y_step, repeat.y_count)?;
+            for feature_id in &repeat.feature_ids {
+                let feature = feature_index
+                    .get(feature_id.as_str())
+                    .copied()
+                    .ok_or_else(|| FabricationError::DanglingReference(feature_id.clone()))?;
+                for offset in [
+                    CanonicalPoint::default(),
+                    CanonicalPoint::new(max_x.0, 0),
+                    CanonicalPoint::new(0, max_y.0),
+                    CanonicalPoint::new(max_x.0, max_y.0),
+                ] {
+                    budget.check()?;
+                    bounds.merge(physical_feature_bounds(
+                        review,
+                        &feature_index,
+                        feature,
+                        offset,
+                        numeric_format.unit,
+                        budget,
+                        &mut aperture_stack,
+                    )?);
+                }
+            }
+        }
+    }
+    let Some(extent) = bounds.extent() else {
+        return Ok(None);
+    };
+    let mut feature_records = BTreeMap::new();
+    let mut aperture_records = BTreeMap::new();
+    let mut macro_records = BTreeMap::new();
+    let mut block_records = BTreeMap::new();
+    let mut repeat_records = BTreeMap::new();
+    let mut locations = BTreeSet::new();
+    for feature in review
+        .features
+        .iter()
+        .filter(|feature| feature.document_id == document.id)
+    {
+        budget.check()?;
+        feature_records.insert(feature.id.as_str(), feature);
+        locations.insert(feature.provenance.location.clone());
+    }
+    for aperture in review
+        .apertures
+        .iter()
+        .filter(|aperture| aperture.document_id == document.id)
+    {
+        budget.check()?;
+        aperture_records.insert(aperture.id.as_str(), aperture);
+        locations.insert(aperture.provenance.location.clone());
+    }
+    for definition in review
+        .macros
+        .iter()
+        .filter(|definition| definition.document_id == document.id)
+    {
+        budget.check()?;
+        macro_records.insert(definition.id.as_str(), definition);
+        locations.insert(definition.provenance.location.clone());
+    }
+    for block in review
+        .blocks
+        .iter()
+        .filter(|block| block.document_id == document.id)
+    {
+        budget.check()?;
+        block_records.insert(block.id.as_str(), block);
+        locations.insert(block.provenance.location.clone());
+    }
+    for repeat in review
+        .repetitions
+        .iter()
+        .filter(|repeat| repeat.document_id == document.id)
+    {
+        budget.check()?;
+        repeat_records.insert(repeat.id.as_str(), repeat);
+        locations.insert(repeat.provenance.location.clone());
+    }
+    budget.check()?;
+    let geometry_digest = hash_serialized_with_deadline(
+        budget.deadline,
+        "physical-geometry-digest",
+        &(
+            "physical-geometry-v3",
+            feature_records,
+            aperture_records,
+            macro_records,
+            block_records,
+            repeat_records,
+        ),
+    )?;
+    let mut source_locations = Vec::with_capacity(locations.len());
+    for location in locations {
+        budget.check()?;
+        source_locations.push(location);
+    }
+    let mut result = DocumentPhysicalBounds {
+        id: String::new(),
+        document_id: document.id.clone(),
+        artifact_digest: document.artifact_digest.clone(),
+        format: document.format,
+        extent,
+        resolution: numeric_format.resolution,
+        geometry_digest,
+        source_locations,
+        provenance: inventory_provenance(document),
+    };
+    result.id = physical_bounds_id_with_deadline(&result, budget.deadline)?;
+    Ok(Some(result))
+}
+
+fn derive_release_physical_bounds(
+    review: &FabricationReview,
+    budget: ReconciliationBudget,
+) -> Result<Vec<DocumentPhysicalBounds>, FabricationError> {
+    let mut output = BTreeMap::new();
+    for document in &review.documents {
+        budget.check()?;
+        if let Some(bounds) = derive_document_physical_bounds(review, document, budget)? {
+            output.insert(bounds.document_id.clone(), bounds);
+        }
+    }
+    budget.check()?;
+    Ok(output.into_values().collect())
+}
+
+pub fn parse_xnc_document(input: &ManufacturingInput) -> Result<XncProduction, XncParseError> {
+    parse_xnc_document_with_timeout(
+        input,
+        Duration::from_millis(MANUFACTURING_LIMITS.file_timeout_ms),
+    )
+}
+
+pub fn parse_xnc_document_with_timeout(
+    input: &ManufacturingInput,
+    timeout: Duration,
+) -> Result<XncProduction, XncParseError> {
+    parse_xnc_document_with_deadline(
+        input,
+        ManufacturingDeadline::from_timeout(timeout).for_input(input),
+    )
+}
+
+fn parse_xnc_document_with_deadline(
+    input: &ManufacturingInput,
+    deadline: ManufacturingDeadline,
+) -> Result<XncProduction, XncParseError> {
+    let digest = sha256_with_deadline(&input.original_bytes, deadline, "xnc-input-hash").map_err(
+        |error| match error {
+            FabricationError::LimitExceeded { .. } => XncParseError::Deadline {
+                stage: "input-hash",
+            },
+            error => XncParseError::Canonical(error),
+        },
+    )?;
+    if input.kind_candidate != ManufacturingKindCandidate::Excellon
+        || input.size != input.original_bytes.len() as u64
+        || input.artifact_digest != digest
+        || !valid_virtual_path(&input.virtual_path)
+    {
+        return Err(xnc_error(0, "invalid-xnc-input-identity"));
+    }
+    let (lines, lexical_tokens, max_line_bytes, metadata_bytes, max_text_bytes) =
+        xnc_lines(&input.original_bytes, deadline)?;
+    let (m48_index, first) = lines
+        .iter()
+        .enumerate()
+        .find(|(_, line)| !line.text.starts_with(';'))
+        .ok_or_else(|| xnc_error(0, "empty-xnc"))?;
+    if first.text != "M48" {
+        return Err(xnc_error(first.record, "missing-m48"));
+    }
+    let dialect = xnc_dialect(&lines, deadline)?;
+    let document_id = document_id(&input.artifact_digest, DocumentFormat::Excellon)
+        .map_err(XncParseError::Canonical)?;
+    let mut unit = None;
+    let mut tool_definitions = BTreeMap::<u16, XncToolDefinition>::new();
+    let mut file_function = None;
+    let mut max_integer_digits = 1_u8;
+    let mut max_decimal_digits = 0_u8;
+    let mut body_start = None;
+    for line in lines.iter().skip(m48_index + 1) {
+        check_xnc_deadline(deadline, "xnc-header")?;
+        if line.text == "%" {
+            body_start = Some(line.record as usize + 1);
+            break;
+        }
+        if line.text.starts_with(';') {
+            if let Some(attribute) = xnc_attribute(line, &document_id, &input.artifact_digest)
+                && attribute.name == "TF.FileFunction"
+            {
+                if file_function.is_some() {
+                    return Err(xnc_error(line.record, "duplicate-file-function"));
+                }
+                file_function =
+                    Some(package_file_function(&attribute).map_err(XncParseError::Canonical)?);
+            }
+            continue;
+        }
+        match line.text.as_str() {
+            "METRIC" if unit.is_none() => unit = Some(SourceUnit::Millimetre),
+            "INCH" if unit.is_none() => unit = Some(SourceUnit::Inch),
+            "METRIC,TZ" if unit.is_none() && dialect == XncDialect::LibrePcbLegacy => {
+                unit = Some(SourceUnit::Millimetre)
+            }
+            "FMAT,2" if dialect != XncDialect::Strict => {}
+            _ if line.text.starts_with('T') && line.text.contains('C') => {
+                let (code, diameter) = line
+                    .text
+                    .split_once('C')
+                    .ok_or_else(|| xnc_error(line.record, "invalid-tool-definition"))?;
+                let code_value = xnc_tool_code(code, dialect)
+                    .ok_or_else(|| xnc_error(line.record, "invalid-tool-code"))?;
+                let unit = unit.ok_or_else(|| xnc_error(line.record, "tool-before-unit"))?;
+                let (integer, decimal) = xnc_number_profile(diameter)
+                    .ok_or_else(|| xnc_error(line.record, "invalid-tool-diameter"))?;
+                max_integer_digits = max_integer_digits.max(integer);
+                max_decimal_digits = max_decimal_digits.max(decimal);
+                let definition = XncToolDefinition {
+                    code: code_value,
+                    source_code: code.into(),
+                    diameter: xnc_length(diameter, unit, line.record)?,
+                    provenance: xnc_provenance(&document_id, &input.artifact_digest, line),
+                };
+                if tool_definitions.insert(code_value, definition).is_some() {
+                    return Err(xnc_error(line.record, "duplicate-tool"));
+                }
+            }
+            _ => {
+                return Err(XncParseError::Unsupported {
+                    record: line.record,
+                    command: bounded_command(&line.text),
+                });
+            }
+        }
+    }
+    let body_start =
+        body_start.ok_or_else(|| xnc_error(lines.len() as u64, "missing-header-end"))?;
+    let unit = unit.ok_or_else(|| xnc_error(0, "missing-unit"))?;
+    if tool_definitions.is_empty() {
+        return Err(xnc_error(0, "missing-tools"));
+    }
+    let base_provenance = file_function
+        .as_ref()
+        .map(|function| function.provenance.clone())
+        .unwrap_or_else(|| xnc_provenance(&document_id, &input.artifact_digest, first));
+    let primary_role = file_function
+        .as_ref()
+        .map_or(LayerRole::DrillMap, |function| function.role);
+    let mut primary_location = base_provenance.location.clone();
+    primary_location.subrecord = Some(2);
+    let primary_provenance = ManufacturingProvenance {
+        location: primary_location,
+        ..base_provenance.clone()
+    };
+    let primary_layer_id = layer_id(
+        &document_id,
+        None,
+        primary_role,
+        LayerSide::NotApplicable,
+        None,
+        if file_function.is_some() {
+            Authority::Explicit
+        } else {
+            Authority::Unknown
+        },
+        &primary_provenance.location,
+    );
+    let mut layers = vec![ManufacturingLayer {
+        id: primary_layer_id.clone(),
+        document_id: document_id.clone(),
+        name: None,
+        role: primary_role,
+        side: LayerSide::NotApplicable,
+        context: LayerContext::Board,
+        polarity: LayerPolarity::Unknown,
+        order: None,
+        authority: if file_function.is_some() {
+            Authority::Explicit
+        } else {
+            Authority::Unknown
+        },
+        provenance: primary_provenance,
+    }];
+    let mut span_ids = None;
+    if let Some(function) = &file_function
+        && let (Some(from), Some(to)) = (function.from_layer, function.to_layer)
+    {
+        let mut ids = Vec::new();
+        for (subrecord, order) in [(0_u32, from), (1_u32, to)] {
+            let mut location = function.provenance.location.clone();
+            location.subrecord = Some(subrecord);
+            let provenance = ManufacturingProvenance {
+                location,
+                ..function.provenance.clone()
+            };
+            let name = format!("L{order}");
+            let id = layer_id(
+                &document_id,
+                Some(&name),
+                LayerRole::Copper,
+                LayerSide::Unknown,
+                Some(order),
+                Authority::Explicit,
+                &provenance.location,
+            );
+            layers.push(ManufacturingLayer {
+                id: id.clone(),
+                document_id: document_id.clone(),
+                name: Some(name),
+                role: LayerRole::Copper,
+                side: LayerSide::Unknown,
+                context: LayerContext::Board,
+                polarity: LayerPolarity::Unknown,
+                order: Some(order),
+                authority: Authority::Explicit,
+                provenance,
+            });
+            ids.push(id);
+        }
+        span_ids = Some(LayerSpan {
+            from_layer_id: Some(ids[0].clone()),
+            to_layer_id: Some(ids[1].clone()),
+        });
+    }
+    let mut tools = BTreeMap::new();
+    for definition in tool_definitions.values() {
+        let kind = if file_function
+            .as_ref()
+            .is_some_and(|function| function.role == LayerRole::Route)
+        {
+            ToolKind::Route
+        } else {
+            ToolKind::Drill
+        };
+        let identity_kind = format!("{kind:?}:{}", definition.source_code);
+        let id = tool_id(
+            &document_id,
+            &identity_kind,
+            &definition.provenance.location,
+        );
+        tools.insert(
+            definition.code,
+            ManufacturingTool {
+                id,
+                document_id: document_id.clone(),
+                code: definition.source_code.clone(),
+                kind,
+                diameter: Some(definition.diameter),
+                plating: file_function
+                    .as_ref()
+                    .map_or(Plating::Unknown, |function| function.plating),
+                span: span_ids.clone(),
+                provenance: definition.provenance.clone(),
+            },
+        );
+    }
+    let mut selected = None;
+    let mut position = None;
+    let mut route: Option<Vec<ContourSegment>> = None;
+    let mut features = Vec::new();
+    let mut terminated = false;
+    let mut drills = 0_usize;
+    let mut routes = 0_usize;
+    let mut slots = 0_usize;
+    let mut drill_route_units = 0_usize;
+    for line in lines.iter().skip(body_start) {
+        check_xnc_deadline(deadline, "xnc-interpretation")?;
+        if terminated {
+            return Err(xnc_error(line.record, "data-after-m30"));
+        }
+        if line.text.starts_with(';') {
+            continue;
+        }
+        match line.text.as_str() {
+            "M30" => {
+                if route.is_some() {
+                    return Err(xnc_error(line.record, "m30-inside-route"));
+                }
+                terminated = true;
+            }
+            "G05" if route.is_none() => {}
+            "G90" if dialect != XncDialect::Strict => {}
+            "M71" if dialect == XncDialect::LibrePcbLegacy => {}
+            "M15" => {
+                if route.is_some() || position.is_none() || selected.is_none() {
+                    return Err(xnc_error(line.record, "invalid-route-start"));
+                }
+                route = Some(Vec::new());
+            }
+            "M16" => {
+                let segments = route
+                    .take()
+                    .ok_or_else(|| xnc_error(line.record, "route-not-open"))?;
+                if segments.is_empty() {
+                    return Err(xnc_error(line.record, "empty-route"));
+                }
+                let tool = tools
+                    .get(&selected.expect("route has selected tool"))
+                    .expect("selected tool exists");
+                features.push(xnc_feature(
+                    &document_id,
+                    &primary_layer_id,
+                    &tool.id,
+                    Geometry::Route(RouteFeature {
+                        segments,
+                        tool_id: tool.id.clone(),
+                    }),
+                    xnc_provenance(&document_id, &input.artifact_digest, line),
+                ));
+                routes += 1;
+            }
+            _ if line.text.starts_with('T') && !line.text.contains('C') => {
+                let digits = line.text.strip_prefix('T').unwrap_or_default();
+                if digits == "0" && dialect != XncDialect::Strict && route.is_none() {
+                    selected = None;
+                } else {
+                    let code = xnc_tool_code(&line.text, dialect)
+                        .ok_or_else(|| xnc_error(line.record, "invalid-tool-selection"))?;
+                    if !tools.contains_key(&code) || route.is_some() {
+                        return Err(xnc_error(line.record, "undefined-tool-selection"));
+                    }
+                    selected = Some(code);
+                }
+            }
+            _ if line.text.starts_with("G00") => {
+                if route.is_some() {
+                    return Err(xnc_error(line.record, "rapid-inside-route"));
+                }
+                let (point, integer, decimal) = xnc_point(&line.text[3..], unit, line.record)?;
+                max_integer_digits = max_integer_digits.max(integer);
+                max_decimal_digits = max_decimal_digits.max(decimal);
+                position = Some(point);
+            }
+            _ if line.text.starts_with("G85") => {
+                if route.is_some() {
+                    return Err(xnc_error(line.record, "slot-inside-route"));
+                }
+                let start = position.ok_or_else(|| xnc_error(line.record, "slot-without-start"))?;
+                let (end, integer, decimal) = xnc_point(&line.text[3..], unit, line.record)?;
+                max_integer_digits = max_integer_digits.max(integer);
+                max_decimal_digits = max_decimal_digits.max(decimal);
+                if start == end {
+                    return Err(xnc_error(line.record, "zero-length-slot"));
+                }
+                let tool = tools
+                    .get(&selected.ok_or_else(|| xnc_error(line.record, "slot-without-tool"))?)
+                    .ok_or_else(|| xnc_error(line.record, "slot-without-tool"))?;
+                let width = tool
+                    .diameter
+                    .ok_or_else(|| xnc_error(line.record, "slot-tool-without-diameter"))?;
+                features.push(xnc_feature(
+                    &document_id,
+                    &primary_layer_id,
+                    &tool.id,
+                    Geometry::Slot(SlotFeature {
+                        start,
+                        end,
+                        width,
+                        tool_id: tool.id.clone(),
+                    }),
+                    xnc_provenance(&document_id, &input.artifact_digest, line),
+                ));
+                position = Some(end);
+                slots += 1;
+                drill_route_units += 1;
+            }
+            _ if line.text.starts_with("G01")
+                || line.text.starts_with("G02")
+                || line.text.starts_with("G03") =>
+            {
+                let segments = route
+                    .as_mut()
+                    .ok_or_else(|| xnc_error(line.record, "route-command-outside-route"))?;
+                let start =
+                    position.ok_or_else(|| xnc_error(line.record, "route-without-position"))?;
+                let command = &line.text[..3];
+                let fields = xnc_fields(&line.text[3..], line.record)?;
+                let x = fields
+                    .get(&b'X')
+                    .ok_or_else(|| xnc_error(line.record, "route-without-x"))?;
+                let y = fields
+                    .get(&b'Y')
+                    .ok_or_else(|| xnc_error(line.record, "route-without-y"))?;
+                let end = CanonicalPoint {
+                    x: xnc_length(x, unit, line.record)?,
+                    y: xnc_length(y, unit, line.record)?,
+                };
+                for value in fields.values() {
+                    let (integer, decimal) = xnc_number_profile(value)
+                        .ok_or_else(|| xnc_error(line.record, "invalid-route-coordinate"))?;
+                    max_integer_digits = max_integer_digits.max(integer);
+                    max_decimal_digits = max_decimal_digits.max(decimal);
+                }
+                let tool = tools
+                    .get(&selected.ok_or_else(|| xnc_error(line.record, "route-without-tool"))?)
+                    .ok_or_else(|| xnc_error(line.record, "route-without-tool"))?;
+                let width = tool.diameter;
+                if command == "G01" {
+                    if fields.len() != 2 {
+                        return Err(xnc_error(line.record, "invalid-linear-route-fields"));
+                    }
+                    segments.push(ContourSegment::Line(CanonicalLine { start, end, width }));
+                } else {
+                    let direction = if command == "G02" {
+                        ArcDirection::Clockwise
+                    } else {
+                        ArcDirection::CounterClockwise
+                    };
+                    let center = if let Some(radius) = fields.get(&b'A') {
+                        if fields.len() != 3 {
+                            return Err(xnc_error(line.record, "invalid-radius-route-fields"));
+                        }
+                        xnc_radius_center(
+                            start,
+                            end,
+                            xnc_length(radius, unit, line.record)?,
+                            direction,
+                            line.record,
+                        )?
+                    } else if fields
+                        .keys()
+                        .all(|tag| matches!(tag, b'X' | b'Y' | b'I' | b'J'))
+                        && (fields.contains_key(&b'I') || fields.contains_key(&b'J'))
+                    {
+                        CanonicalPoint::new(
+                            start
+                                .x
+                                .0
+                                .checked_add(fields.get(&b'I').map_or(Ok(0), |value| {
+                                    xnc_length(value, unit, line.record).map(|value| value.0)
+                                })?)
+                                .ok_or_else(|| xnc_error(line.record, "arc-center-overflow"))?,
+                            start
+                                .y
+                                .0
+                                .checked_add(fields.get(&b'J').map_or(Ok(0), |value| {
+                                    xnc_length(value, unit, line.record).map(|value| value.0)
+                                })?)
+                                .ok_or_else(|| xnc_error(line.record, "arc-center-overflow"))?,
+                        )
+                    } else {
+                        return Err(xnc_error(line.record, "arc-without-radius-or-center"));
+                    };
+                    let resolution =
+                        SourceNumericFormat::new(unit, max_integer_digits, max_decimal_digits)
+                            .map_err(XncParseError::Canonical)?
+                            .resolution;
+                    if !valid_single_quadrant_arc(start, end, center, direction, resolution) {
+                        return Err(xnc_error(line.record, "invalid-arc-geometry"));
+                    }
+                    segments.push(ContourSegment::Arc(CanonicalArc {
+                        start,
+                        end,
+                        center,
+                        direction,
+                        quadrant: QuadrantMode::Single,
+                        width,
+                        source_resolution: resolution,
+                    }));
+                }
+                drill_route_units += 1;
+                position = Some(end);
+            }
+            _ if line.text.starts_with(['X', 'Y']) => {
+                if route.is_some() {
+                    return Err(xnc_error(line.record, "drill-inside-route"));
+                }
+                let (point, integer, decimal) = xnc_point(&line.text, unit, line.record)?;
+                max_integer_digits = max_integer_digits.max(integer);
+                max_decimal_digits = max_decimal_digits.max(decimal);
+                let tool = tools
+                    .get(&selected.ok_or_else(|| xnc_error(line.record, "drill-without-tool"))?)
+                    .ok_or_else(|| xnc_error(line.record, "drill-without-tool"))?;
+                let diameter = tool
+                    .diameter
+                    .ok_or_else(|| xnc_error(line.record, "drill-tool-without-diameter"))?;
+                features.push(xnc_feature(
+                    &document_id,
+                    &primary_layer_id,
+                    &tool.id,
+                    Geometry::Drill(DrillFeature {
+                        position: point,
+                        diameter,
+                        tool_id: tool.id.clone(),
+                    }),
+                    xnc_provenance(&document_id, &input.artifact_digest, line),
+                ));
+                position = Some(point);
+                drills += 1;
+                drill_route_units += 1;
+            }
+            _ => {
+                return Err(XncParseError::Unsupported {
+                    record: line.record,
+                    command: bounded_command(&line.text),
+                });
+            }
+        }
+        if drill_route_units > MANUFACTURING_LIMITS.drill_route_features {
+            return Err(XncParseError::Resource {
+                resource: "drill-route-features",
+                observed: drill_route_units as u64,
+                limit: MANUFACTURING_LIMITS.drill_route_features as u64,
+            });
+        }
+    }
+    if !terminated {
+        return Err(xnc_error(lines.len() as u64, "missing-m30"));
+    }
+    if route.is_some() {
+        return Err(xnc_error(lines.len() as u64, "unclosed-route"));
+    }
+    let numeric_format = SourceNumericFormat::new(unit, max_integer_digits, max_decimal_digits)
+        .map_err(XncParseError::Canonical)?;
+    let mut max_record_text = 0_usize;
+    for line in &lines {
+        check_xnc_deadline(deadline, "xnc-document-metrics")?;
+        max_record_text = max_record_text.max(line.text.len());
+    }
+    let document = ManufacturingDocument {
+        id: document_id.clone(),
+        virtual_path: input.virtual_path.clone(),
+        artifact_digest: input.artifact_digest.clone(),
+        format: DocumentFormat::Excellon,
+        adapter: "ratemypcb-xnc".into(),
+        adapter_version: XNC_ADAPTER_VERSION.into(),
+        parse_status: ParseStatus::Complete,
+        numeric_format: Some(numeric_format),
+        metrics: DocumentMetrics {
+            raw_bytes: input.size,
+            records: lines.len() as u64,
+            lexical_tokens,
+            metadata_bytes,
+            max_line_bytes,
+            max_text_bytes,
+            max_numeric_bytes: MANUFACTURING_LIMITS.max_numeric_bytes.min(max_record_text),
+            ..DocumentMetrics::default()
+        },
+    };
+    let outcome = ManufacturingInputOutcome {
+        id: input_outcome_id(
+            &input.virtual_path,
+            Some(&input.artifact_digest),
+            ManufacturingKindCandidate::Excellon,
+        ),
+        virtual_path: input.virtual_path.clone(),
+        artifact_digest: Some(input.artifact_digest.clone()),
+        kind_candidate: ManufacturingKindCandidate::Excellon,
+        size: input.size,
+        state: ManufacturingLoadState::Retained,
+        reason: None,
+    };
+    let capability_provenance = file_function
+        .as_ref()
+        .map(|function| &function.provenance)
+        .unwrap_or(&base_provenance);
+    let mut capabilities = Vec::new();
+    let mut push_capability = |id, state, detail| {
+        capabilities.push(semantic_capability(
+            id,
+            state,
+            Authority::Explicit,
+            &document_id,
+            Some(capability_provenance),
+            detail,
+        ));
+    };
+    push_capability(
+        CapabilityId::DocumentSyntax,
+        CapabilityState::Complete,
+        "Strict framed XNC state completed through one M30.",
+    );
+    push_capability(
+        CapabilityId::UnitsAndFormat,
+        CapabilityState::Complete,
+        "Every coordinate uses an explicit decimal under an explicit unit.",
+    );
+    push_capability(
+        CapabilityId::Tools,
+        CapabilityState::Complete,
+        "Every selected finished tool was uniquely defined.",
+    );
+    push_capability(
+        CapabilityId::Drills,
+        if drills > 0 {
+            CapabilityState::Complete
+        } else {
+            CapabilityState::NotProvided
+        },
+        "All drill hits retain tool and finished diameter.",
+    );
+    push_capability(
+        CapabilityId::Routes,
+        if routes > 0 {
+            CapabilityState::Complete
+        } else {
+            CapabilityState::NotProvided
+        },
+        "All bounded linear and arc route segments are retained.",
+    );
+    push_capability(
+        CapabilityId::Slots,
+        if slots > 0 {
+            CapabilityState::Complete
+        } else {
+            CapabilityState::NotProvided
+        },
+        "All G85 slots retain start, end, width, and tool.",
+    );
+    push_capability(
+        CapabilityId::Plating,
+        if file_function
+            .as_ref()
+            .is_some_and(|function| function.plating != Plating::Unknown)
+        {
+            CapabilityState::Complete
+        } else {
+            CapabilityState::NotProvided
+        },
+        "Plating is complete only from explicit FileFunction.",
+    );
+    push_capability(
+        CapabilityId::LayerSpans,
+        if span_ids.is_some() {
+            CapabilityState::Complete
+        } else {
+            CapabilityState::NotProvided
+        },
+        "Layer span is complete only from explicit FileFunction endpoints.",
+    );
+    push_capability(
+        CapabilityId::Extents,
+        if features.is_empty() {
+            CapabilityState::NotProvided
+        } else {
+            CapabilityState::Complete
+        },
+        "Fixed-point drill/slot/route extents are deterministic.",
+    );
+    capabilities.sort_by_key(|capability| capability.id);
+    let extents = xnc_physical_bounds(&features, deadline)?.extent();
+    let x2_attributes = if let Some(function) = &file_function {
+        let mut attribute = scoped_x2_attribute(
+            &document_id,
+            X2AttributeScope::File,
+            X2AttributeKind::FileFunction,
+            function
+                .raw
+                .strip_prefix("TF.FileFunction,")
+                .expect("canonical FileFunction prefix")
+                .split(',')
+                .map(str::to_owned)
+                .collect(),
+            false,
+            function.provenance.clone(),
+        );
+        attribute.target_ids.push(document_id.clone());
+        attribute.id = scoped_x2_attribute_id_with_deadline(&attribute, deadline)
+            .map_err(XncParseError::Canonical)?;
+        vec![attribute]
+    } else {
+        Vec::new()
+    };
+    let mut ordered_tools = Vec::with_capacity(tools.len());
+    for tool in tools.into_values() {
+        check_xnc_deadline(deadline, "xnc-tool-order")?;
+        ordered_tools.push(tool);
+    }
+    let mut review =
+        FabricationReview::empty_with_deadline(deadline).map_err(XncParseError::Canonical)?;
+    review.status = FabricationStatus::Partial;
+    review.input_outcomes = vec![outcome];
+    review.documents = vec![document];
+    review.layers = layers;
+    review.tools = ordered_tools;
+    review.features = features;
+    review.x2_attributes = x2_attributes;
+    review.capabilities = CapabilityLedger {
+        records: capabilities,
+    };
+    review.physical_bounds =
+        derive_release_physical_bounds(&review, ReconciliationBudget { deadline })
+            .map_err(XncParseError::Canonical)?;
+    review
+        .refresh_digests_with_deadline(deadline)
+        .map_err(XncParseError::Canonical)?;
+    review
+        .validate_with_deadline(deadline)
+        .map_err(XncParseError::Canonical)?;
+    check_xnc_deadline(deadline, "xnc-canonicalization")?;
+    Ok(XncProduction {
+        review,
+        dialect,
+        file_function,
+        extents,
+    })
+}
+
+pub const GERBER_JOB_ADAPTER_VERSION: &str = "gerber-job-2023.06-ratemypcb-1";
+
+#[derive(Clone, Debug)]
+pub struct GerberJobReference {
+    pub virtual_path: String,
+    pub document_id: String,
+    pub file_function: PackageFileFunction,
+    pub provenance: ManufacturingProvenance,
+}
+
+#[derive(Clone, Debug)]
+pub struct GerberJobProduction {
+    pub document: ManufacturingDocument,
+    pub product: Option<ProductIdentity>,
+    pub references: Vec<GerberJobReference>,
+    pub unsupported_fields: Vec<String>,
+}
+
+#[derive(Debug)]
+pub enum GerberJobParseError {
+    Resource {
+        resource: &'static str,
+        observed: u64,
+        limit: u64,
+    },
+    Invalid {
+        reason: String,
+    },
+    Deadline,
+    Canonical(FabricationError),
+}
+
+impl std::fmt::Display for GerberJobParseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for GerberJobParseError {}
+
+struct UniqueJson(Value);
+
+impl<'de> Deserialize<'de> for UniqueJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct UniqueVisitor;
+
+        impl<'de> Visitor<'de> for UniqueVisitor {
+            type Value = UniqueJson;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("JSON without duplicate object keys")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(UniqueJson(Value::Bool(value)))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(UniqueJson(Value::Number(value.into())))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(UniqueJson(Value::Number(value.into())))
+            }
+
+            fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                serde_json::Number::from_f64(value)
+                    .map(Value::Number)
+                    .map(UniqueJson)
+                    .ok_or_else(|| E::custom("non-finite JSON number"))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(UniqueJson(Value::String(value.into())))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+                Ok(UniqueJson(Value::String(value)))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(UniqueJson(Value::Null))
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(UniqueJson(Value::Null))
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                UniqueJson::deserialize(deserializer)
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::new();
+                while let Some(value) = sequence.next_element::<UniqueJson>()? {
+                    values.push(value.0);
+                }
+                Ok(UniqueJson(Value::Array(values)))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut values = serde_json::Map::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if values.contains_key(&key) {
+                        return Err(A::Error::custom(format!("duplicate JSON key: {key}")));
+                    }
+                    values.insert(key, map.next_value::<UniqueJson>()?.0);
+                }
+                Ok(UniqueJson(Value::Object(values)))
+            }
+        }
+
+        deserializer.deserialize_any(UniqueVisitor)
+    }
+}
+
+#[derive(Default)]
+struct JsonMetrics {
+    nodes: u64,
+    text_bytes: u64,
+    max_text_bytes: usize,
+    max_depth: u8,
+}
+
+fn note_json_text(text: &str, metrics: &mut JsonMetrics) -> Result<(), GerberJobParseError> {
+    if text.len() > MANUFACTURING_LIMITS.max_text_bytes || text.chars().any(char::is_control) {
+        return Err(GerberJobParseError::Resource {
+            resource: "json-text",
+            observed: text.len() as u64,
+            limit: MANUFACTURING_LIMITS.max_text_bytes as u64,
+        });
+    }
+    metrics.text_bytes =
+        metrics
+            .text_bytes
+            .checked_add(text.len() as u64)
+            .ok_or(GerberJobParseError::Resource {
+                resource: "json-metadata",
+                observed: u64::MAX,
+                limit: MANUFACTURING_LIMITS.metadata_bytes_per_file,
+            })?;
+    metrics.max_text_bytes = metrics.max_text_bytes.max(text.len());
+    if metrics.text_bytes > MANUFACTURING_LIMITS.metadata_bytes_per_file {
+        return Err(GerberJobParseError::Resource {
+            resource: "json-metadata",
+            observed: metrics.text_bytes,
+            limit: MANUFACTURING_LIMITS.metadata_bytes_per_file,
+        });
+    }
+    Ok(())
+}
+
+fn measure_json(
+    value: &Value,
+    depth: u8,
+    metrics: &mut JsonMetrics,
+    deadline: ManufacturingDeadline,
+) -> Result<(), GerberJobParseError> {
+    deadline
+        .check("job-json-metrics")
+        .map_err(|_| GerberJobParseError::Deadline)?;
+    if depth > MANUFACTURING_LIMITS.max_nesting {
+        return Err(GerberJobParseError::Resource {
+            resource: "json-depth",
+            observed: u64::from(depth),
+            limit: u64::from(MANUFACTURING_LIMITS.max_nesting),
+        });
+    }
+    metrics.max_depth = metrics.max_depth.max(depth);
+    metrics.nodes = metrics
+        .nodes
+        .checked_add(1)
+        .ok_or(GerberJobParseError::Resource {
+            resource: "json-nodes",
+            observed: u64::MAX,
+            limit: MANUFACTURING_LIMITS.records_per_file,
+        })?;
+    if metrics.nodes > MANUFACTURING_LIMITS.records_per_file {
+        return Err(GerberJobParseError::Resource {
+            resource: "json-nodes",
+            observed: metrics.nodes,
+            limit: MANUFACTURING_LIMITS.records_per_file,
+        });
+    }
+    match value {
+        Value::String(text) => note_json_text(text, metrics)?,
+        Value::Array(values) => {
+            for value in values {
+                measure_json(value, depth + 1, metrics, deadline)?;
+            }
+        }
+        Value::Object(values) => {
+            for (key, value) in values {
+                note_json_text(key, metrics)?;
+                measure_json(value, depth + 1, metrics, deadline)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn job_provenance(
+    document_id: &str,
+    digest: &str,
+    input_size: u64,
+    record: u64,
+) -> ManufacturingProvenance {
+    ManufacturingProvenance {
+        document_id: document_id.into(),
+        artifact_digest: digest.into(),
+        producer: "ratemypcb-gerber-job".into(),
+        producer_version: GERBER_JOB_ADAPTER_VERSION.into(),
+        location: StructuralLocation {
+            record,
+            subrecord: None,
+            byte_start: 0,
+            byte_end: input_size.saturating_sub(1),
+        },
+        source_lexeme: None,
+    }
+}
+
+fn resolve_job_path(job_path: &str, reference: &str) -> Option<String> {
+    if reference.is_empty()
+        || !reference.is_ascii()
+        || reference.starts_with('/')
+        || reference.contains(['\\', ':'])
+        || reference
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
+    {
+        return None;
+    }
+    let directory = job_path.rsplit_once('/').map(|(directory, _)| directory);
+    let path = directory.map_or_else(
+        || reference.to_owned(),
+        |directory| format!("{directory}/{reference}"),
+    );
+    valid_virtual_path(&path).then_some(path)
+}
+
+pub fn parse_gerber_job_document(
+    input: &ManufacturingInput,
+    inventory: &ManufacturingInventory,
+) -> Result<GerberJobProduction, GerberJobParseError> {
+    parse_gerber_job_document_with_timeout(
+        input,
+        inventory,
+        Duration::from_millis(MANUFACTURING_LIMITS.file_timeout_ms),
+    )
+}
+
+fn parse_gerber_job_document_with_timeout(
+    input: &ManufacturingInput,
+    inventory: &ManufacturingInventory,
+    timeout: Duration,
+) -> Result<GerberJobProduction, GerberJobParseError> {
+    parse_gerber_job_document_with_deadline(
+        input,
+        inventory,
+        ManufacturingDeadline::from_timeout(timeout).for_input(input),
+    )
+}
+
+fn parse_gerber_job_document_with_deadline(
+    input: &ManufacturingInput,
+    inventory: &ManufacturingInventory,
+    deadline: ManufacturingDeadline,
+) -> Result<GerberJobProduction, GerberJobParseError> {
+    let digest = sha256_with_deadline(&input.original_bytes, deadline, "job-input-hash").map_err(
+        |error| match error {
+            FabricationError::LimitExceeded { .. } => GerberJobParseError::Deadline,
+            error => GerberJobParseError::Canonical(error),
+        },
+    )?;
+    if input.kind_candidate != ManufacturingKindCandidate::GerberJob
+        || input.size != input.original_bytes.len() as u64
+        || input.artifact_digest != digest
+        || !valid_virtual_path(&input.virtual_path)
+    {
+        return Err(GerberJobParseError::Invalid {
+            reason: "invalid-job-input-identity".into(),
+        });
+    }
+    inventory
+        .validate_with_deadline(deadline)
+        .map_err(GerberJobParseError::Canonical)?;
+    // Portable Job identity is intentionally ASCII-only: unsupported Unicode normalization
+    // forms fail closed instead of comparing differently across filesystems.
+    if !input.virtual_path.is_ascii()
+        || inventory
+            .outcomes
+            .iter()
+            .any(|outcome| !outcome.virtual_path.is_ascii())
+    {
+        return Err(GerberJobParseError::Invalid {
+            reason: "non-portable-job-path".into(),
+        });
+    }
+    check_xnc_deadline(deadline, "job-json").map_err(|_| GerberJobParseError::Deadline)?;
+    let reader = GerberDeadlineReader {
+        cursor: Cursor::new(input.original_bytes.as_slice()),
+        deadline,
+    };
+    let mut deserializer =
+        serde_json::Deserializer::from_reader(BufReader::with_capacity(4096, reader));
+    let value = UniqueJson::deserialize(&mut deserializer)
+        .map_err(|error| {
+            if deadline.check("job-json").is_err() {
+                GerberJobParseError::Deadline
+            } else {
+                GerberJobParseError::Invalid {
+                    reason: format!("invalid-job-json:{error}"),
+                }
+            }
+        })?
+        .0;
+    deserializer.end().map_err(|error| {
+        if deadline.check("job-json").is_err() {
+            GerberJobParseError::Deadline
+        } else {
+            GerberJobParseError::Invalid {
+                reason: format!("trailing-job-json:{error}"),
+            }
+        }
+    })?;
+    let mut metrics = JsonMetrics::default();
+    measure_json(&value, 0, &mut metrics, deadline)?;
+    let root = value
+        .as_object()
+        .ok_or_else(|| GerberJobParseError::Invalid {
+            reason: "job-root-not-object".into(),
+        })?;
+    let job_document_id = document_id(&input.artifact_digest, DocumentFormat::GerberJob)
+        .map_err(GerberJobParseError::Canonical)?;
+    let mut unsupported_fields = root
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "Header" | "GeneralSpecs" | "FilesAttributes"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let header = root
+        .get("Header")
+        .and_then(Value::as_object)
+        .ok_or_else(|| GerberJobParseError::Invalid {
+            reason: "missing-or-invalid-header".into(),
+        })?;
+    unsupported_fields.extend(
+        header
+            .keys()
+            .filter(|key| key.as_str() != "GenerationSoftware")
+            .map(|key| format!("Header.{key}")),
+    );
+    let generation = header
+        .get("GenerationSoftware")
+        .and_then(Value::as_object)
+        .ok_or_else(|| GerberJobParseError::Invalid {
+            reason: "missing-or-invalid-generation-software".into(),
+        })?;
+    unsupported_fields.extend(
+        generation
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "Vendor" | "Application" | "Version"))
+            .map(|key| format!("Header.GenerationSoftware.{key}")),
+    );
+    for field in ["Vendor", "Application", "Version"] {
+        if generation
+            .get(field)
+            .and_then(Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(GerberJobParseError::Invalid {
+                reason: format!("invalid-generation-software-{field}"),
+            });
+        }
+    }
+    let general = root
+        .get("GeneralSpecs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| GerberJobParseError::Invalid {
+            reason: "missing-or-invalid-general-specs".into(),
+        })?;
+    unsupported_fields.extend(
+        general
+            .keys()
+            .filter(|key| key.as_str() != "ProjectId")
+            .map(|key| format!("GeneralSpecs.{key}")),
+    );
+    let project = general
+        .get("ProjectId")
+        .and_then(Value::as_object)
+        .ok_or_else(|| GerberJobParseError::Invalid {
+            reason: "missing-or-invalid-project-id".into(),
+        })?;
+    unsupported_fields.extend(
+        project
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "Name" | "Revision" | "PartNumber"))
+            .map(|key| format!("GeneralSpecs.ProjectId.{key}")),
+    );
+    let identity = |field: &str| -> Result<Option<String>, GerberJobParseError> {
+        match project.get(field) {
+            None => Ok(None),
+            Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
+            _ => Err(GerberJobParseError::Invalid {
+                reason: format!("invalid-project-id-{field}"),
+            }),
+        }
+    };
+    let product_provenance =
+        job_provenance(&job_document_id, &input.artifact_digest, input.size, 0);
+    let product = ProductIdentity {
+        name: identity("Name")?,
+        revision: identity("Revision")?,
+        part_number: identity("PartNumber")?,
+        authority: Authority::Explicit,
+        provenance: vec![product_provenance.clone()],
+    };
+    if product.name.is_none() && product.revision.is_none() && product.part_number.is_none() {
+        return Err(GerberJobParseError::Invalid {
+            reason: "empty-project-identity".into(),
+        });
+    }
+    let product = Some(product);
+    let files = root
+        .get("FilesAttributes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| GerberJobParseError::Invalid {
+            reason: "missing-files-attributes".into(),
+        })?;
+    if files.is_empty() || files.len() > MANUFACTURING_LIMITS.recognized_files {
+        return Err(GerberJobParseError::Resource {
+            resource: "job-file-references",
+            observed: files.len() as u64,
+            limit: MANUFACTURING_LIMITS.recognized_files as u64,
+        });
+    }
+    let mut inventory_paths = BTreeMap::<String, &ManufacturingInputOutcome>::new();
+    for outcome in &inventory.outcomes {
+        let folded = outcome.virtual_path.to_ascii_lowercase();
+        if inventory_paths.insert(folded, outcome).is_some() {
+            return Err(GerberJobParseError::Invalid {
+                reason: "case-conflicting-inventory-path".into(),
+            });
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let mut references = Vec::new();
+    for (index, entry) in files.iter().enumerate() {
+        check_xnc_deadline(deadline, "job-references")
+            .map_err(|_| GerberJobParseError::Deadline)?;
+        let object = entry
+            .as_object()
+            .ok_or_else(|| GerberJobParseError::Invalid {
+                reason: "job-file-reference-not-object".into(),
+            })?;
+        unsupported_fields.extend(
+            object
+                .keys()
+                .filter(|key| !matches!(key.as_str(), "Path" | "FileFunction"))
+                .map(|key| format!("FilesAttributes[{index}].{key}")),
+        );
+        let reference = object.get("Path").and_then(Value::as_str).ok_or_else(|| {
+            GerberJobParseError::Invalid {
+                reason: "job-reference-without-path".into(),
+            }
+        })?;
+        let virtual_path = resolve_job_path(&input.virtual_path, reference).ok_or_else(|| {
+            GerberJobParseError::Invalid {
+                reason: format!("unsafe-job-reference:{reference}"),
+            }
+        })?;
+        if !seen.insert(virtual_path.to_ascii_lowercase()) {
+            return Err(GerberJobParseError::Invalid {
+                reason: format!("duplicate-job-reference:{virtual_path}"),
+            });
+        }
+        let outcome = inventory_paths
+            .get(&virtual_path.to_ascii_lowercase())
+            .copied()
+            .ok_or_else(|| GerberJobParseError::Invalid {
+                reason: format!("dangling-job-reference:{virtual_path}"),
+            })?;
+        if outcome.virtual_path != virtual_path
+            || outcome.state != ManufacturingLoadState::Retained
+            || outcome.kind_candidate == ManufacturingKindCandidate::GerberJob
+        {
+            return Err(GerberJobParseError::Invalid {
+                reason: format!("wrong-kind-or-case-job-reference:{virtual_path}"),
+            });
+        }
+        let raw_function = object
+            .get("FileFunction")
+            .and_then(Value::as_str)
+            .ok_or_else(|| GerberJobParseError::Invalid {
+                reason: format!("job-reference-without-file-function:{virtual_path}"),
+            })?;
+        if raw_function.starts_with("TF.FileFunction,") {
+            return Err(GerberJobParseError::Invalid {
+                reason: format!("prefixed-job-file-function:{virtual_path}"),
+            });
+        }
+        let provenance = job_provenance(
+            &job_document_id,
+            &input.artifact_digest,
+            input.size,
+            index as u64 + 1,
+        );
+        let function = package_file_function(&X2Attribute {
+            name: "TF.FileFunction".into(),
+            values: raw_function.split(',').map(str::to_owned).collect(),
+            provenance: provenance.clone(),
+        })
+        .map_err(GerberJobParseError::Canonical)?;
+        let format = match outcome.kind_candidate {
+            ManufacturingKindCandidate::Gerber => DocumentFormat::Gerber,
+            ManufacturingKindCandidate::Excellon => DocumentFormat::Excellon,
+            ManufacturingKindCandidate::GerberJob => {
+                return Err(GerberJobParseError::Invalid {
+                    reason: format!("recursive-job-reference:{virtual_path}"),
+                });
+            }
+        };
+        let compatible = match format {
+            DocumentFormat::Gerber => matches!(
+                function.role,
+                LayerRole::Copper
+                    | LayerRole::SolderMask
+                    | LayerRole::Paste
+                    | LayerRole::Legend
+                    | LayerRole::Profile
+                    | LayerRole::Route
+            ),
+            DocumentFormat::Excellon => {
+                matches!(function.role, LayerRole::DrillMap | LayerRole::Route)
+            }
+            _ => false,
+        };
+        if !compatible {
+            return Err(GerberJobParseError::Invalid {
+                reason: format!("incompatible-job-file-function:{virtual_path}"),
+            });
+        }
+        let artifact_digest =
+            outcome
+                .artifact_digest
+                .as_deref()
+                .ok_or_else(|| GerberJobParseError::Invalid {
+                    reason: format!("job-reference-without-digest:{virtual_path}"),
+                })?;
+        references.push(GerberJobReference {
+            virtual_path,
+            document_id: document_id(artifact_digest, format)
+                .map_err(GerberJobParseError::Canonical)?,
+            file_function: function,
+            provenance,
+        });
+    }
+    unsupported_fields.sort();
+    unsupported_fields.dedup();
+    let mut max_line_bytes = 0;
+    for line in input.original_bytes.split(|byte| *byte == b'\n') {
+        check_xnc_deadline(deadline, "job-line-scan").map_err(|_| GerberJobParseError::Deadline)?;
+        max_line_bytes = max_line_bytes.max(line.strip_suffix(b"\r").unwrap_or(line).len());
+    }
+    if max_line_bytes > MANUFACTURING_LIMITS.max_line_bytes {
+        return Err(GerberJobParseError::Resource {
+            resource: "job-line-bytes",
+            observed: max_line_bytes as u64,
+            limit: MANUFACTURING_LIMITS.max_line_bytes as u64,
+        });
+    }
+    check_xnc_deadline(deadline, "job-canonicalization")
+        .map_err(|_| GerberJobParseError::Deadline)?;
+    Ok(GerberJobProduction {
+        document: ManufacturingDocument {
+            id: job_document_id,
+            virtual_path: input.virtual_path.clone(),
+            artifact_digest: input.artifact_digest.clone(),
+            format: DocumentFormat::GerberJob,
+            adapter: "ratemypcb-gerber-job".into(),
+            adapter_version: GERBER_JOB_ADAPTER_VERSION.into(),
+            parse_status: if unsupported_fields.is_empty() {
+                ParseStatus::Complete
+            } else {
+                ParseStatus::Partial
+            },
+            numeric_format: None,
+            metrics: DocumentMetrics {
+                raw_bytes: input.size,
+                records: metrics.nodes,
+                lexical_tokens: metrics.nodes,
+                metadata_bytes: metrics.text_bytes,
+                max_line_bytes,
+                max_text_bytes: metrics.max_text_bytes,
+                max_nesting: metrics.max_depth,
+                ..DocumentMetrics::default()
+            },
+        },
+        product,
+        references,
+        unsupported_fields,
+    })
+}
+
+#[derive(Debug)]
+pub enum PackageParseError {
+    Input { path: String, reason: String },
+    Canonical(FabricationError),
+    Deadline,
+}
+
+impl std::fmt::Display for PackageParseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for PackageParseError {}
+
+fn same_function(left: &PackageFileFunction, right: &PackageFileFunction) -> bool {
+    left.role == right.role
+        && left.side == right.side
+        && left.order == right.order
+        && left.plating == right.plating
+        && left.from_layer == right.from_layer
+        && left.to_layer == right.to_layer
+        && left.qualifier == right.qualifier
+        && left.operation == right.operation
+}
+
+fn job_file_function_fact_id(fact: &JobFileFunctionFact) -> String {
+    stable_id(
+        "job-file-function",
+        &(
+            &fact.job_document_id,
+            &fact.job_artifact_digest,
+            &fact.referenced_virtual_path,
+            &fact.referenced_document_id,
+            &fact.referenced_artifact_digest,
+            &fact.fields,
+            fact.role,
+            fact.side,
+            fact.order,
+            fact.plating,
+            fact.from_layer,
+            fact.to_layer,
+            &fact.qualifier,
+            &fact.operation,
+            &fact.provenance.location,
+        ),
+    )
+    .expect("Job FileFunction identity serializes")
+}
+
+fn job_file_function_fact_id_with_deadline(
+    fact: &JobFileFunctionFact,
+    deadline: ManufacturingDeadline,
+) -> Result<String, FabricationError> {
+    stable_id_with_deadline(
+        deadline,
+        "job-file-function-identity",
+        "job-file-function",
+        &(
+            &fact.job_document_id,
+            &fact.job_artifact_digest,
+            &fact.referenced_virtual_path,
+            &fact.referenced_document_id,
+            &fact.referenced_artifact_digest,
+            &fact.fields,
+            fact.role,
+            fact.side,
+            fact.order,
+            fact.plating,
+            fact.from_layer,
+            fact.to_layer,
+            &fact.qualifier,
+            &fact.operation,
+            &fact.provenance.location,
+        ),
+    )
+}
+
+fn retained_job_file_function(
+    job: &ManufacturingDocument,
+    referenced: &ManufacturingDocument,
+    reference: &GerberJobReference,
+) -> JobFileFunctionFact {
+    let function = &reference.file_function;
+    let mut fact = JobFileFunctionFact {
+        id: String::new(),
+        job_document_id: job.id.clone(),
+        job_artifact_digest: job.artifact_digest.clone(),
+        referenced_virtual_path: reference.virtual_path.clone(),
+        referenced_document_id: referenced.id.clone(),
+        referenced_artifact_digest: referenced.artifact_digest.clone(),
+        fields: function
+            .raw
+            .strip_prefix("TF.FileFunction,")
+            .expect("canonical FileFunction prefix")
+            .split(',')
+            .map(str::to_owned)
+            .collect(),
+        role: function.role,
+        side: function.side,
+        order: function.order,
+        plating: function.plating,
+        from_layer: function.from_layer,
+        to_layer: function.to_layer,
+        qualifier: function.qualifier.clone(),
+        operation: function.operation.clone(),
+        omission: None,
+        conflict_ids: Vec::new(),
+        provenance: reference.provenance.clone(),
+    };
+    fact.id = job_file_function_fact_id(&fact);
+    fact
+}
+
+fn integration_outcome_id(outcome: &IntegratedReconciliationOutcome) -> String {
+    stable_id(
+        "integration-outcome",
+        &(
+            outcome.state,
+            &outcome.attempted_native_path,
+            &outcome.attempted_native_digest,
+            &outcome.reason,
+        ),
+    )
+    .expect("integration outcome identity serializes")
+}
+
+fn append_review(target: &mut FabricationReview, mut source: FabricationReview) {
+    target.documents.append(&mut source.documents);
+    target.layers.append(&mut source.layers);
+    target.tools.append(&mut source.tools);
+    target.apertures.append(&mut source.apertures);
+    target.macros.append(&mut source.macros);
+    target.blocks.append(&mut source.blocks);
+    target.repetitions.append(&mut source.repetitions);
+    target.features.append(&mut source.features);
+    target.physical_bounds.append(&mut source.physical_bounds);
+    target.connectivity.append(&mut source.connectivity);
+    target.x2_attributes.append(&mut source.x2_attributes);
+    target
+        .job_file_functions
+        .append(&mut source.job_file_functions);
+    target
+        .assembly
+        .placements
+        .append(&mut source.assembly.placements);
+    target
+        .assembly
+        .mask_layer_ids
+        .append(&mut source.assembly.mask_layer_ids);
+    target
+        .assembly
+        .paste_layer_ids
+        .append(&mut source.assembly.paste_layer_ids);
+    target
+        .construction
+        .layers
+        .append(&mut source.construction.layers);
+    target.constraints.append(&mut source.constraints);
+    target.omissions.append(&mut source.omissions);
+    target.conflicts.append(&mut source.conflicts);
+    target.warnings.append(&mut source.warnings);
+}
+
+fn aggregate_capability(
+    id: CapabilityId,
+    state: CapabilityState,
+    authority: Authority,
+    documents: &[&ManufacturingDocument],
+    provenance: &[ManufacturingProvenance],
+    detail: &str,
+) -> CapabilityRecord {
+    CapabilityRecord {
+        id,
+        state,
+        authority,
+        document_ids: if state == CapabilityState::NotProvided {
+            Vec::new()
+        } else {
+            documents
+                .iter()
+                .map(|document| document.id.clone())
+                .collect()
+        },
+        provenance: if state == CapabilityState::NotProvided {
+            Vec::new()
+        } else {
+            provenance.to_vec()
+        },
+        detail: detail.into(),
+    }
+}
+
+fn polygon_cross(a: CanonicalPoint, b: CanonicalPoint, c: CanonicalPoint) -> i128 {
+    (i128::from(b.x.0) - i128::from(a.x.0)) * (i128::from(c.y.0) - i128::from(a.y.0))
+        - (i128::from(b.y.0) - i128::from(a.y.0)) * (i128::from(c.x.0) - i128::from(a.x.0))
+}
+
+fn point_on_segment(point: CanonicalPoint, start: CanonicalPoint, end: CanonicalPoint) -> bool {
+    polygon_cross(start, end, point) == 0
+        && point.x.0 >= start.x.0.min(end.x.0)
+        && point.x.0 <= start.x.0.max(end.x.0)
+        && point.y.0 >= start.y.0.min(end.y.0)
+        && point.y.0 <= start.y.0.max(end.y.0)
+}
+
+fn polygon_segments_intersect(
+    a: CanonicalPoint,
+    b: CanonicalPoint,
+    c: CanonicalPoint,
+    d: CanonicalPoint,
+) -> bool {
+    let crosses = [
+        polygon_cross(a, b, c),
+        polygon_cross(a, b, d),
+        polygon_cross(c, d, a),
+        polygon_cross(c, d, b),
+    ];
+    (crosses[0].signum() != crosses[1].signum() && crosses[2].signum() != crosses[3].signum())
+        || (crosses[0] == 0 && point_on_segment(c, a, b))
+        || (crosses[1] == 0 && point_on_segment(d, a, b))
+        || (crosses[2] == 0 && point_on_segment(a, c, d))
+        || (crosses[3] == 0 && point_on_segment(b, c, d))
+}
+
+fn profile_polygon(
+    feature: &ManufacturingFeature,
+    deadline: ManufacturingDeadline,
+) -> Result<Option<Vec<CanonicalPoint>>, PackageParseError> {
+    deadline
+        .check("package-profile-topology")
+        .map_err(|_| PackageParseError::Deadline)?;
+    if feature.polarity != LayerPolarity::Dark {
+        return Ok(None);
+    }
+    let contour = match &feature.geometry {
+        Geometry::Contour(contour) => contour,
+        Geometry::Region(region) if region.contours.len() == 1 => &region.contours[0],
+        _ => return Ok(None),
+    };
+    if !contour.closed || contour.segments.len() < 3 {
+        return Ok(None);
+    }
+    let mut points = Vec::with_capacity(contour.segments.len());
+    let mut expected = None;
+    for segment in &contour.segments {
+        deadline
+            .check("package-profile-topology")
+            .map_err(|_| PackageParseError::Deadline)?;
+        let ContourSegment::Line(line) = segment else {
+            return Ok(None);
+        };
+        let Ok(start) = feature.transforms.materialize(line.start) else {
+            return Ok(None);
+        };
+        let Ok(end) = feature.transforms.materialize(line.end) else {
+            return Ok(None);
+        };
+        if start.point == end.point || expected.is_some_and(|expected| expected != start.point) {
+            return Ok(None);
+        }
+        points.push(start.point);
+        expected = Some(end.point);
+    }
+    if expected != points.first().copied() || points.len() != 4 {
+        return Ok(None);
+    }
+    for index in 0..points.len() {
+        deadline
+            .check("package-profile-topology")
+            .map_err(|_| PackageParseError::Deadline)?;
+        let next = points[(index + 1) % points.len()];
+        if points[index].x != next.x && points[index].y != next.y {
+            return Ok(None);
+        }
+    }
+    let (Some(min_x), Some(min_y), Some(max_x), Some(max_y)) = (
+        points.iter().map(|point| point.x).min(),
+        points.iter().map(|point| point.y).min(),
+        points.iter().map(|point| point.x).max(),
+        points.iter().map(|point| point.y).max(),
+    ) else {
+        return Ok(None);
+    };
+    if min_x == max_x
+        || min_y == max_y
+        || points.iter().copied().collect::<BTreeSet<_>>()
+            != [
+                CanonicalPoint { x: min_x, y: min_y },
+                CanonicalPoint { x: min_x, y: max_y },
+                CanonicalPoint { x: max_x, y: min_y },
+                CanonicalPoint { x: max_x, y: max_y },
+            ]
+            .into_iter()
+            .collect()
+    {
+        return Ok(None);
+    }
+    let mut area = 0_i128;
+    for index in 0..points.len() {
+        deadline
+            .check("package-profile-topology")
+            .map_err(|_| PackageParseError::Deadline)?;
+        let next = points[(index + 1) % points.len()];
+        area += i128::from(points[index].x.0) * i128::from(next.y.0)
+            - i128::from(points[index].y.0) * i128::from(next.x.0);
+    }
+    if area == 0 {
+        return Ok(None);
+    }
+    for left in 0..points.len() {
+        deadline
+            .check("package-profile-topology")
+            .map_err(|_| PackageParseError::Deadline)?;
+        for right in (left + 1)..points.len() {
+            deadline
+                .check("package-profile-topology")
+                .map_err(|_| PackageParseError::Deadline)?;
+            if right == left + 1 || (left == 0 && right + 1 == points.len()) {
+                continue;
+            }
+            if polygon_segments_intersect(
+                points[left],
+                points[(left + 1) % points.len()],
+                points[right],
+                points[(right + 1) % points.len()],
+            ) {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(points))
+}
+
+fn inferred_function(document: &ManufacturingDocument) -> Option<PackageFileFunction> {
+    let name = document.virtual_path.to_ascii_lowercase();
+    let (role, side, order) = if name.ends_with(".gtl") || name.contains("f_cu") {
+        (LayerRole::Copper, LayerSide::Top, Some(1))
+    } else if name.ends_with(".gbl") || name.contains("b_cu") {
+        (LayerRole::Copper, LayerSide::Bottom, None)
+    } else if name.ends_with(".gko")
+        || name.ends_with(".gm1")
+        || name.contains("profile")
+        || name.contains("edge")
+    {
+        (LayerRole::Profile, LayerSide::NotApplicable, None)
+    } else {
+        return None;
+    };
+    Some(PackageFileFunction {
+        raw: "filename-inference".into(),
+        role,
+        side,
+        order,
+        plating: Plating::Unknown,
+        from_layer: None,
+        to_layer: None,
+        qualifier: None,
+        operation: None,
+        provenance: inventory_provenance(document),
+    })
+}
+
+pub fn analyze_manufacturing_inventory(
+    inventory: &ManufacturingInventory,
+) -> Result<FabricationReview, PackageParseError> {
+    analyze_manufacturing_inventory_with_deadline(
+        inventory,
+        ManufacturingDeadline::for_inventory(
+            inventory,
+            Duration::from_millis(MANUFACTURING_LIMITS.aggregate_timeout_ms),
+        ),
+    )
+}
+
+pub(crate) fn analyze_manufacturing_inventory_with_deadline(
+    inventory: &ManufacturingInventory,
+    deadline: ManufacturingDeadline,
+) -> Result<FabricationReview, PackageParseError> {
+    inventory
+        .validate_with_deadline(deadline)
+        .map_err(|error| match error {
+            FabricationError::LimitExceeded { .. } => PackageParseError::Deadline,
+            error => PackageParseError::Canonical(error),
+        })?;
+    deadline
+        .check("manufacturing-aggregate")
+        .map_err(|_| PackageParseError::Deadline)?;
+    if inventory.inputs.is_empty() {
+        return legacy_inventory_review_with_deadline(inventory, deadline)
+            .map_err(PackageParseError::Canonical);
+    }
+    let mut input_index = BTreeMap::new();
+    for input in &inventory.inputs {
+        deadline
+            .check("manufacturing-input-order")
+            .map_err(|_| PackageParseError::Deadline)?;
+        input_index.insert(input.virtual_path.as_str(), input);
+    }
+    let mut inputs = Vec::with_capacity(input_index.len());
+    for input in input_index.into_values() {
+        deadline
+            .check("manufacturing-input-order")
+            .map_err(|_| PackageParseError::Deadline)?;
+        inputs.push(input);
+    }
+    let mut gerbers = Vec::new();
+    let mut xnc = Vec::new();
+    for input in &inputs {
+        deadline
+            .check("manufacturing-aggregate")
+            .map_err(|_| PackageParseError::Deadline)?;
+        let file_deadline = deadline.for_input(input);
+        match input.kind_candidate {
+            ManufacturingKindCandidate::Gerber => {
+                let mut production = parse_gerber_document_with_deadline(input, file_deadline)
+                    .map(|(production, _, _)| production)
+                    .map_err(|error| PackageParseError::Input {
+                        path: input.virtual_path.clone(),
+                        reason: error.to_string(),
+                    })?;
+                apply_gerber_x2_with_deadline(&mut production, file_deadline)
+                    .map_err(PackageParseError::Canonical)?;
+                gerbers.push(production);
+            }
+            ManufacturingKindCandidate::Excellon => xnc.push(
+                parse_xnc_document_with_deadline(input, file_deadline).map_err(|error| {
+                    PackageParseError::Input {
+                        path: input.virtual_path.clone(),
+                        reason: error.to_string(),
+                    }
+                })?,
+            ),
+            ManufacturingKindCandidate::GerberJob => {}
+        }
+    }
+    let mut jobs = Vec::new();
+    for input in inputs
+        .iter()
+        .copied()
+        .filter(|input| input.kind_candidate == ManufacturingKindCandidate::GerberJob)
+    {
+        deadline
+            .check("manufacturing-aggregate")
+            .map_err(|_| PackageParseError::Deadline)?;
+        jobs.push(
+            parse_gerber_job_document_with_deadline(input, inventory, deadline.for_input(input))
+                .map_err(|error| PackageParseError::Input {
+                    path: input.virtual_path.clone(),
+                    reason: error.to_string(),
+                })?,
+        );
+    }
+    if jobs.len() > 1 {
+        return Err(PackageParseError::Input {
+            path: "manufacturing-inventory".into(),
+            reason: "ambiguous-gerber-job-products".into(),
+        });
+    }
+
+    let mut gerber_capabilities = Vec::with_capacity(gerbers.len());
+    let mut gerber_functions = BTreeMap::new();
+    for production in &gerbers {
+        deadline
+            .check("manufacturing-aggregation")
+            .map_err(|_| PackageParseError::Deadline)?;
+        gerber_capabilities.push(production.review.capabilities.clone());
+        if let Some(function) = &production.file_function {
+            gerber_functions.insert(production.review.documents[0].id.clone(), function.clone());
+        }
+    }
+    let mut xnc_functions = BTreeMap::new();
+    for production in &xnc {
+        deadline
+            .check("manufacturing-aggregation")
+            .map_err(|_| PackageParseError::Deadline)?;
+        if let Some(function) = &production.file_function {
+            xnc_functions.insert(production.review.documents[0].id.clone(), function.clone());
+        }
+    }
+    let mut outcome_index = BTreeMap::new();
+    for outcome in &inventory.outcomes {
+        deadline
+            .check("manufacturing-outcome-order")
+            .map_err(|_| PackageParseError::Deadline)?;
+        outcome_index.insert(outcome.virtual_path.as_str(), outcome.clone());
+    }
+    let mut input_outcomes = Vec::with_capacity(outcome_index.len());
+    for outcome in outcome_index.into_values() {
+        deadline
+            .check("manufacturing-outcome-order")
+            .map_err(|_| PackageParseError::Deadline)?;
+        input_outcomes.push(outcome);
+    }
+    let mut review =
+        FabricationReview::empty_with_deadline(deadline).map_err(PackageParseError::Canonical)?;
+    review.status = FabricationStatus::Partial;
+    review.input_outcomes = input_outcomes;
+    for production in gerbers {
+        append_review(&mut review, production.review);
+    }
+    for production in xnc {
+        append_review(&mut review, production.review);
+    }
+    let job = jobs.pop();
+    if let Some(job) = &job {
+        review.product = job.product.clone();
+        review.documents.push(job.document.clone());
+        for field in &job.unsupported_fields {
+            let provenance = inventory_provenance(&job.document);
+            review.omissions.push(Omission {
+                id: stable_id(
+                    "omission",
+                    &("gerber-job-unsupported-field", field, &provenance.location),
+                )
+                .map_err(PackageParseError::Canonical)?,
+                kind: OmissionKind::UnsupportedRecord,
+                affected_capabilities: vec![CapabilityId::PackageCompleteness],
+                provenance,
+                detail: format!(
+                    "Gerber Job field {field} is outside the exact supported 2023.06 subset."
+                ),
+            });
+        }
+    }
+
+    if let Some(job) = &job {
+        for reference in &job.references {
+            deadline
+                .check("manufacturing-job-authority")
+                .map_err(|_| PackageParseError::Deadline)?;
+            let mut referenced = None;
+            for document in &review.documents {
+                deadline
+                    .check("manufacturing-job-authority")
+                    .map_err(|_| PackageParseError::Deadline)?;
+                if document.id == reference.document_id {
+                    referenced = Some(document);
+                    break;
+                }
+            }
+            let referenced = referenced.ok_or_else(|| PackageParseError::Input {
+                path: reference.virtual_path.clone(),
+                reason: "dangling-retained-job-reference".into(),
+            })?;
+            review.job_file_functions.push(retained_job_file_function(
+                &job.document,
+                referenced,
+                reference,
+            ));
+        }
+        let mut ordered = BTreeMap::new();
+        for fact in std::mem::take(&mut review.job_file_functions) {
+            deadline
+                .check("manufacturing-job-authority-order")
+                .map_err(|_| PackageParseError::Deadline)?;
+            ordered.insert(fact.referenced_document_id.clone(), fact);
+        }
+        for fact in ordered.into_values() {
+            deadline
+                .check("manufacturing-job-authority-order")
+                .map_err(|_| PackageParseError::Deadline)?;
+            review.job_file_functions.push(fact);
+        }
+    }
+
+    let mut role_conflicts = Vec::new();
+    let mut job_references = BTreeMap::new();
+    if let Some(job) = &job {
+        for reference in &job.references {
+            deadline
+                .check("manufacturing-aggregation")
+                .map_err(|_| PackageParseError::Deadline)?;
+            job_references.insert(reference.document_id.clone(), reference);
+        }
+    }
+    let mut target_document_ids = Vec::new();
+    for document in &review.documents {
+        deadline
+            .check("manufacturing-aggregation")
+            .map_err(|_| PackageParseError::Deadline)?;
+        if document.format != DocumentFormat::GerberJob {
+            target_document_ids.push(document.id.clone());
+        }
+    }
+    for document_id in &target_document_ids {
+        deadline
+            .check("manufacturing-aggregation")
+            .map_err(|_| PackageParseError::Deadline)?;
+        let supplied = gerber_functions
+            .get(document_id)
+            .or_else(|| xnc_functions.get(document_id));
+        if let Some(reference) = job_references.get(document_id) {
+            if let Some(supplied) =
+                supplied.filter(|supplied| !same_function(supplied, &reference.file_function))
+            {
+                let conflict_id = stable_id(
+                    "conflict",
+                    &(
+                        document_id,
+                        "x2-job-file-function",
+                        &supplied.provenance.location,
+                        &reference.provenance.location,
+                    ),
+                )
+                .map_err(PackageParseError::Canonical)?;
+                let mut retained_fact = None;
+                for fact in &mut review.job_file_functions {
+                    deadline
+                        .check("manufacturing-aggregation")
+                        .map_err(|_| PackageParseError::Deadline)?;
+                    if fact.referenced_document_id == *document_id {
+                        retained_fact = Some(fact);
+                        break;
+                    }
+                }
+                retained_fact
+                    .expect("parsed Job reference retained")
+                    .conflict_ids
+                    .push(conflict_id.clone());
+                role_conflicts.push(Conflict {
+                    id: conflict_id,
+                    kind: ConflictKind::LayerRole,
+                    affected_capabilities: vec![CapabilityId::LayerRoles],
+                    left: ConflictFact {
+                        canonical_value: supplied.raw.clone(),
+                        authority: Authority::X2,
+                        provenance: supplied.provenance.clone(),
+                    },
+                    right: ConflictFact {
+                        canonical_value: reference.file_function.raw.clone(),
+                        authority: Authority::Explicit,
+                        provenance: reference.provenance.clone(),
+                    },
+                });
+            } else {
+                rekey_document_layer(
+                    &mut review,
+                    document_id,
+                    &reference.file_function,
+                    Authority::Explicit,
+                    deadline,
+                )
+                .map_err(PackageParseError::Canonical)?;
+            }
+        } else if supplied.is_none() {
+            let mut document = None;
+            for candidate in &review.documents {
+                deadline
+                    .check("manufacturing-aggregation")
+                    .map_err(|_| PackageParseError::Deadline)?;
+                if candidate.id == *document_id {
+                    document = Some(candidate);
+                    break;
+                }
+            }
+            if let Some(function) = document.and_then(inferred_function) {
+                rekey_document_layer(
+                    &mut review,
+                    document_id,
+                    &function,
+                    Authority::FilenameInference,
+                    deadline,
+                )
+                .map_err(PackageParseError::Canonical)?;
+            }
+        }
+    }
+    review.conflicts.extend(role_conflicts);
+
+    let mut gerber_documents = Vec::new();
+    let mut xnc_documents = Vec::new();
+    let mut semantic_documents = Vec::new();
+    let mut all_provenance = Vec::new();
+    let mut gerber_provenance = Vec::new();
+    let mut xnc_provenance = Vec::new();
+    for document in &review.documents {
+        deadline
+            .check("manufacturing-aggregation")
+            .map_err(|_| PackageParseError::Deadline)?;
+        if document.format != DocumentFormat::GerberJob {
+            semantic_documents.push(document);
+            all_provenance.push(inventory_provenance(document));
+        }
+        if document.format == DocumentFormat::Gerber {
+            gerber_documents.push(document);
+            gerber_provenance.push(inventory_provenance(document));
+        }
+        if document.format == DocumentFormat::Excellon {
+            xnc_documents.push(document);
+            xnc_provenance.push(inventory_provenance(document));
+        }
+    }
+
+    let mut mask_layer_ids = Vec::new();
+    let mut paste_layer_ids = Vec::new();
+    for layer in &review.layers {
+        deadline
+            .check("manufacturing-aggregation")
+            .map_err(|_| PackageParseError::Deadline)?;
+        if layer.role == LayerRole::SolderMask {
+            mask_layer_ids.push(layer.id.clone());
+        }
+        if layer.role == LayerRole::Paste {
+            paste_layer_ids.push(layer.id.clone());
+        }
+    }
+    review.assembly.mask_layer_ids = mask_layer_ids;
+    review.assembly.paste_layer_ids = paste_layer_ids;
+    review.physical_bounds =
+        derive_release_physical_bounds(&review, ReconciliationBudget { deadline })
+            .map_err(PackageParseError::Canonical)?;
+    let authoritative = derive_authoritative_states(
+        &review,
+        AuthoritativeReviewKind::Package,
+        ReconciliationBudget { deadline },
+    )
+    .map_err(PackageParseError::Canonical)?;
+    review.profile = authoritative.expected_profile.clone();
+    let package_complete =
+        authoritative.state(CapabilityId::PackageCompleteness) == CapabilityState::Complete;
+    let state = |complete: bool, provided: bool| {
+        if complete {
+            CapabilityState::Complete
+        } else if provided {
+            CapabilityState::Partial
+        } else {
+            CapabilityState::NotProvided
+        }
+    };
+    let mut x2_states = BTreeMap::new();
+    for id in [
+        CapabilityId::X2FileAttributes,
+        CapabilityId::X2ApertureAttributes,
+        CapabilityId::X2ObjectAttributes,
+    ] {
+        let mut any_state = false;
+        let mut all_not_provided = true;
+        let mut all_complete = true;
+        for ledger in &gerber_capabilities {
+            deadline
+                .check("manufacturing-capability-aggregation")
+                .map_err(|_| PackageParseError::Deadline)?;
+            let mut state = CapabilityState::NotProvided;
+            for record in &ledger.records {
+                deadline
+                    .check("manufacturing-capability-aggregation")
+                    .map_err(|_| PackageParseError::Deadline)?;
+                if record.id == id {
+                    state = record.state;
+                    break;
+                }
+            }
+            any_state = true;
+            all_not_provided &= state == CapabilityState::NotProvided;
+            all_complete &= state == CapabilityState::Complete;
+        }
+        x2_states.insert(
+            id,
+            if !any_state || all_not_provided {
+                CapabilityState::NotProvided
+            } else if all_complete {
+                CapabilityState::Complete
+            } else {
+                CapabilityState::Partial
+            },
+        );
+    }
+    let x2_state = |id| x2_states[&id];
+    let units_complete = !semantic_documents.is_empty()
+        && checked_all_with_deadline(
+            &semantic_documents,
+            deadline,
+            "manufacturing-capability-aggregation",
+            |document| document.numeric_format.is_some(),
+        )
+        .map_err(PackageParseError::Canonical)?;
+    let routes_provided = checked_any_with_deadline(
+        &review.features,
+        deadline,
+        "manufacturing-capability-aggregation",
+        |feature| matches!(feature.geometry, Geometry::Route(_)),
+    )
+    .map_err(PackageParseError::Canonical)?;
+    let slots_provided = checked_any_with_deadline(
+        &review.features,
+        deadline,
+        "manufacturing-capability-aggregation",
+        |feature| matches!(feature.geometry, Geometry::Slot(_)),
+    )
+    .map_err(PackageParseError::Canonical)?;
+    let mut capabilities = vec![
+        aggregate_capability(
+            CapabilityId::ProductIdentity,
+            authoritative.state(CapabilityId::ProductIdentity),
+            Authority::Explicit,
+            &semantic_documents,
+            &all_provenance,
+            "Gerber Job supplies explicit product identity when present.",
+        ),
+        aggregate_capability(
+            CapabilityId::DocumentSyntax,
+            CapabilityState::Complete,
+            Authority::FileContent,
+            &semantic_documents,
+            &all_provenance,
+            "Every retained Gerber, XNC, and Job document completed its bounded parser.",
+        ),
+        aggregate_capability(
+            CapabilityId::UnitsAndFormat,
+            state(units_complete, !semantic_documents.is_empty()),
+            Authority::FileContent,
+            &semantic_documents,
+            &all_provenance,
+            "Every geometry document has explicit units and numeric resolution.",
+        ),
+        aggregate_capability(
+            CapabilityId::LayerRoles,
+            authoritative.state(CapabilityId::LayerRoles),
+            Authority::Explicit,
+            &semantic_documents,
+            &all_provenance,
+            "Every intended document requires consistent typed X2/Job FileFunction authority.",
+        ),
+        aggregate_capability(
+            CapabilityId::LayerOrder,
+            authoritative.state(CapabilityId::LayerOrder),
+            Authority::Explicit,
+            &gerber_documents,
+            &gerber_provenance,
+            "Copper order must be unique, complete, and contiguous.",
+        ),
+        aggregate_capability(
+            CapabilityId::Profile,
+            authoritative.state(CapabilityId::Profile),
+            Authority::Explicit,
+            &gerber_documents,
+            &gerber_provenance,
+            "Exactly one explicit profile with retained geometry and extents is required.",
+        ),
+        aggregate_capability(
+            CapabilityId::Extents,
+            authoritative.state(CapabilityId::Extents),
+            Authority::FileContent,
+            &semantic_documents,
+            &all_provenance,
+            "Every package extent must fit the explicit profile at source resolution.",
+        ),
+        aggregate_capability(
+            CapabilityId::Tools,
+            authoritative.state(CapabilityId::Tools),
+            Authority::Explicit,
+            &xnc_documents,
+            &xnc_provenance,
+            "Every XNC tool is uniquely defined with finished diameter.",
+        ),
+        aggregate_capability(
+            CapabilityId::Drills,
+            authoritative.state(CapabilityId::Drills),
+            Authority::Explicit,
+            &xnc_documents,
+            &xnc_provenance,
+            "At least one bounded XNC drill hit is retained.",
+        ),
+        aggregate_capability(
+            CapabilityId::Routes,
+            state(routes_provided, !xnc_documents.is_empty()),
+            Authority::Explicit,
+            &xnc_documents,
+            &xnc_provenance,
+            "XNC routes remain exact when supplied.",
+        ),
+        aggregate_capability(
+            CapabilityId::Slots,
+            state(slots_provided, !xnc_documents.is_empty()),
+            Authority::Explicit,
+            &xnc_documents,
+            &xnc_provenance,
+            "XNC slots remain exact when supplied.",
+        ),
+        aggregate_capability(
+            CapabilityId::Plating,
+            authoritative.state(CapabilityId::Plating),
+            Authority::Explicit,
+            &xnc_documents,
+            &xnc_provenance,
+            "Every XNC document requires explicit plating.",
+        ),
+        aggregate_capability(
+            CapabilityId::LayerSpans,
+            authoritative.state(CapabilityId::LayerSpans),
+            Authority::Explicit,
+            &xnc_documents,
+            &xnc_provenance,
+            "Every XNC document requires explicit layer span.",
+        ),
+        aggregate_capability(
+            CapabilityId::X2FileAttributes,
+            x2_state(CapabilityId::X2FileAttributes),
+            Authority::X2,
+            &gerber_documents,
+            &gerber_provenance,
+            "Typed X2 FileFunction coverage is aggregated without filename authority.",
+        ),
+        aggregate_capability(
+            CapabilityId::X2ApertureAttributes,
+            x2_state(CapabilityId::X2ApertureAttributes),
+            Authority::X2,
+            &gerber_documents,
+            &gerber_provenance,
+            "Aperture attribute coverage is complete-only.",
+        ),
+        aggregate_capability(
+            CapabilityId::X2ObjectAttributes,
+            x2_state(CapabilityId::X2ObjectAttributes),
+            Authority::X2,
+            &gerber_documents,
+            &gerber_provenance,
+            "Object attribute coverage is complete-only.",
+        ),
+        aggregate_capability(
+            CapabilityId::Connectivity,
+            authoritative.state(CapabilityId::Connectivity),
+            Authority::X2,
+            &gerber_documents,
+            &gerber_provenance,
+            "Net coverage is complete only for every eligible feature.",
+        ),
+        aggregate_capability(
+            CapabilityId::Components,
+            authoritative.state(CapabilityId::Components),
+            Authority::X2,
+            &gerber_documents,
+            &gerber_provenance,
+            "Component coverage is complete only for every eligible feature.",
+        ),
+        aggregate_capability(
+            CapabilityId::Pins,
+            authoritative.state(CapabilityId::Pins),
+            Authority::X2,
+            &gerber_documents,
+            &gerber_provenance,
+            "Pin coverage is complete only for every eligible feature.",
+        ),
+        aggregate_capability(
+            CapabilityId::PackageCompleteness,
+            authoritative.state(CapabilityId::PackageCompleteness),
+            Authority::Explicit,
+            &semantic_documents,
+            &all_provenance,
+            "Product, roles/order, profile, drills, plating/span, extents, and claimed connectivity must all be complete.",
+        ),
+    ];
+    for id in [
+        CapabilityId::GeometryLines,
+        CapabilityId::GeometryArcs,
+        CapabilityId::GeometryRegions,
+        CapabilityId::GeometryFlashes,
+        CapabilityId::Polarity,
+        CapabilityId::Transforms,
+        CapabilityId::Repetition,
+        CapabilityId::Apertures,
+        CapabilityId::Macros,
+        CapabilityId::GeometryExpanded,
+    ] {
+        let mut complete = !gerber_capabilities.is_empty();
+        for ledger in &gerber_capabilities {
+            deadline
+                .check("manufacturing-capability-aggregation")
+                .map_err(|_| PackageParseError::Deadline)?;
+            let mut ledger_complete = false;
+            for record in &ledger.records {
+                deadline
+                    .check("manufacturing-capability-aggregation")
+                    .map_err(|_| PackageParseError::Deadline)?;
+                ledger_complete |= record.id == id && record.state == CapabilityState::Complete;
+            }
+            complete &= ledger_complete;
+        }
+        capabilities.push(aggregate_capability(
+            id,
+            state(complete, !gerber_capabilities.is_empty()),
+            Authority::FileContent,
+            &gerber_documents,
+            &gerber_provenance,
+            "Aggregate Gerber semantic capability.",
+        ));
+    }
+    capabilities.sort_by_key(|capability| capability.id);
+    review.capabilities = CapabilityLedger {
+        records: capabilities,
+    };
+    let mut incomplete_capabilities = BTreeSet::new();
+    for capability in &review.capabilities.records {
+        deadline
+            .check("manufacturing-capability-aggregation")
+            .map_err(|_| PackageParseError::Deadline)?;
+        if capability.state != CapabilityState::Complete {
+            incomplete_capabilities.insert(capability.id);
+        }
+    }
+    checked_retain_with_deadline(
+        &mut review.omissions,
+        deadline,
+        "manufacturing-capability-aggregation",
+        |omission| {
+            omission
+                .affected_capabilities
+                .iter()
+                .all(|id| incomplete_capabilities.contains(id))
+        },
+    )
+    .map_err(PackageParseError::Canonical)?;
+    if !package_complete {
+        let provenance =
+            all_provenance
+                .first()
+                .cloned()
+                .ok_or_else(|| PackageParseError::Input {
+                    path: "manufacturing-inventory".into(),
+                    reason: "package-has-no-semantic-document".into(),
+                })?;
+        review.omissions.push(Omission {
+            id: stable_id("omission", &("package-completeness", &provenance.location))
+                .map_err(PackageParseError::Canonical)?,
+            kind: OmissionKind::MissingSemanticRecord,
+            affected_capabilities: vec![CapabilityId::PackageCompleteness],
+            provenance,
+            detail: "One or more declared package prerequisites are incomplete.".into(),
+        });
+    }
+    review.status = authoritative.status;
+    review
+        .finalize_trusted_with_deadline(deadline)
+        .map_err(PackageParseError::Canonical)?;
+    deadline
+        .check("manufacturing-aggregate")
+        .map_err(|_| PackageParseError::Deadline)?;
+    Ok(review)
 }

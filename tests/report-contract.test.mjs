@@ -328,6 +328,50 @@ test("schema, viewer, and docs expose one schematic capability contract", () => 
   }
 });
 
+test("schema, viewer, docs, and CI expose one manufacturing authority contract", () => {
+  const schema = parse("schemas/report-2.0.json");
+  const skill = read("skills/review-pcb-dfm/SKILL.md");
+  const reference = read("skills/review-pcb-dfm/references/report-contract.md");
+  const readme = read("README.md");
+  const ci = read(".github/workflows/ci.yml");
+  const coreCargo = read("crates/ratemypcb-core/Cargo.toml");
+  for (const field of [
+    "sourcePair", "nativeReconciliationSource", "reconciliations", "x2Attributes",
+  ]) {
+    assert.ok(schema.$defs.fabricationReview.required.includes(field));
+  }
+  assert.deepEqual(schema.$defs.manufacturingReconciliation.properties.family.enum, [
+    "product", "layers", "profile", "drills", "extents", "connectivity",
+  ]);
+  assert.deepEqual(schema.$defs.manufacturingReconciliation.properties.status.enum, [
+    "match", "mismatch", "not_checked",
+  ]);
+  assert.match(viewerJs, /function renderFabricationEvidence\(report\)/);
+  assert.match(viewerJs, /fabrication\.sourcePair/);
+  assert.match(viewerJs, /item\.smallestEvidenceAction/);
+  const renderer = viewerJs.match(
+    /function renderFabricationEvidence\(report\) \{[\s\S]*?\n\}\n\nfunction renderEvidenceRecords/,
+  )?.[0];
+  assert.ok(renderer);
+  assert.doesNotMatch(renderer, /parseGerber|inspectGerberSet/);
+  assert.doesNotMatch(renderer, /approvalEligible\s*=|requiredEvidence\s*=/);
+  for (const text of [skill, reference, readme]) {
+    assert.match(text, /Gerber\/X2/);
+    assert.match(text, /strict XNC/i);
+    assert.match(text, /KiCad\/LibrePCB|KiCad.*LibrePCB/s);
+    assert.match(text, /local-only/);
+    assert.match(text, /ODB\+\+/);
+    assert.match(text, /IPC-2581/);
+    assert.match(text, /presentation-only/);
+  }
+  assert.match(ci, /cargo test --all --locked/);
+  assert.match(
+    coreCargo,
+    /gerber_parser = \{ git = "https:\/\/github\.com\/ratemypcb\/gerber-parser\.git", rev = "54004bc52c11699b49cd287a49135380feee86b3" \}/,
+  );
+  assert.match(ci, /node --check crates\/ratemypcb-cli\/assets\/local-viewer\.js/);
+});
+
 test("active report and assessment declarations are exactly 2.0", () => {
   const core = read("crates/ratemypcb-core/src/lib.rs");
   const viewer = read("crates/ratemypcb-cli/src/viewer.rs");

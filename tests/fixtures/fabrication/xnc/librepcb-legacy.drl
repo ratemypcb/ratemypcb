@@ -1,0 +1,16 @@
+; RateMyPCB project-authored LibrePCB legacy Excellon fixture
+M48
+; #@! TF.GenerationSoftware,LibrePCB,LibrePCB,1.0
+; #@! TF.FileFunction,Plated,1,2,PTH
+FMAT,2
+METRIC,TZ
+; #@! TA.AperFunction,ViaDrill
+T1C0.300
+%
+G90
+G05
+M71
+T1
+X1.000Y1.000
+T0
+M30

@@ -380,6 +380,133 @@ function renderSchematicEvidence(report) {
   $("#categories").append(node);
 }
 
+function fabricationEvidenceRefs(report) {
+  const checks = new Set(["package-gerbers", "gerber-syntax", "drill-data"]);
+  return report.evidence
+    .filter((record) => checks.has(record.checkId))
+    .map((record) => record.id);
+}
+
+function progressiveFabricationEntries(root, items, render) {
+  let visible = 0;
+  const append = () => {
+    const end = Math.min(visible + 100, items.length);
+    for (const item of items.slice(visible, end)) root.append(render(item));
+    visible = end;
+    button.hidden = visible >= items.length;
+    button.textContent = `Load 100 more of ${items.length}`;
+  };
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "category-more";
+  button.addEventListener("click", append);
+  root.append(button);
+  append();
+  return {
+    first: () => visible || append(),
+    all: () => {
+      while (visible < items.length) append();
+    },
+  };
+}
+
+function renderFabricationEvidence(report) {
+  const fabrication = report.fabrication;
+  if (!fabrication?.status || fabrication.status === "not_provided") return;
+  const refs = fabricationEvidenceRefs(report);
+  const node = document.createElement("details");
+  node.className = "category";
+  const heading = document.createElement("summary");
+  heading.textContent = `Manufacturing evidence · ${fabrication.status} · ${fabrication.modelDigest}`;
+  node.append(heading);
+  node.append(entry(
+    "Canonical package",
+    `package: ${fabrication.packageId}; model digest: ${fabrication.modelDigest}; estimated allocation: ${fabrication.estimatedAllocationBytes} bytes`,
+    fabrication.status,
+    refs,
+  ));
+  const pair = fabrication.sourcePair;
+  node.append(entry(
+    "Native/release source pair",
+    pair
+      ? `native document: ${pair.nativeDocumentId}; native digest: ${pair.nativeArtifactDigest}; release package: ${pair.releasePackageId}; release digests: ${pair.releaseDocumentDigests.join(", ")}`
+      : "No complete native/release source pair was available.",
+    pair ? "complete" : "not-checked",
+    refs,
+  ));
+  const integration = fabrication.integrationOutcome;
+  if (integration) {
+    node.append(entry(
+      "Integrated native reconciliation",
+      `state: ${integration.state}; attempted native: ${integration.attemptedNativePath ?? "not provided"}; digest: ${integration.attemptedNativeDigest ?? "not provided"}; reason: ${integration.reason}`,
+      integration.state,
+      refs,
+    ));
+  }
+  const groups = [
+    [fabrication.documents, (document) => entry(
+      `${document.virtualPath} · ${document.format}`,
+      `parse: ${document.parseStatus}; adapter: ${document.adapter} ${document.adapterVersion}; digest: ${document.artifactDigest}; records: ${document.metrics.records}; resolution: ${document.numericFormat?.resolution ?? "not provided"}`,
+      document.parseStatus,
+      refs,
+    )],
+    [fabrication.layers, (layer) => entry(
+      `${layer.role} · ${layer.side}`,
+      `layer: ${layer.id}; name: ${layer.name ?? "not provided"}; order: ${layer.order ?? "not provided"}; authority: ${layer.authority}; document: ${layer.documentId}; location: ${JSON.stringify(layer.provenance.location)}`,
+      layer.authority,
+      refs,
+    )],
+    [fabrication.physicalBounds ?? [], (bounds) => entry(
+      `Physical bounds · ${bounds.documentId}`,
+      `extent: (${bounds.extent.min.x}, ${bounds.extent.min.y})–(${bounds.extent.max.x}, ${bounds.extent.max.y}); resolution: ${bounds.resolution}; geometry digest: ${bounds.geometryDigest}; source locations: ${bounds.sourceLocations.length}`,
+      "complete",
+      refs,
+    )],
+    [fabrication.jobFileFunctions ?? [], (fact) => entry(
+      `Job FileFunction · ${fact.referencedVirtualPath}`,
+      `fields: ${fact.fields.join(",")}; referenced document: ${fact.referencedDocumentId}; Job digest: ${fact.jobArtifactDigest}; omission: ${fact.omission ?? "none"}; conflicts: ${fact.conflictIds.join(", ") || "none"}`,
+      fact.omission || fact.conflictIds.length ? "attention" : "complete",
+      refs,
+    )],
+    [fabrication.capabilities.records, (capability) => entry(
+      capability.id,
+      `state: ${capability.state}; authority: ${capability.authority}; documents: ${capability.documentIds.join(", ") || "none"}; ${capability.detail}`,
+      capability.state,
+      refs,
+    )],
+    [fabrication.omissions, (omission) => entry(
+      `${omission.kind} · ${omission.id}`,
+      `affected: ${omission.affectedCapabilities.join(", ")}; location: ${JSON.stringify(omission.provenance.location)}; ${omission.detail}`,
+      "not-checked",
+      refs,
+    )],
+    [fabrication.conflicts, (conflict) => entry(
+      `${conflict.kind} · ${conflict.id}`,
+      `affected: ${conflict.affectedCapabilities.join(", ")}; left (${conflict.left.authority}, ${JSON.stringify(conflict.left.provenance.location)}): ${conflict.left.canonicalValue}; right (${conflict.right.authority}, ${JSON.stringify(conflict.right.provenance.location)}): ${conflict.right.canonicalValue}`,
+      "attention",
+      refs,
+    )],
+    [fabrication.reconciliations, (item) => entry(
+      `${item.family} · ${item.status}`,
+      `confidence: ${item.confidence}; native (${item.native.authority}, ${item.native.provenance.artifactDigest}, ${JSON.stringify(item.native.provenance.location)}, resolution ${item.native.resolution ?? "exact"}): ${item.native.canonicalValue}; package (${item.package.authority}, ${item.package.provenance.artifactDigest}, ${JSON.stringify(item.package.provenance.location)}, resolution ${item.package.resolution ?? "exact"}): ${item.package.canonicalValue}; action: ${item.smallestEvidenceAction}`,
+      item.status,
+      refs,
+    )],
+    [fabrication.warnings, (warning) => entry(
+      warning.code,
+      `${warning.message}; location: ${warning.provenance ? JSON.stringify(warning.provenance.location) : "not available"}`,
+      "attention",
+      refs,
+    )],
+  ];
+  for (const [items, render] of groups) {
+    if (items.length) {
+      categoryRenderers.push(progressiveFabricationEntries(node, items, render));
+    }
+  }
+  $("#categories").append(node);
+}
+
 function renderEvidenceRecords(report) {
   evidenceRecords = report.evidence;
   evidenceVisible = 100;
@@ -503,6 +630,7 @@ function renderReport(payload) {
     }),
   );
   renderSchematicEvidence(report);
+  renderFabricationEvidence(report);
   renderEvidenceRecords(report);
 
   $("#limitations").replaceChildren(

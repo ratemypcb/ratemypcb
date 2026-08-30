@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "specification": "XNC 2021.11 supported subset",
+  "fixtures": [
+    {"path": "strict.xnc", "sha256": "4acb1eb1a2bd2156cce72fad6a104a650c4c8203c225ab6eed16c79b2eeaa54c", "dialect": "strict-xnc", "expected": "complete"},
+    {"path": "kicad-legacy.drl", "sha256": "015e81f811a4296143070cd891a0915a1e1625de7176b4fd1fcea3ae624f1895", "dialect": "kicad-legacy-excellon", "expected": "complete"},
+    {"path": "librepcb-legacy.drl", "sha256": "4ed0358ef692cee1d8e687a39b7820e20a872877f61a5ce8e4c6b4abb107f643", "dialect": "librepcb-legacy-excellon", "expected": "complete"},
+    {"path": "unsupported-legacy.drl", "sha256": "001a36c8d6d62d74ccb323a6430be2e65455348e5c824596c8b31f133d7bef48", "dialect": "kicad-legacy-excellon", "expected": "unsupported"}
+  ]
+}

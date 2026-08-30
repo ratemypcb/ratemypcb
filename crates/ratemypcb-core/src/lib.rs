@@ -30,6 +30,21 @@ const MAX_EXPANDED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_ENTRIES: usize = 2_000;
 static NATIVE_STAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+fn archive_compressed_size_valid(size: u64) -> bool {
+    (1..=MAX_ARCHIVE_BYTES).contains(&size)
+}
+
+fn archive_entry_count_valid(entries: usize) -> bool {
+    entries <= MAX_ENTRIES
+}
+
+fn add_archive_expanded_bytes(total: u64, size: u64) -> Result<u64, Error> {
+    total
+        .checked_add(size)
+        .filter(|expanded| *expanded <= MAX_EXPANDED_BYTES)
+        .ok_or_else(|| Error::Invalid("Fabrication ZIP expands beyond 256 MB.".into()))
+}
+
 #[derive(Debug)]
 pub enum Error {
     Invalid(String),
@@ -643,7 +658,7 @@ struct BoardFacts {
     paste_issue_refs: BTreeSet<String>,
 }
 
-fn forms<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
+pub(crate) fn forms<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
     let needle = format!("({name}");
     let bytes = source.as_bytes();
     let mut out = Vec::new();
@@ -1124,6 +1139,8 @@ fn classify(path: &str) -> Option<(&'static str, &'static str)> {
         Some(("netlist", "xml"))
     } else if lower.ends_with(".kicad_dru") {
         Some(("rules", "kicad"))
+    } else if lower.ends_with(".gbrjob") {
+        Some(("gerber-job", "gerber-job-2023.06"))
     } else if [
         ".gtl", ".gbl", ".gbr", ".ger", ".gko", ".gm1", ".gts", ".gbs", ".gto", ".gbo", ".gtp",
         ".gbp",
@@ -1132,7 +1149,10 @@ fn classify(path: &str) -> Option<(&'static str, &'static str)> {
     .any(|e| lower.ends_with(e))
     {
         Some(("gerber", "rs-274x"))
-    } else if [".drl", ".xln", ".exc"].iter().any(|e| lower.ends_with(e)) {
+    } else if [".drl", ".xln", ".exc", ".xnc"]
+        .iter()
+        .any(|e| lower.ends_with(e))
+    {
         Some(("drill", "excellon"))
     } else if [".csv", ".tsv"].iter().any(|e| lower.ends_with(e)) && lower.contains("bom") {
         Some(("bom", "delimited"))
@@ -1275,12 +1295,14 @@ struct Loaded {
     bom: Option<(String, String)>,
     placement: Option<(String, String)>,
     manufacturing: fabrication::ManufacturingInventory,
+    manufacturing_deadline: fabrication::ManufacturingDeadline,
 }
 
 fn manufacturing_kind(kind: &str) -> Option<fabrication::ManufacturingKindCandidate> {
     match kind {
         "gerber" => Some(fabrication::ManufacturingKindCandidate::Gerber),
         "drill" => Some(fabrication::ManufacturingKindCandidate::Excellon),
+        "gerber-job" => Some(fabrication::ManufacturingKindCandidate::GerberJob),
         _ => None,
     }
 }
@@ -1304,27 +1326,55 @@ fn manufacturing_limit_reason(
     }
 }
 
-fn read_manufacturing_bytes(reader: &mut impl Read, name: &str) -> Result<Vec<u8>, Error> {
-    let started = Instant::now();
+fn read_manufacturing_bytes(
+    reader: &mut impl Read,
+    name: &str,
+    deadline: fabrication::ManufacturingDeadline,
+) -> Result<(Vec<u8>, String), Error> {
+    let limit = fabrication::MANUFACTURING_LIMITS.raw_bytes_per_file;
     let mut bytes = Vec::new();
-    reader
-        .take(fabrication::MANUFACTURING_LIMITS.raw_bytes_per_file + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
+    let mut hasher = Sha256::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        deadline.check("manufacturing-input-read").map_err(|_| {
+            Error::Invalid(format!(
+                "Manufacturing input exceeded the read deadline: {name}"
+            ))
+        })?;
+        let retained = u64::try_from(bytes.len())
+            .map_err(|_| Error::Invalid(format!("{name} size overflowed.")))?;
+        let remaining = limit.saturating_add(1).saturating_sub(retained);
+        if remaining == 0 {
+            break;
+        }
+        let capacity = chunk
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(chunk.len()));
+        let read = reader.read(&mut chunk[..capacity]).map_err(|error| {
             Error::Invalid(format!("Cannot read manufacturing bytes {name}: {error}"))
         })?;
-    if started.elapsed() > Duration::from_millis(fabrication::MANUFACTURING_LIMITS.file_timeout_ms)
-    {
-        return Err(Error::Invalid(format!(
-            "Manufacturing input exceeded the read deadline: {name}"
-        )));
+        if read == 0 {
+            break;
+        }
+        deadline.check("manufacturing-input-read").map_err(|_| {
+            Error::Invalid(format!(
+                "Manufacturing input exceeded the read deadline: {name}"
+            ))
+        })?;
+        hasher.update(&chunk[..read]);
+        bytes.extend_from_slice(&chunk[..read]);
     }
-    if bytes.len() as u64 > fabrication::MANUFACTURING_LIMITS.raw_bytes_per_file {
+    if bytes.len() as u64 > limit {
         return Err(Error::Invalid(format!(
             "Manufacturing input changed beyond its declared bounded size: {name}"
         )));
     }
-    Ok(bytes)
+    deadline.check("manufacturing-input-hash").map_err(|_| {
+        Error::Invalid(format!(
+            "Manufacturing input exceeded the read deadline: {name}"
+        ))
+    })?;
+    Ok((bytes, format!("{:x}", hasher.finalize())))
 }
 
 fn manufacturing_outcome(
@@ -1998,6 +2048,9 @@ fn select_board(candidates: &[String], selector: Option<&str>) -> Result<Option<
 }
 
 fn load_path(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
+    let manufacturing_started = Instant::now();
+    let manufacturing_deadline =
+        fabrication::ManufacturingDeadline::from_aggregate_start(manufacturing_started);
     if path.is_dir() {
         let mut files = Vec::new();
         collect_dir(path, &mut files, 0)?;
@@ -2139,12 +2192,15 @@ fn load_path(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
                 }
             }
         }
-        let mut manufacturing = fabrication::ManufacturingInventory::default();
+        let mut manufacturing = fabrication::ManufacturingInventory {
+            aggregate_started: Some(manufacturing_started),
+            ..fabrication::ManufacturingInventory::default()
+        };
         let mut retained_manufacturing_bytes = 0_u64;
-        let manufacturing_started = Instant::now();
         for (file, name) in files.iter().zip(names.iter()) {
-            if manufacturing_started.elapsed()
-                > Duration::from_millis(fabrication::MANUFACTURING_LIMITS.aggregate_timeout_ms)
+            if manufacturing_deadline
+                .check("manufacturing-input-read")
+                .is_err()
             {
                 return Err(Error::Invalid(
                     "Manufacturing inputs exceeded the aggregate read deadline.".into(),
@@ -2169,13 +2225,18 @@ fn load_path(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
                 declared_size,
                 retained_manufacturing_bytes,
             );
+            let file_started = Instant::now();
             let (artifact_digest, actual_size, bytes) = if reason.is_none() {
                 let mut file = File::open(file)
                     .map_err(|error| Error::Invalid(format!("Cannot read {name}: {error}")))?;
-                let bytes = read_manufacturing_bytes(&mut file, name)?;
+                let (bytes, digest) = read_manufacturing_bytes(
+                    &mut file,
+                    name,
+                    manufacturing_deadline.for_file_started(file_started),
+                )?;
                 let actual_size = u64::try_from(bytes.len())
                     .map_err(|_| Error::Invalid(format!("{name} size overflowed.")))?;
-                (Some(sha256(&bytes)), actual_size, Some(bytes))
+                (Some(digest), actual_size, Some(bytes))
             } else {
                 (None, declared_size, None)
             };
@@ -2200,12 +2261,13 @@ fn load_path(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
                     kind_candidate,
                     size: actual_size,
                     original_bytes,
+                    file_started: Some(file_started),
                 });
             }
             manufacturing.outcomes.push(outcome);
         }
         manufacturing
-            .validate()
+            .validate_with_deadline(manufacturing_deadline)
             .map_err(|error| Error::Invalid(format!("Invalid manufacturing inventory: {error}")))?;
         let artifacts = names
             .into_iter()
@@ -2239,6 +2301,7 @@ fn load_path(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
             bom,
             placement,
             manufacturing,
+            manufacturing_deadline,
         });
     }
     if path
@@ -2246,7 +2309,12 @@ fn load_path(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
     {
-        return load_zip(path, selector);
+        return load_zip(
+            path,
+            selector,
+            manufacturing_started,
+            manufacturing_deadline,
+        );
     }
     let name = path
         .file_name()
@@ -2335,7 +2403,11 @@ fn load_path(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
         rules: None,
         bom: None,
         placement: None,
-        manufacturing: fabrication::ManufacturingInventory::default(),
+        manufacturing: fabrication::ManufacturingInventory {
+            aggregate_started: Some(manufacturing_started),
+            ..fabrication::ManufacturingInventory::default()
+        },
+        manufacturing_deadline,
     })
 }
 
@@ -2409,11 +2481,16 @@ fn load_text_artifact(
     Ok((display_path(path), source))
 }
 
-fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
+fn load_zip(
+    path: &Path,
+    selector: Option<&str>,
+    manufacturing_started: Instant,
+    manufacturing_deadline: fabrication::ManufacturingDeadline,
+) -> Result<Loaded, Error> {
     let size = fs::metadata(path)
         .map_err(|e| Error::Invalid(e.to_string()))?
         .len();
-    if size == 0 || size > MAX_ARCHIVE_BYTES {
+    if !archive_compressed_size_valid(size) {
         return Err(Error::Invalid(
             "Fabrication ZIP must be between 1 byte and 90 MB.".into(),
         ));
@@ -2421,7 +2498,7 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
     let file = File::open(path).map_err(|e| Error::Invalid(e.to_string()))?;
     let mut zip = ZipArchive::new(file)
         .map_err(|_| Error::Invalid("Fabrication ZIP is invalid or unsupported.".into()))?;
-    if zip.len() > MAX_ENTRIES {
+    if !archive_entry_count_valid(zip.len()) {
         return Err(Error::Invalid(
             "Fabrication ZIP has more than 2,000 entries.".into(),
         ));
@@ -2437,9 +2514,11 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
     let mut altium_schematics = Vec::new();
     let mut netlists = BTreeMap::new();
     let mut schematic_bytes = 0_u64;
-    let mut manufacturing = fabrication::ManufacturingInventory::default();
+    let mut manufacturing = fabrication::ManufacturingInventory {
+        aggregate_started: Some(manufacturing_started),
+        ..fabrication::ManufacturingInventory::default()
+    };
     let mut retained_manufacturing_bytes = 0_u64;
-    let manufacturing_started = Instant::now();
     let mut expanded = 0_u64;
     let mut seen = BTreeSet::new();
     for index in 0..zip.len() {
@@ -2461,12 +2540,7 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
                 "Fabrication ZIP contains duplicate normalized paths.".into(),
             ));
         }
-        expanded = expanded.saturating_add(item.size());
-        if expanded > MAX_EXPANDED_BYTES {
-            return Err(Error::Invalid(
-                "Fabrication ZIP expands beyond 256 MB.".into(),
-            ));
-        }
+        expanded = add_archive_expanded_bytes(expanded, item.size())?;
         if let Some((kind, format)) = classify(&name) {
             artifacts.push(Artifact {
                 path: name.clone(),
@@ -2544,8 +2618,9 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
                     .map_err(|_| Error::Invalid(format!("{name} is not a UTF-8 BOM.")))?;
                 boms.insert(name, source);
             } else if let Some(kind_candidate) = manufacturing_kind(kind) {
-                if manufacturing_started.elapsed()
-                    > Duration::from_millis(fabrication::MANUFACTURING_LIMITS.aggregate_timeout_ms)
+                if manufacturing_deadline
+                    .check("manufacturing-input-read")
+                    .is_err()
                 {
                     return Err(Error::Invalid(
                         "Manufacturing inputs exceeded the aggregate read deadline.".into(),
@@ -2557,18 +2632,23 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
                     declared_size,
                     retained_manufacturing_bytes,
                 );
+                let file_started = Instant::now();
                 let original_bytes = if reason.is_none() {
-                    let bytes = read_manufacturing_bytes(&mut item, &name)?;
+                    let (bytes, digest) = read_manufacturing_bytes(
+                        &mut item,
+                        &name,
+                        manufacturing_deadline.for_file_started(file_started),
+                    )?;
                     if bytes.len() as u64 != declared_size {
                         return Err(Error::Invalid(format!(
                             "Manufacturing ZIP entry size disagrees with its declaration: {name}"
                         )));
                     }
-                    Some(bytes)
+                    Some((bytes, digest))
                 } else {
                     None
                 };
-                let artifact_digest = original_bytes.as_deref().map(sha256);
+                let artifact_digest = original_bytes.as_ref().map(|(_, digest)| digest.clone());
                 let outcome = manufacturing_outcome(
                     name.clone(),
                     kind_candidate,
@@ -2576,7 +2656,7 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
                     artifact_digest.clone(),
                     reason,
                 );
-                if let Some(original_bytes) = original_bytes {
+                if let Some((original_bytes, _)) = original_bytes {
                     retained_manufacturing_bytes += declared_size;
                     manufacturing.inputs.push(fabrication::ManufacturingInput {
                         virtual_path: name,
@@ -2585,6 +2665,7 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
                         kind_candidate,
                         size: declared_size,
                         original_bytes,
+                        file_started: Some(file_started),
                     });
                 }
                 manufacturing.outcomes.push(outcome);
@@ -2675,7 +2756,7 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
         finding.gate_impact = GateImpact::EvidenceOnly;
     }
     manufacturing
-        .validate()
+        .validate_with_deadline(manufacturing_deadline)
         .map_err(|error| Error::Invalid(format!("Invalid manufacturing inventory: {error}")))?;
     let coverage = vec![Coverage {
         id: "package-inventory".into(),
@@ -2708,6 +2789,7 @@ fn load_zip(path: &Path, selector: Option<&str>) -> Result<Loaded, Error> {
         bom,
         placement: None,
         manufacturing,
+        manufacturing_deadline,
     })
 }
 
@@ -3982,6 +4064,13 @@ pub fn validate_report_supply_retention(report: &Report, now: u64) -> Result<(),
 }
 
 pub fn validate_report(report: &Report) -> Result<(), Error> {
+    validate_report_with_fabrication_deadline(report, None)
+}
+
+fn validate_report_with_fabrication_deadline(
+    report: &Report,
+    deadline: Option<fabrication::ManufacturingDeadline>,
+) -> Result<(), Error> {
     if report.schema_version != SCHEMA_VERSION {
         return Err(Error::Invalid("Unsupported report schema version.".into()));
     }
@@ -3992,10 +4081,11 @@ pub fn validate_report(report: &Report) -> Result<(), Error> {
     }
     validate_bom_bounds(&report.bom)?;
     validate_schematic_report(&report.schematic)?;
-    report
-        .fabrication
-        .validate()
-        .map_err(|error| Error::Invalid(format!("Invalid fabrication model: {error}")))?;
+    match deadline {
+        Some(deadline) => report.fabrication.validate_with_deadline(deadline),
+        None => report.fabrication.validate(),
+    }
+    .map_err(|error| Error::Invalid(format!("Invalid fabrication model: {error}")))?;
     for requirements in fabrication::STABLE_FABRICATION_ANALYZERS {
         let passed = report.coverage.iter().any(|coverage| {
             evidence_check_id(&coverage.id, &report.evidence) == requirements.check_family
@@ -4232,11 +4322,212 @@ pub fn validate_assessment(report: &Report, assessment: &Assessment) -> Result<(
     Ok(())
 }
 
+fn set_fabrication_capability(
+    review: &mut fabrication::FabricationReview,
+    id: fabrication::CapabilityId,
+    state: fabrication::CapabilityState,
+    detail: &str,
+) {
+    review.capabilities.records.retain(|record| record.id != id);
+    review
+        .capabilities
+        .records
+        .push(fabrication::CapabilityRecord {
+            id,
+            state,
+            authority: fabrication::Authority::NativeSource,
+            document_ids: Vec::new(),
+            provenance: Vec::new(),
+            detail: detail.into(),
+        });
+    review.capabilities.records.sort_by_key(|record| record.id);
+}
+
 fn manufacturing_review(
     loaded: &Loaded,
+    manufacturing_deadline: fabrication::ManufacturingDeadline,
 ) -> Result<(fabrication::FabricationReview, Vec<Finding>, Vec<Coverage>), Error> {
-    let fabrication = fabrication::legacy_inventory_review(&loaded.manufacturing)
-        .map_err(|error| Error::Invalid(format!("Invalid fabrication evidence: {error}")))?;
+    let (mut fabrication, mut semantic_failures) =
+        match fabrication::analyze_manufacturing_inventory_with_deadline(
+            &loaded.manufacturing,
+            manufacturing_deadline,
+        ) {
+            Ok(fabrication) => (fabrication, Vec::new()),
+            Err(error) => {
+                let mut fallback = fabrication::legacy_inventory_review_with_deadline(
+                    &loaded.manufacturing,
+                    manufacturing_deadline,
+                )
+                .map_err(|fallback_error| {
+                    Error::Invalid(format!(
+                        "Invalid fabrication evidence: {error}; fallback: {fallback_error}"
+                    ))
+                })?;
+                fallback.status = fabrication::FabricationStatus::Failed;
+                fallback.warnings.push(fabrication::ManufacturingWarning {
+                    code: "manufacturing-semantic-parse-failed".into(),
+                    message: error.to_string(),
+                    provenance: None,
+                });
+                (fallback, vec![error.to_string()])
+            }
+        };
+    fabrication
+        .refresh_digests_with_deadline(manufacturing_deadline)
+        .map_err(|error| {
+            Error::Invalid(format!("Invalid package fabrication evidence: {error}"))
+        })?;
+    fabrication
+        .validate_with_deadline(manufacturing_deadline)
+        .map_err(|error| {
+            Error::Invalid(format!("Invalid package fabrication evidence: {error}"))
+        })?;
+
+    if let Some(source) = loaded.board_source.as_deref() {
+        let virtual_path = loaded.board_name.as_deref().unwrap_or("selected.kicad_pcb");
+        match fabrication::parse_native_kicad_manufacturing_with_deadline(
+            virtual_path,
+            source.as_bytes(),
+            manufacturing_deadline.with_file_limit(),
+        ) {
+            Ok(native) if fabrication.documents.is_empty() => {
+                fabrication = native.review;
+                set_fabrication_capability(
+                    &mut fabrication,
+                    fabrication::CapabilityId::PackageReconciliation,
+                    fabrication::CapabilityState::NotProvided,
+                    "No release package was provided for symmetric reconciliation.",
+                );
+            }
+            Ok(native) => {
+                match fabrication::reconcile_native_package_with_deadline(
+                    fabrication.clone(),
+                    native,
+                    manufacturing_deadline,
+                ) {
+                    Ok(reconciled) => fabrication = reconciled,
+                    Err(error) => {
+                        semantic_failures.push(format!("native/package reconciliation: {error}"));
+                        fabrication.status = fabrication::FabricationStatus::Partial;
+                        set_fabrication_capability(
+                            &mut fabrication,
+                            fabrication::CapabilityId::NativeKicadFacts,
+                            fabrication::CapabilityState::Failed,
+                            "Native facts could not be retained through failed reconciliation.",
+                        );
+                        set_fabrication_capability(
+                            &mut fabrication,
+                            fabrication::CapabilityId::PackageReconciliation,
+                            fabrication::CapabilityState::Failed,
+                            "Native/package reconciliation failed closed.",
+                        );
+                        fabrication.integration_outcome = Some(
+                            fabrication::IntegratedReconciliationOutcome::new(
+                                fabrication::IntegratedReconciliationState::Failed,
+                                Some(virtual_path.into()),
+                                Some(
+                                    fabrication::sha256_with_deadline(
+                                        source.as_bytes(),
+                                        manufacturing_deadline,
+                                        "native-input-hash",
+                                    )
+                                    .map_err(|error| Error::Invalid(error.to_string()))?,
+                                ),
+                                "native-package-reconciliation-failed",
+                            )
+                            .map_err(|error| Error::Invalid(error.to_string()))?,
+                        );
+                        fabrication
+                            .warnings
+                            .push(fabrication::ManufacturingWarning {
+                                code: "manufacturing-reconciliation-failed".into(),
+                                message: error.to_string(),
+                                provenance: None,
+                            });
+                    }
+                }
+            }
+            Err(error) => {
+                semantic_failures.push(format!("native KiCad manufacturing: {error}"));
+                fabrication.status = if fabrication.documents.is_empty() {
+                    fabrication::FabricationStatus::Failed
+                } else {
+                    fabrication::FabricationStatus::Partial
+                };
+                set_fabrication_capability(
+                    &mut fabrication,
+                    fabrication::CapabilityId::NativeKicadFacts,
+                    fabrication::CapabilityState::Failed,
+                    "Selected native KiCad source parsing failed closed.",
+                );
+                set_fabrication_capability(
+                    &mut fabrication,
+                    fabrication::CapabilityId::PackageReconciliation,
+                    fabrication::CapabilityState::Failed,
+                    "Native/package reconciliation cannot run without valid native facts.",
+                );
+                fabrication.integration_outcome = Some(
+                    fabrication::IntegratedReconciliationOutcome::new(
+                        fabrication::IntegratedReconciliationState::Failed,
+                        Some(virtual_path.into()),
+                        Some(
+                            fabrication::sha256_with_deadline(
+                                source.as_bytes(),
+                                manufacturing_deadline,
+                                "native-input-hash",
+                            )
+                            .map_err(|error| Error::Invalid(error.to_string()))?,
+                        ),
+                        "native-manufacturing-parse-failed",
+                    )
+                    .map_err(|canonical| Error::Invalid(canonical.to_string()))?,
+                );
+                fabrication
+                    .warnings
+                    .push(fabrication::ManufacturingWarning {
+                        code: "native-manufacturing-parse-failed".into(),
+                        message: error.to_string(),
+                        provenance: None,
+                    });
+            }
+        }
+    } else {
+        if fabrication.status == fabrication::FabricationStatus::Complete {
+            fabrication.status = fabrication::FabricationStatus::Partial;
+        }
+        set_fabrication_capability(
+            &mut fabrication,
+            fabrication::CapabilityId::NativeKicadFacts,
+            fabrication::CapabilityState::NotProvided,
+            "No selected KiCad board source was available.",
+        );
+        set_fabrication_capability(
+            &mut fabrication,
+            fabrication::CapabilityId::PackageReconciliation,
+            fabrication::CapabilityState::NotProvided,
+            "No selected native source was available for symmetric reconciliation.",
+        );
+        fabrication.integration_outcome = Some(
+            fabrication::IntegratedReconciliationOutcome::new(
+                fabrication::IntegratedReconciliationState::NotProvided,
+                None,
+                None,
+                "selected-native-source-not-provided",
+            )
+            .map_err(|error| Error::Invalid(error.to_string()))?,
+        );
+    }
+    fabrication
+        .refresh_digests_with_deadline(manufacturing_deadline)
+        .map_err(|error| {
+            Error::Invalid(format!("Invalid integrated fabrication evidence: {error}"))
+        })?;
+    fabrication
+        .validate_with_deadline(manufacturing_deadline)
+        .map_err(|error| {
+            Error::Invalid(format!("Invalid integrated fabrication evidence: {error}"))
+        })?;
+
     let mut findings = Vec::new();
     let omitted = fabrication
         .input_outcomes
@@ -4271,8 +4562,11 @@ fn manufacturing_review(
     let coverage = fabrication::STABLE_FABRICATION_ANALYZERS
         .into_iter()
         .map(|requirements| {
-            let dispatch =
-                fabrication::dispatch_analyzer(requirements, &fabrication.capabilities, None);
+            let dispatch = fabrication::dispatch_analyzer(
+                requirements,
+                &fabrication.capabilities,
+                Some(fabrication::SemanticAnalyzerResult::Pass),
+            );
             let relevant = if requirements.check_family == "drill-data" {
                 &drill_outcomes
             } else {
@@ -4304,9 +4598,15 @@ fn manufacturing_review(
                 status,
                 evidence: if relevant.is_empty() {
                     "No matching manufacturing bytes were provided.".into()
+                } else if !semantic_failures.is_empty() {
+                    format!(
+                        "Production semantic parsing failed closed ({}); incomplete prerequisites: {:?}.",
+                        semantic_failures.join("; "),
+                        dispatch.incomplete_prerequisites
+                    )
                 } else {
                     format!(
-                        "{} input(s) inventoried; production semantic analyzer not run; incomplete prerequisites: {:?}.",
+                        "{} input(s) parsed with production semantics; incomplete prerequisites: {:?}.",
                         relevant.len(), dispatch.incomplete_prerequisites
                     )
                 },
@@ -4390,8 +4690,9 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
         .as_ref()
         .map(|(preset, _)| *preset)
         .unwrap_or(project_preset);
+    let manufacturing_deadline = loaded.manufacturing_deadline;
     let (fabrication_review, manufacturing_findings, manufacturing_coverage) =
-        manufacturing_review(&loaded)?;
+        manufacturing_review(&loaded, manufacturing_deadline)?;
     let mut findings = loaded.package_findings;
     findings.extend(manufacturing_findings);
     let mut coverage = loaded.package_coverage;
@@ -4843,7 +5144,7 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
     let categories = category_summaries(options.scope, &coverage, &findings, &evidence);
     let mut limitations = vec![
         ("Static source checks do not replace native KiCad clearance, connectivity, custom-rule, or zone-fill DRC; consult the native-drc coverage item.".into(), &["native-drc"] as &'static [&'static str]),
-        ("Gerber/X2 plus Excellon is the named fabrication baseline, but no production semantic adapter ran in Plan 05-01; filename and token screening remain partial evidence only and cannot approve fabrication.".into(), &["gerber-syntax", "package-gerbers", "drill-data"]),
+        ("Gerber/X2, Gerber Job, and strict or named-legacy XNC are parsed by bounded core adapters. Package approval still requires complete semantic capabilities and symmetric native-source reconciliation; filenames and browser rendering never supply authority.".into(), &["gerber-syntax", "package-gerbers", "drill-data"]),
         ("Named profile minimums cover the stated baseline only; copper weight, layer count, material, finish, impedance, and special processes still require order-specific confirmation.".into(), &["profile", "project-rules"]),
         ("Altium .PcbDoc source-aware DRC is not supported; exported manufacturing artifacts are inventoried only.".into(), &["source-structure", "package-gerbers"]),
     ];
@@ -4907,7 +5208,7 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
         limitation_evidence_refs,
         disclaimer: DISCLAIMER.into(),
     };
-    validate_report(&report)?;
+    validate_report_with_fabrication_deadline(&report, Some(manufacturing_deadline))?;
     Ok(report)
 }
 
@@ -5530,6 +5831,30 @@ mod tests {
         assert!(!safe_archive_path("../secret"));
         assert!(!safe_archive_path("/absolute"));
         assert!(safe_archive_path("fab/top.gtl"));
+    }
+
+    #[test]
+    fn fabrication_archive_and_normalized_path_limits_are_exact_and_one_over() {
+        assert!(archive_compressed_size_valid(MAX_ARCHIVE_BYTES));
+        assert!(!archive_compressed_size_valid(MAX_ARCHIVE_BYTES + 1));
+        assert!(!archive_compressed_size_valid(0));
+        assert_eq!(
+            add_archive_expanded_bytes(0, MAX_EXPANDED_BYTES).unwrap(),
+            MAX_EXPANDED_BYTES
+        );
+        assert!(add_archive_expanded_bytes(0, MAX_EXPANDED_BYTES + 1).is_err());
+        assert!(archive_entry_count_valid(MAX_ENTRIES));
+        assert!(!archive_entry_count_valid(MAX_ENTRIES + 1));
+
+        let exact_path = "x".repeat(fabrication::MANUFACTURING_LIMITS.normalized_path_bytes);
+        assert!(safe_archive_path(&exact_path));
+        assert!(!safe_archive_path(&format!("{exact_path}x")));
+        let exact_depth =
+            vec!["d"; usize::from(fabrication::MANUFACTURING_LIMITS.directory_depth) + 1].join("/");
+        assert!(safe_archive_path(&exact_depth));
+        let over_depth =
+            vec!["d"; usize::from(fabrication::MANUFACTURING_LIMITS.directory_depth) + 2].join("/");
+        assert!(!safe_archive_path(&over_depth));
     }
 
     #[test]
@@ -6335,5 +6660,67 @@ mod tests {
         writer.finish().unwrap();
         assert!(matches!(load_path(&archive, None), Err(Error::Invalid(_))));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manufacturing_input_read_and_hash_deadline_is_cooperative_and_exact() {
+        struct CountingReader {
+            remaining: usize,
+            reads: usize,
+            delay: bool,
+        }
+
+        impl Read for CountingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.remaining == 0 {
+                    return Ok(0);
+                }
+                if self.delay {
+                    std::thread::sleep(Duration::from_micros(100));
+                }
+                let count = self.remaining.min(buffer.len()).min(1);
+                buffer[..count].fill(b'x');
+                self.remaining -= count;
+                self.reads += 1;
+                Ok(count)
+            }
+        }
+
+        let mut exact = CountingReader {
+            remaining: 100_000,
+            reads: 0,
+            delay: false,
+        };
+        let started = Instant::now();
+        let (bytes, digest) = read_manufacturing_bytes(
+            &mut exact,
+            "exact.gbr",
+            fabrication::ManufacturingDeadline::from_starts(started, started),
+        )
+        .unwrap();
+        assert_eq!(bytes.len(), 100_000);
+        assert_eq!(exact.reads, 100_000);
+        assert_eq!(digest, sha256(&bytes));
+
+        let mut expiring = CountingReader {
+            remaining: 100_000,
+            reads: 0,
+            delay: true,
+        };
+        let aggregate_started = Instant::now();
+        let file_started = aggregate_started
+            .checked_sub(Duration::from_millis(
+                fabrication::MANUFACTURING_LIMITS.file_timeout_ms - 20,
+            ))
+            .unwrap();
+        assert!(
+            read_manufacturing_bytes(
+                &mut expiring,
+                "expiring.gbr",
+                fabrication::ManufacturingDeadline::from_starts(file_started, aggregate_started,),
+            )
+            .is_err()
+        );
+        assert!(expiring.reads > 0 && expiring.reads < 100_000);
     }
 }

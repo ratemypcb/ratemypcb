@@ -219,7 +219,7 @@ test("schematic viewer consumes core provenance and gate values safely", () => {
   assert.deepEqual(schematicEvidenceRefs({ evidence: [] }, "schematic-erc"), []);
 
   const renderer = js.match(
-    /function renderSchematicEvidence\(report\) \{[\s\S]*?\n\}\n\nfunction renderEvidenceRecords/,
+    /function renderSchematicEvidence\(report\) \{[\s\S]*?\n\}\n\nfunction fabricationEvidenceRefs/,
   )?.[0];
   assert.ok(renderer);
   assert.match(renderer, /schematic\.sourcePair/);
@@ -232,6 +232,33 @@ test("schematic viewer consumes core provenance and gate values safely", () => {
   assert.match(js, /copy\.textContent = evidence/);
   assert.doesNotMatch(js, /innerHTML\s*=/);
   assert.doesNotMatch(js, /schematic[^\n]*(?:approvalEligible|requiredEvidence)\s*=/);
+});
+
+test("manufacturing viewer consumes only core facts and preserves both sources", () => {
+  const renderer = js.match(
+    /function renderFabricationEvidence\(report\) \{[\s\S]*?\n\}\n\nfunction renderEvidenceRecords/,
+  )?.[0];
+  assert.ok(renderer);
+  for (const value of [
+    /fabrication\.modelDigest/,
+    /fabrication\.sourcePair/,
+    /fabrication\.physicalBounds/,
+    /fabrication\.jobFileFunctions/,
+    /fabrication\.integrationOutcome/,
+    /bounds\.geometryDigest/,
+    /fact\.jobArtifactDigest/,
+    /document\.artifactDigest/,
+    /capability\.authority/,
+    /omission\.provenance\.location/,
+    /conflict\.left\.canonicalValue/,
+    /item\.native\.provenance\.artifactDigest/,
+    /item\.package\.provenance\.artifactDigest/,
+    /item\.smallestEvidenceAction/,
+  ]) assert.match(renderer, value);
+  assert.match(js, /progressiveFabricationEntries/);
+  assert.doesNotMatch(renderer, /parseGerber|inspectGerberSet/);
+  assert.doesNotMatch(renderer, /approvalEligible\s*=|requiredEvidence\s*=/);
+  assert.doesNotMatch(js, /innerHTML\s*=/);
 });
 
 test("viewer uses no external runtime resource", () => {

@@ -10,7 +10,7 @@ The milestone first makes release truth explicit and testable, then turns that c
 - [ ] **Phase 2: Report UX and Golden Corpus** - Make the first screen immediately actionable, traceable, accessible, and measurable at real report scales.
 - [x] **Phase 3: Supply Snapshot v2 and Demand-Aware Risk** - Deliver exact-identity, named-provider, terms-aware BOM sourcing evidence without invented substitutes. (completed 2026-08-26)
 - [x] **Phase 4: KiCad Schematic Release Evidence** - Add native schematic/ERC/parity and source-aware cross-artifact consistency with honest boundaries. (completed 2026-08-27)
-- [ ] **Phase 5: Manufacturing Evidence Model and Gerber Baseline** - Parse real Gerber/X2+Excellon into one canonical model and reconcile release artifacts.
+- [x] **Phase 5: Manufacturing Evidence Model and Gerber Baseline** - Parse real Gerber/X2+Excellon into one canonical model and reconcile release artifacts. (completed 2026-08-30)
 - [ ] **Phase 6: Intelligent Interchange Decision Gate** - Evaluate ODB++ and IPC-2581 symmetrically and ship only adapters that earn adoption.
 - [ ] **Phase 7: Decision-Grade DFM and Assembly Analysis** - Turn validated geometry, construction, connectivity, BOM, and placement facts into calibrated release actions.
 - [ ] **Phase 8: Hardened Release and Skill Adoption** - Prove parser security, performance, privacy, version alignment, and end-to-end skill usefulness.
@@ -128,16 +128,16 @@ Plans:
 
 **Research**: Package-legitimacy, official Ucamco corpus, Excellon approach, and performance/security discovery required.  
 **Checkpoint**: The rejected crates.io 0.5.0 candidate remains historical STOP evidence. The exact RateMyPCB fork branch/push and later production adoption are separate blocking-human decisions.  
-**Plans**: 3/6 plans complete
+**Plans**: 6/6 plans complete
 
 Plans:
 
 - [x] 05-01-PLAN.md — Establish the canonical provenance-aware manufacturing model, fixed-point geometry/capability contracts, deterministic identity, resource budgets, and honest legacy-screening downgrade. Independently accepted; FAB-01, FAB-02, and FAB-07 complete.
 - [x] 05-02-PLAN.md — Create the explicitly authorized `ratemypcb/gerber-parser` fork and sibling clone, validate upstream tokenizer commit `f4160c7…` plus one bound non-breaking outer-error funnel, then gate its exact signed commit/protected push and immutable dev-only candidate adoption. Completed with human PASS for exact head `54004bc…`.
 - [x] 05-03-PLAN.md — Promoted exact approved head `54004bc…` under PASS_F416 and closed bounded, error-accounted fixed-point RS-274X semantics for FAB-03 after fresh independent ACCEPT with empty P0/P1/P2.
-- [ ] 05-04-PLAN.md — Add complete-only X2/Gerber Job authority, strict and named-legacy XNC, and package completeness foundations for FAB-04/FAB-05.
-- [ ] 05-05-PLAN.md — Reconcile native KiCad and release-package facts through report, CLI, viewer, skill, and schema surfaces for FAB-06.
-- [ ] 05-06-PLAN.md — Close hostile/resource/corpus/determinism/full GSD gates, fresh independent review, FAB-08, and Phase 5 traceability.
+- [x] 05-04-PLAN.md — Complete-only X2/Gerber Job authority, strict/named-legacy XNC, G75 full-circle bounds, conservative proof-less block geometry, and rectangle-only Complete package profiles passed the ordinary bounded independent product review; FAB-04/FAB-05 complete.
+- [x] 05-05-PLAN.md — Native KiCad/release-package reconciliation, geometry/model identity, and one carried interruptible deadline passed the same review; FAB-06 complete.
+- [x] 05-06-PLAN.md — Hostile/resource/corpus/determinism and ordinary repository gates passed with one bounded independent product review; FAB-08 and Phase 5 complete. The former packet/freeze/GPG/canonical-review/zero-findings machinery remains withdrawn.
 
 ### Phase 6: Intelligent Interchange Decision Gate
 

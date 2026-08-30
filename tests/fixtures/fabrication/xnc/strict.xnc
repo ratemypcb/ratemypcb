@@ -1,0 +1,20 @@
+; RateMyPCB project-authored strict XNC fixture
+M48
+; #@! TF.FileFunction,Plated,1,2,PTH
+; #@! TF.GenerationSoftware,Ucamco,UcamX,2021.11
+METRIC
+; #@! TA.AperFunction,ComponentDrill
+T01C0.600
+%
+T01
+G05
+X1.000Y1.000
+G00X3.000Y2.000
+M15
+G01X4.000Y2.000
+G03X4.000Y3.000A1.000
+M16
+G05
+G00X5.000Y5.000
+G85X6.000Y5.000
+M30

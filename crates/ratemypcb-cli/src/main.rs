@@ -50,6 +50,9 @@ USAGE:
 
 The review never modifies or uploads PCB data. Native checks are optional.
 --schematic resolves only ambiguous automatic roots inside the reviewed project.
+Gerber/X2, Gerber Job 2023.06, strict XNC, and named KiCad/LibrePCB Excellon
+profiles are parsed locally; official corpora remain local-only. ODB++ and
+IPC-2581 are unsupported. Browser Gerber rendering is presentation-only.
 --open launches a short-lived, offline viewer on 127.0.0.1."#
     );
 }
@@ -484,6 +487,15 @@ fn doctor(args: &[String]) -> i32 {
         "pcbDrc": { "native": supported, "requires": "local KiCad CLI 8, 9, or 10 and an intact project" },
         "schematicErc": { "native": supported, "requires": "local KiCad CLI 8, 9, or 10 and a bounded schematic root" },
         "coherentProjectParity": { "native": supported, "requires": "one matching board, schematic root, and .kicad_pro basename" },
+        "manufacturing": {
+            "gerberX2": { "semantic": true, "adapter": ratemypcb_core::fabrication::GERBER_ADAPTER_VERSION },
+            "gerberJob": { "semantic": true, "subset": "2023.06" },
+            "xnc": { "semantic": true, "profiles": ["strict-xnc", "kicad-legacy-excellon", "librepcb-legacy-excellon"] },
+            "nativePackageReconciliation": true,
+            "officialCorpus": "local-only",
+            "browserGerberEvidence": false,
+            "unsupportedFormats": ["ODB++", "IPC-2581"]
+        },
         "limitations": {
             "zipNativeChecks": false,
             "altiumNativeChecks": false,
@@ -510,7 +522,7 @@ fn doctor(args: &[String]) -> i32 {
         );
     } else if args.is_empty() {
         println!(
-            "RateMyPCB {VERSION}\nReport schema: {}\nKiCad CLI: {}\nDetected major: {} ({})\nSupported majors: 8, 9, 10\nNative PCB DRC: {}\nNative schematic ERC: {}\nCoherent-project parity: {}\nZIP native checks: disabled\nAltium .SchDoc: inventory only; no native checks\nGeneric netlists: explicit fields only; no native checks",
+            "RateMyPCB {VERSION}\nReport schema: {}\nKiCad CLI: {}\nDetected major: {} ({})\nSupported majors: 8, 9, 10\nNative PCB DRC: {}\nNative schematic ERC: {}\nCoherent-project parity: {}\nGerber/X2: bounded production semantics\nGerber Job: bounded 2023.06 subset\nXNC: strict plus named KiCad/LibrePCB legacy profiles\nNative/package reconciliation: capability-gated and symmetric\nOfficial fabrication corpora: local-only\nODB++ / IPC-2581: unsupported\nBrowser Gerber parsing: presentation-only\nZIP native checks: disabled\nAltium .SchDoc: inventory only; no native checks\nGeneric netlists: explicit fields only; no native checks",
             ratemypcb_core::SCHEMA_VERSION,
             version.as_deref().unwrap_or("not detected"),
             major.map_or_else(|| "unknown".into(), |major| major.to_string()),

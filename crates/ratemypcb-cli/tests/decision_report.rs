@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 use sha2::Digest;
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -152,6 +153,172 @@ fn render(report: &Path, assessment: &Path, output: &Path) -> Output {
         "--output",
         &output,
     ])
+}
+
+fn x2_layer(function: &str, profile: bool) -> Vec<u8> {
+    let geometry = if profile {
+        "G36*\nX000000Y000000D02*\nX10000000Y000000D01*\nX10000000Y10000000D01*\nX000000Y10000000D01*\nX000000Y000000D01*\nG37*\n"
+    } else {
+        "X1000000Y1000000D02*\nX2000000Y1000000D01*\n"
+    };
+    format!(
+        "G04 RateMyPCB CLI tracer fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,{function}*%\n%TA.AperFunction,Conductor*%\n%ADD10C,0.200*%\nD10*\n%TO.N,GND*%\n%TO.C,U1*%\n%TO.P,U1,1*%\n{geometry}M02*\n"
+    )
+    .into_bytes()
+}
+
+fn fabrication_files(board_end: &str, hostile: bool) -> Vec<(String, Vec<u8>)> {
+    let board = format!(
+        "(kicad_pcb (version 20240108) (generator ratemypcb-fixture)\n  (title_block (title \"phase5-board\") (rev \"r1\"))\n  (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal) (44 \"Edge.Cuts\" user))\n  (net 0 \"\") (net 1 \"GND\")\n  (footprint \"Fixture:Connector\" (layer \"F.Cu\") (at 0 0)\n    (property \"Reference\" \"U1\")\n    (pad \"1\" thru_hole circle (at 1 1) (size 1 1) (drill 0.6) (layers \"*.Cu\" \"*.Mask\") (net 1 \"GND\"))\n    (pad \"1\" thru_hole oval (at 5.5 5) (size 2 1) (drill oval 1.6 0.6) (layers \"*.Cu\" \"*.Mask\") (net 1 \"GND\")))\n  (gr_rect (start 0 0) (end {board_end}) (layer \"Edge.Cuts\")))"
+    );
+    let mut top = x2_layer("Copper,L1,Top", false);
+    if hostile {
+        top.truncate(top.len() - "M02*\n".len());
+    }
+    vec![
+        ("board.kicad_pcb".into(), board.into_bytes()),
+        ("top.gbr".into(), top),
+        ("bottom.gbr".into(), x2_layer("Copper,L2,Bot", false)),
+        ("profile.gbr".into(), x2_layer("Profile,NP", true)),
+        (
+            "holes.xnc".into(),
+            fs::read(repository_root().join("tests/fixtures/fabrication/xnc/strict.xnc")).unwrap(),
+        ),
+        (
+            "complete.gbrjob".into(),
+            fs::read(repository_root().join("tests/fixtures/fabrication/job/complete.gbrjob"))
+                .unwrap(),
+        ),
+    ]
+}
+
+fn write_fabrication_project(root: &Path, board_end: &str, hostile: bool) {
+    fs::create_dir(root).unwrap();
+    for (name, bytes) in fabrication_files(board_end, hostile) {
+        fs::write(root.join(name), bytes).unwrap();
+    }
+}
+
+fn write_fabrication_zip(path: &Path) {
+    let mut archive = zip::ZipWriter::new(fs::File::create(path).unwrap());
+    for (name, bytes) in fabrication_files("10 10", false) {
+        archive
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(&bytes).unwrap();
+    }
+    archive.finish().unwrap();
+}
+
+fn fabrication_review(path: &Path, output: &Path) -> Value {
+    let result = cli(&[
+        "review",
+        &path.to_string_lossy(),
+        "--native",
+        "off",
+        "--scope",
+        "fabrication",
+        "--format",
+        "json",
+        "--output",
+        &output.to_string_lossy(),
+    ]);
+    assert_success(&result);
+    serde_json::from_slice(&fs::read(output).unwrap()).unwrap()
+}
+
+#[test]
+fn fabrication_directory_zip_digest_render_and_fail_closed_tracer() {
+    let temp = TempDir::new();
+    let clean = temp.join("clean");
+    write_fabrication_project(&clean, "10 10", false);
+    let clean_report_path = temp.join("clean.json");
+    let clean_report = fabrication_review(&clean, &clean_report_path);
+    assert_eq!(
+        clean_report["fabrication"]["status"],
+        "complete",
+        "{}",
+        serde_json::to_string_pretty(&clean_report["fabrication"]).unwrap()
+    );
+    assert_eq!(
+        clean_report["fabrication"]["reconciliations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        6
+    );
+    assert!(
+        clean_report["fabrication"]["reconciliations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["status"] == "match")
+    );
+    assert!(
+        clean_report["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| {
+                record["checkId"] == "package-gerbers"
+                    && clean_report["coverage"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|coverage| {
+                            coverage["id"] == record["id"] && coverage["status"] == "passed"
+                        })
+            })
+    );
+
+    let archive = temp.join("package.zip");
+    write_fabrication_zip(&archive);
+    let zip_report = fabrication_review(&archive, &temp.join("zip.json"));
+    assert_eq!(zip_report["fabrication"]["status"], "complete");
+    assert!(zip_report["fabrication"]["sourcePair"].is_object());
+
+    let mismatch = temp.join("mismatch");
+    write_fabrication_project(&mismatch, "11 10", false);
+    let mismatch_path = temp.join("mismatch.json");
+    let mismatch_report = fabrication_review(&mismatch, &mismatch_path);
+    assert_eq!(mismatch_report["fabrication"]["status"], "partial");
+    assert_eq!(mismatch_report["approvalEligible"], false);
+    assert!(
+        mismatch_report["fabrication"]["reconciliations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["status"] == "mismatch")
+    );
+
+    let report_digest = digest(&mismatch_path);
+    let assessment = assessment(&mismatch_report, &report_digest);
+    let assessment_path = write_assessment(&temp, &assessment, "fabrication-assessment.json");
+    let html_path = temp.join("fabrication.html");
+    assert_success(&render(&mismatch_path, &assessment_path, &html_path));
+    let html = fs::read_to_string(html_path).unwrap();
+    for value in [
+        "function renderFabricationEvidence(report)",
+        "nativeArtifactDigest",
+        "smallestEvidenceAction",
+        "resolution_bounded",
+        "mismatch",
+    ] {
+        assert!(html.contains(value), "missing fabrication tracer: {value}");
+    }
+
+    let hostile = temp.join("hostile");
+    write_fabrication_project(&hostile, "10 10", true);
+    let hostile_report = fabrication_review(&hostile, &temp.join("hostile.json"));
+    assert_ne!(hostile_report["fabrication"]["status"], "complete");
+    assert!(
+        hostile_report["fabrication"]["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["code"] == "manufacturing-semantic-parse-failed")
+    );
+    assert_eq!(hostile_report["approvalEligible"], false);
 }
 
 #[test]
@@ -414,12 +581,45 @@ fn schematic_doctor_and_snapshot_expose_capabilities_without_client_policy() {
         doctor["capabilities"]["limitations"]["genericNetlistNativeChecks"],
         false
     );
+    assert_eq!(
+        doctor["capabilities"]["manufacturing"]["gerberX2"]["semantic"],
+        true
+    );
+    assert_eq!(
+        doctor["capabilities"]["manufacturing"]["gerberJob"]["subset"],
+        "2023.06"
+    );
+    assert_eq!(
+        doctor["capabilities"]["manufacturing"]["xnc"]["profiles"],
+        json!([
+            "strict-xnc",
+            "kicad-legacy-excellon",
+            "librepcb-legacy-excellon"
+        ])
+    );
+    assert_eq!(
+        doctor["capabilities"]["manufacturing"]["browserGerberEvidence"],
+        false
+    );
+    assert_eq!(
+        doctor["capabilities"]["manufacturing"]["unsupportedFormats"],
+        json!(["ODB++", "IPC-2581"])
+    );
 
     let help = cli(&["--help"]);
     assert_success(&help);
     let help = String::from_utf8_lossy(&help.stdout);
     assert!(help.contains("--schematic PATH"));
     assert!(help.contains("resolves only ambiguous automatic roots"));
+    for value in [
+        "Gerber/X2",
+        "strict XNC",
+        "ODB++",
+        "IPC-2581",
+        "presentation-only",
+    ] {
+        assert!(help.contains(value));
+    }
 
     let temp = TempDir::new();
     let report_path = temp.join("report.json");

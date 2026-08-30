@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 current_phase: 5
 current_phase_name: Manufacturing Evidence Model and Gerber Baseline
-status: in_progress
-stopped_at: Plan 05-03 and FAB-03 independently accepted; next critical path is 05-04 -> 05-05 -> 05-06
-last_updated: "2026-08-28T07:49:09Z"
-last_activity: 2026-08-28
-last_activity_desc: Fresh independent ACCEPT with empty P0/P1/P2 closed Plan 05-03 and FAB-03
-state_head: 071c5911aa5db567d41ac40d686a72e970d06c64
+status: complete
+stopped_at: Phase 5 accepted by one ordinary bounded independent product review; no product findings
+last_updated: "2026-08-30T08:34:23Z"
+last_activity: 2026-08-30
+last_activity_desc: Phase 5 ordinary gates and bounded independent product review passed; withdrawn custom review ceremony remains removed
+state_head: 9a3aaed386996fea8338fb2422ea7aadc66396aa
 progress:
   total_phases: 8
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 18
-  completed_plans: 15
-  percent: 37
+  completed_plans: 18
+  percent: 50
 ---
 
 # Project State
@@ -23,25 +23,23 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-08-26)
 
 **Core value:** A release decision must be honest, actionable, and traceable; missing evidence blocks approval and never becomes low risk or a pass.  
-**Current focus:** Phase 5 — Manufacturing Evidence Model and Gerber Baseline
+**Current focus:** Phase 5 complete; Phase 6 not started
 
 ## Current Position
 
 Phase: 5 — Manufacturing Evidence Model and Gerber Baseline
-Plan: 05-03 complete; next 05-04
-Status: FAB-03 complete after fresh independent ACCEPT with empty P0/P1/P2; Phase 5 remains in progress
-Last activity: 2026-08-28 — read-only authority + 6 Python, 6 internal, 10 semantics, 8 hostile, 2 corpus, three parent and one independent direct official runs, 172 Rust, 29 Node, fmt/Clippy/schema/summary/diff/index gates passed
-
-Accepted hashes: `fabrication.rs` `65e9021643a9ef69b2168c0d91d12667e1c376db2e66c2d9067b84e403d8822e`; `fabrication_release.rs` `50a2d17591b3d69397ddca01304f1e53c32b969e3983e2d62db24c86113d8dd2`; schema `48c6ac1efc78aa411a51ffcd6d09938aaf378e6ff50b661907942ee02cbf5266`; dependency `54004bc52c11699b49cd287a49135380feee86b3`; review artifact `c5aeeb11ba555da285e380f399d30dff73312a4a7a7c668dc2020f6bf9108e02`.
+Plan: 05-06 complete
+Status: Phase 5 complete; FAB-04/FAB-05/FAB-06/FAB-08 accepted
+Last activity: 2026-08-30 — 226 locked Rust tests, 31 Node tests, Clippy, fmt, schema comparison, official local Gerber/XNC corpus coverage, both round-8 regressions, summary verification, and Plan 05-06 structure validation exited 0; one ordinary bounded independent product review returned ACCEPT with no product findings.
 
 Official totals were identical across all four accepted runs: 32 files, 102,909 parser results, 102,908 successes, one parser error, one resolved Route, zero unaccounted errors, 32 warnings, 83,570 features, 54,578 lines, 78 arcs, 23 regions, 28,891 flashes, and 6 macros.
 
-Progress: [████░░░░░░] 37%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
-- Total plans completed: 15 of 18 written plans.
-- Requirements completed: 35 of 60 v1 requirements.
+- Total plans completed: 18 of 18 written plans.
+- Requirements completed: 39 of 60 v1 requirements.
 - Phase 3 through Phase 5 Plan 03 execution durations were not measured.
 
 **Per-Plan Metrics:**
@@ -63,6 +61,9 @@ Progress: [████░░░░░░] 37%
 | Phase 05 P01 | not-measured | 2 tasks | 5 files |
 | Phase 05 P02 | not-measured | 5 tasks | planning, verifier, and fork evidence |
 | Phase 05 P03 | not-measured | 2 tasks | Gerber production, tests, fixtures, and planning |
+| Phase 05 P04 | not-measured | 1 task | X2/Job/XNC/package foundations and fixtures |
+| Phase 05 P05 | not-measured | 1 task | native/package reconciliation and product surfaces |
+| Phase 05 P06 | not-measured | 1 task | hostile/resource/corpus/full product gates and review |
 
 ## Accumulated Context
 
@@ -81,9 +82,9 @@ None outside the roadmap.
 
 ### Blockers/Concerns
 
-- Phase 5 remains open on the ordered critical path `05-04 -> 05-05 -> 05-06`; FAB-04, FAB-05, FAB-06, and FAB-08 remain pending.
 - Dirty uncommitted 0.2 baseline cannot be inherited by implementation worktrees from HEAD; a reviewed baseline commit requires explicit authorization.
 - `ratemypcb-core` publication remains blocked by the Git-only production dependency lacking a publishable version requirement.
+- KiCad 8/9 remain documentation-attested; Phase 2 human accessibility, browser-matrix, and representative-comprehension gates remain deferred.
 - Supply adapters await per-provider terms/account-schema decisions.
 - ODB++ and IPC-2581 await legal/corpus/conformance/security/maintenance gates.
 - Human-needed provider gate: obtain RateMyPCB-specific Nexar, Mouser, DigiKey, and LCSC approval for query, logging/cache, fixtures, embedding, sharing/export, backup, retention, and expiry before any live adapter.
@@ -99,4 +100,4 @@ None outside the roadmap.
 
 Last session: 2026-08-28T07:49:09Z
 Stopped candidate: exact crates.io 0.5.0 rejected historically; immutable fork head 54004bc completed human-PASS Plan 05-03 and remains otherwise immutable
-Resume file: .planning/phases/05-manufacturing-evidence-model-and-gerber-baseline/05-04-PLAN.md
+Resume file: .planning/phases/05-manufacturing-evidence-model-and-gerber-baseline/05-VERIFICATION.md
