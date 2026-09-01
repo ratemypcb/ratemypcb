@@ -416,6 +416,43 @@ pub enum SourceUnit {
     Inch,
 }
 
+pub(crate) fn parse_decimal_microdegrees(value: &str) -> Result<i64, FabricationError> {
+    let (negative, unsigned) = value
+        .strip_prefix('-')
+        .map_or((false, value), |value| (true, value));
+    let unsigned = unsigned.strip_prefix('+').unwrap_or(unsigned);
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if whole.is_empty()
+        || fraction.len() > 6
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(FabricationError::InvalidNumber);
+    }
+    let scale = 10_i128.pow(fraction.len() as u32);
+    let fraction = if fraction.is_empty() {
+        0
+    } else {
+        fraction
+            .parse::<i128>()
+            .map_err(|_| FabricationError::InvalidNumber)?
+    };
+    let mut scaled = whole
+        .parse::<i128>()
+        .ok()
+        .and_then(|whole| whole.checked_mul(scale))
+        .and_then(|whole| whole.checked_add(fraction))
+        .ok_or(FabricationError::ArithmeticOverflow)?;
+    if negative {
+        scaled = -scaled;
+    }
+    scaled
+        .checked_mul(1_000_000)
+        .and_then(|value| value.checked_div(scale))
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or(FabricationError::ArithmeticOverflow)
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct Picometres(pub i64);
@@ -1257,6 +1294,23 @@ pub struct ObjectSemantics {
     pub provenance: ManufacturingProvenance,
 }
 
+/// Exact same-object native KiCad ownership; no cross-document or proximity association.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PadHoleAssociation {
+    pub id: String,
+    pub pad_id: String,
+    pub hole_id: String,
+    pub tool_id: String,
+    pub applicable_layer_ids: Vec<String>,
+    pub plating: Plating,
+    pub span: LayerSpan,
+    pub pad_geometry: Geometry,
+    pub hole_geometry: Geometry,
+    pub pad_provenance: ManufacturingProvenance,
+    pub hole_provenance: ManufacturingProvenance,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum X2AttributeScope {
@@ -1289,22 +1343,172 @@ pub struct ScopedX2Attribute {
     pub provenance: ManufacturingProvenance,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AssemblyPlacementOrigin {
+    KicadBoard,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AssemblySideConvention {
+    TopBottom,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AssemblyBottomMirroring {
+    Mirrored,
+    Unmirrored,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AssemblyRotationDirection {
+    CounterClockwise,
+    Clockwise,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AssemblyFittedState {
+    Fitted,
+    NotFitted,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct AssemblyPlacementConvention {
+    pub unit: Option<SourceUnit>,
+    pub origin: AssemblyPlacementOrigin,
+    pub side: AssemblySideConvention,
+    pub bottom_mirroring: AssemblyBottomMirroring,
+    pub rotation_direction: AssemblyRotationDirection,
+}
+
+impl AssemblyPlacementConvention {
+    pub fn native_kicad() -> Self {
+        Self {
+            unit: Some(SourceUnit::Millimetre),
+            origin: AssemblyPlacementOrigin::KicadBoard,
+            side: AssemblySideConvention::TopBottom,
+            bottom_mirroring: AssemblyBottomMirroring::Mirrored,
+            rotation_direction: AssemblyRotationDirection::CounterClockwise,
+        }
+    }
+
+    fn complete(self) -> bool {
+        self.unit.is_some()
+            && self.origin != AssemblyPlacementOrigin::Unknown
+            && self.side != AssemblySideConvention::Unknown
+            && self.bottom_mirroring != AssemblyBottomMirroring::Unknown
+            && self.rotation_direction != AssemblyRotationDirection::Unknown
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssemblyPlacement {
+    pub id: String,
+    pub occurrence_id: Option<String>,
     pub reference: String,
     pub side: LayerSide,
     pub position: CanonicalPoint,
     pub rotation_microdegrees: i64,
+    pub fitted: AssemblyFittedState,
+    pub revision: Option<String>,
+    pub convention: AssemblyPlacementConvention,
     pub provenance: ManufacturingProvenance,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredAssemblyPlacement {
+    pub id: String,
+    pub reference: String,
+    pub side: LayerSide,
+    pub position: CanonicalPoint,
+    pub rotation_microdegrees: i64,
+    pub fitted: AssemblyFittedState,
+    pub revision: String,
+    pub convention: AssemblyPlacementConvention,
+    pub source_path: String,
+    pub artifact_digest: String,
+    pub line: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeCourtyardRunState {
+    Complete,
+    Partial,
+    NotRun,
+    Disabled,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeCourtyardKind {
+    Overlap,
+    Malformed,
+    Missing,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeExclusionState {
+    Active,
+    Excluded,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCourtyardObservation {
+    pub id: String,
+    pub kind: NativeCourtyardKind,
+    pub exclusion: NativeExclusionState,
+    pub location: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCourtyardEvidence {
+    pub state: NativeCourtyardRunState,
+    pub tool: String,
+    pub version: Option<String>,
+    pub source: Option<String>,
+    pub observations: Vec<NativeCourtyardObservation>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssemblyEvidence {
     pub placements: Vec<AssemblyPlacement>,
+    pub declared_placements: Vec<DeclaredAssemblyPlacement>,
+    pub native_courtyard: Option<NativeCourtyardEvidence>,
     pub mask_layer_ids: Vec<String>,
     pub paste_layer_ids: Vec<String>,
+}
+
+pub fn normalize_native_courtyard_report(
+    report: &crate::NativeDrc,
+) -> Result<NativeCourtyardEvidence, FabricationError> {
+    native::normalize_native_courtyard_report(report)
+}
+
+pub(crate) fn retain_native_assembly_only(
+    target: &mut FabricationReview,
+    source: &FabricationReview,
+    deadline: ManufacturingDeadline,
+) -> Result<(), FabricationError> {
+    native::retain_native_assembly_only(target, source, deadline)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1790,6 +1994,7 @@ pub struct FabricationReview {
     pub physical_bounds: Vec<DocumentPhysicalBounds>,
     pub profile: Option<BoardProfile>,
     pub connectivity: Vec<ObjectSemantics>,
+    pub pad_hole_associations: Vec<PadHoleAssociation>,
     pub x2_attributes: Vec<ScopedX2Attribute>,
     pub job_file_functions: Vec<JobFileFunctionFact>,
     pub assembly: AssemblyEvidence,
@@ -1826,6 +2031,7 @@ impl FabricationReview {
             physical_bounds: vec![],
             profile: None,
             connectivity: vec![],
+            pad_hole_associations: vec![],
             x2_attributes: vec![],
             job_file_functions: vec![],
             assembly: AssemblyEvidence::default(),
@@ -2261,6 +2467,65 @@ fn stable_id(kind: &str, fields: &impl Serialize) -> Result<String, FabricationE
     ))
 }
 
+fn pad_id(document_id: &str, location: &StructuralLocation) -> Result<String, FabricationError> {
+    stable_id("pad", &(document_id, location))
+}
+
+pub(crate) fn assembly_placement_id(
+    document_id: &str,
+    occurrence_id: Option<&str>,
+    reference: &str,
+    location: &StructuralLocation,
+) -> Result<String, FabricationError> {
+    stable_id(
+        "assembly-placement",
+        &(document_id, occurrence_id, reference, location),
+    )
+}
+
+pub(crate) fn declared_assembly_placement_id(
+    source_path: &str,
+    artifact_digest: &str,
+    line: u64,
+    reference: &str,
+) -> Result<String, FabricationError> {
+    stable_id(
+        "declared-assembly-placement",
+        &(source_path, artifact_digest, line, reference),
+    )
+}
+
+fn native_courtyard_observation_id(
+    kind: NativeCourtyardKind,
+    exclusion: NativeExclusionState,
+    tool: &str,
+    version: &str,
+    location: &str,
+) -> Result<String, FabricationError> {
+    stable_id(
+        "native-courtyard-observation",
+        &(kind, exclusion, tool, version, location),
+    )
+}
+
+fn pad_hole_association_id(association: &PadHoleAssociation) -> Result<String, FabricationError> {
+    stable_id(
+        "pad-hole-association",
+        &(
+            &association.pad_id,
+            &association.hole_id,
+            &association.tool_id,
+            &association.applicable_layer_ids,
+            association.plating,
+            &association.span,
+            &association.pad_geometry,
+            &association.hole_geometry,
+            canonical_provenance(&association.pad_provenance),
+            canonical_provenance(&association.hole_provenance),
+        ),
+    )
+}
+
 fn stable_id_with_deadline(
     deadline: ManufacturingDeadline,
     resource: &'static str,
@@ -2647,6 +2912,26 @@ impl FabricationReview {
                 ),
             )?);
         }
+        for association in &self.pad_hole_associations {
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "pad-hole-association",
+                &(
+                    &association.id,
+                    &association.pad_id,
+                    &association.hole_id,
+                    &association.tool_id,
+                    canonical_refs(&association.applicable_layer_ids, deadline)?,
+                    association.plating,
+                    &association.span,
+                    &association.pad_geometry,
+                    &association.hole_geometry,
+                    canonical_provenance(&association.pad_provenance),
+                    canonical_provenance(&association.hole_provenance),
+                ),
+            )?);
+        }
         for attribute in &self.x2_attributes {
             deadline.check("fabrication-model-digest")?;
             let targets = canonical_refs(&attribute.target_ids, deadline)?;
@@ -2679,12 +2964,32 @@ impl FabricationReview {
                 deadline,
                 "placement",
                 &(
+                    &placement.id,
+                    &placement.occurrence_id,
                     &placement.reference,
                     placement.side,
                     placement.position,
                     placement.rotation_microdegrees,
+                    placement.fitted,
+                    &placement.revision,
+                    placement.convention,
                     canonical_provenance(&placement.provenance),
                 ),
+            )?);
+        }
+        for placement in &self.assembly.declared_placements {
+            deadline.check("fabrication-model-digest")?;
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "declared-placement",
+                placement,
+            )?);
+        }
+        if let Some(courtyard) = &self.assembly.native_courtyard {
+            records.insert(canonical_json_with_deadline(
+                deadline,
+                "native-courtyard",
+                courtyard,
             )?);
         }
         let mask_layers = canonical_refs(&self.assembly.mask_layer_ids, deadline)?;
@@ -2894,6 +3199,7 @@ impl FabricationReview {
             || self.blocks.len() > self.limits.geometry_features
             || self.repetitions.len() > self.limits.geometry_features
             || self.connectivity.len() > self.limits.geometry_features
+            || self.pad_hole_associations.len() > self.limits.geometry_features
             || self.x2_attributes.len() > self.limits.geometry_features
             || self.physical_bounds.len() > self.limits.recognized_files
             || self.job_file_functions.len() > self.limits.recognized_files
@@ -2904,6 +3210,12 @@ impl FabricationReview {
             || self.reconciliations.len() > 6
             || self.warnings.len() > self.limits.geometry_features
             || self.assembly.placements.len() > self.limits.geometry_features
+            || self.assembly.declared_placements.len() > self.limits.geometry_features
+            || self
+                .assembly
+                .native_courtyard
+                .as_ref()
+                .is_some_and(|evidence| evidence.observations.len() > self.limits.geometry_features)
             || self.assembly.mask_layer_ids.len() > self.limits.geometry_features
             || self.assembly.paste_layer_ids.len() > self.limits.geometry_features
             || self.construction.layers.len() > self.limits.geometry_features
@@ -3109,6 +3421,20 @@ impl FabricationReview {
                 });
             }
         }
+        for item in &self.pad_hole_associations {
+            deadline.check("fabrication-limits-validation")?;
+            if item.applicable_layer_ids.is_empty()
+                || item.applicable_layer_ids.len() > self.limits.geometry_features
+                || item.pad_geometry.vertex_count_with_deadline(deadline)?
+                    > self.limits.contour_vertices
+                || item.hole_geometry.vertex_count_with_deadline(deadline)?
+                    > self.limits.contour_vertices
+            {
+                return Err(FabricationError::LimitExceeded {
+                    resource: "definition-expansion",
+                });
+            }
+        }
         for item in &self.apertures {
             deadline.check("fabrication-limits-validation")?;
             if item.dimensions.len() > self.limits.geometry_features {
@@ -3217,6 +3543,7 @@ impl FabricationReview {
         }
         let mut layer_ids = HashSet::new();
         let mut layer_documents = HashMap::new();
+        let mut layers_by_id = HashMap::new();
         for layer in &self.layers {
             check_deadline()?;
             validate_provenance(&layer.provenance, &self.documents, deadline)?;
@@ -3237,9 +3564,11 @@ impl FabricationReview {
             insert_id(&mut ids, &layer.id)?;
             layer_ids.insert(layer.id.as_str());
             layer_documents.insert(layer.id.as_str(), layer.document_id.as_str());
+            layers_by_id.insert(layer.id.as_str(), layer);
         }
         let mut tool_ids = HashSet::new();
         let mut tool_documents = HashMap::new();
+        let mut tools_by_id = HashMap::new();
         for tool in &self.tools {
             check_deadline()?;
             validate_provenance(&tool.provenance, &self.documents, deadline)?;
@@ -3261,6 +3590,7 @@ impl FabricationReview {
             insert_id(&mut ids, &tool.id)?;
             tool_ids.insert(tool.id.as_str());
             tool_documents.insert(tool.id.as_str(), tool.document_id.as_str());
+            tools_by_id.insert(tool.id.as_str(), tool);
         }
         let mut macro_ids = HashSet::new();
         for definition in &self.macros {
@@ -3604,6 +3934,120 @@ impl FabricationReview {
             }
             validate_provenance(&semantic.provenance, &self.documents, deadline)?;
         }
+        let mut association_ids = HashSet::new();
+        let mut associated_pad_ids = HashSet::new();
+        let mut associated_hole_ids = HashSet::new();
+        for association in &self.pad_hole_associations {
+            check_deadline()?;
+            validate_provenance(&association.pad_provenance, &self.documents, deadline)?;
+            validate_provenance(&association.hole_provenance, &self.documents, deadline)?;
+            let hole = features_by_id
+                .get(association.hole_id.as_str())
+                .copied()
+                .ok_or_else(|| FabricationError::DanglingReference(association.hole_id.clone()))?;
+            let tool = tools_by_id
+                .get(association.tool_id.as_str())
+                .copied()
+                .ok_or_else(|| FabricationError::DanglingReference(association.tool_id.clone()))?;
+            let Geometry::Drill(hole_geometry) = &association.hole_geometry else {
+                return Err(FabricationError::InvalidIdentity(association.id.clone()));
+            };
+            let Geometry::Drill(source_hole) = &hole.geometry else {
+                return Err(FabricationError::InvalidIdentity(
+                    association.hole_id.clone(),
+                ));
+            };
+            let materialized = hole.transforms.materialize(source_hole.position)?;
+            let expected_hole = Geometry::Drill(DrillFeature {
+                position: materialized.point,
+                diameter: source_hole.diameter,
+                tool_id: source_hole.tool_id.clone(),
+            });
+            let mut layer_set = BTreeSet::new();
+            let mut applicable_layers = Vec::with_capacity(association.applicable_layer_ids.len());
+            for layer_id in &association.applicable_layer_ids {
+                check_deadline()?;
+                let layer = layers_by_id
+                    .get(layer_id.as_str())
+                    .copied()
+                    .ok_or_else(|| FabricationError::DanglingReference(layer_id.clone()))?;
+                if !layer_set.insert(layer_id.as_str())
+                    || layer.role != LayerRole::Copper
+                    || layer.document_id != association.pad_provenance.document_id
+                    || layer.order.is_none()
+                {
+                    return Err(FabricationError::InvalidIdentity(association.id.clone()));
+                }
+                applicable_layers.push(layer);
+            }
+            let ordered = applicable_layers
+                .windows(2)
+                .all(|pair| pair[0].order < pair[1].order);
+            let span_matches = applicable_layers.first().is_some_and(|layer| {
+                association.span.from_layer_id.as_deref() == Some(layer.id.as_str())
+            }) && applicable_layers.last().is_some_and(|layer| {
+                association.span.to_layer_id.as_deref() == Some(layer.id.as_str())
+            });
+            let document = documents_by_id
+                .get(association.pad_provenance.document_id.as_str())
+                .copied();
+            let (pad_center, _, pad_resolution) = exact_circle_geometry(&association.pad_geometry)?;
+            if !association_ids.insert(association.id.as_str())
+                || !associated_pad_ids.insert(association.pad_id.as_str())
+                || !associated_hole_ids.insert(association.hole_id.as_str())
+                || association.id != pad_hole_association_id(association)?
+                || association.pad_id
+                    != pad_id(
+                        &association.pad_provenance.document_id,
+                        &association.pad_provenance.location,
+                    )?
+                || association.pad_provenance != association.hole_provenance
+                || association.pad_provenance.producer != KICAD_MANUFACTURING_ADAPTER
+                || association.pad_provenance.producer_version
+                    != KICAD_MANUFACTURING_ADAPTER_VERSION
+                || document.is_none_or(|document| {
+                    document.format != DocumentFormat::KicadPcb
+                        || document.adapter != KICAD_MANUFACTURING_ADAPTER
+                        || document.adapter_version != KICAD_MANUFACTURING_ADAPTER_VERSION
+                        || document.parse_status != ParseStatus::Complete
+                        || document
+                            .numeric_format
+                            .as_ref()
+                            .is_none_or(|format| format.resolution != pad_resolution)
+                })
+                || hole.document_id != association.pad_provenance.document_id
+                || hole.provenance != association.hole_provenance
+                || hole.tool_id.as_deref() != Some(association.tool_id.as_str())
+                || !materialized.quantization.is_empty()
+                || association.hole_geometry != expected_hole
+                || hole_geometry.position != pad_center
+                || hole_geometry.tool_id != association.tool_id
+                || tool.document_id != association.pad_provenance.document_id
+                || tool.kind != ToolKind::Drill
+                || tool.diameter != Some(hole_geometry.diameter)
+                || association.plating != Plating::Plated
+                || tool.plating != association.plating
+                || tool.span.as_ref() != Some(&association.span)
+                || !ordered
+                || !span_matches
+            {
+                return Err(FabricationError::InvalidIdentity(association.id.clone()));
+            }
+            validate_geometry(
+                &association.pad_geometry,
+                &aperture_ids,
+                &tool_ids,
+                deadline,
+            )?;
+            validate_geometry(
+                &association.hole_geometry,
+                &aperture_ids,
+                &tool_ids,
+                deadline,
+            )?;
+            insert_id(&mut ids, &association.pad_id)?;
+            insert_id(&mut ids, &association.id)?;
+        }
         for attribute in &self.x2_attributes {
             check_deadline()?;
             validate_provenance(&attribute.provenance, &self.documents, deadline)?;
@@ -3823,10 +4267,142 @@ impl FabricationReview {
             }
         }
 
+        let mut native_placement_references = BTreeSet::new();
+        let mut native_placement_occurrences = BTreeSet::new();
+        let mut native_assembly_complete = !self.assembly.placements.is_empty();
         for placement in &self.assembly.placements {
             check_deadline()?;
             validate_point(placement.position)?;
             validate_provenance(&placement.provenance, &self.documents, deadline)?;
+            if placement.id
+                != assembly_placement_id(
+                    &placement.provenance.document_id,
+                    placement.occurrence_id.as_deref(),
+                    &placement.reference,
+                    &placement.provenance.location,
+                )?
+                || placement.reference.is_empty()
+                || placement.reference.trim() != placement.reference
+                || placement.reference.len() > self.limits.max_text_bytes
+                || placement.occurrence_id.as_deref().is_some_and(|id| {
+                    id.is_empty()
+                        || id.trim() != id
+                        || id.len() > self.limits.max_text_bytes
+                        || id.chars().any(char::is_control)
+                })
+                || !(0..360_000_000).contains(&placement.rotation_microdegrees)
+            {
+                return Err(FabricationError::InvalidIdentity(placement.id.clone()));
+            }
+            insert_id(&mut ids, &placement.id)?;
+            native_assembly_complete &=
+                matches!(placement.side, LayerSide::Top | LayerSide::Bottom)
+                    && placement.fitted != AssemblyFittedState::Unknown
+                    && placement.revision.as_deref().is_some_and(|revision| {
+                        !revision.is_empty()
+                            && revision.trim() == revision
+                            && revision.len() <= self.limits.max_text_bytes
+                            && !revision.chars().any(char::is_control)
+                    })
+                    && placement.convention.complete()
+                    && native_placement_references.insert(placement.reference.as_str())
+                    && placement
+                        .occurrence_id
+                        .as_deref()
+                        .is_some_and(|id| native_placement_occurrences.insert(id));
+        }
+        let mut declared_placement_keys = BTreeSet::new();
+        for placement in &self.assembly.declared_placements {
+            check_deadline()?;
+            validate_point(placement.position)?;
+            if placement.id
+                != declared_assembly_placement_id(
+                    &placement.source_path,
+                    &placement.artifact_digest,
+                    placement.line,
+                    &placement.reference,
+                )?
+                || placement.reference.is_empty()
+                || placement.reference.trim() != placement.reference
+                || placement.reference.len() > self.limits.max_text_bytes
+                || !matches!(placement.side, LayerSide::Top | LayerSide::Bottom)
+                || !(0..360_000_000).contains(&placement.rotation_microdegrees)
+                || placement.fitted == AssemblyFittedState::Unknown
+                || placement.revision.is_empty()
+                || placement.revision.trim() != placement.revision
+                || placement.revision.len() > self.limits.max_text_bytes
+                || !placement.convention.complete()
+                || !valid_virtual_path(&placement.source_path)
+                || placement.source_path.len() > self.limits.normalized_path_bytes
+                || !lowercase_sha256(&placement.artifact_digest)
+                || placement.line == 0
+                || placement.line > self.limits.geometry_features as u64
+                || !declared_placement_keys.insert((
+                    placement.artifact_digest.as_str(),
+                    placement.reference.as_str(),
+                ))
+            {
+                return Err(FabricationError::InvalidIdentity(placement.id.clone()));
+            }
+            insert_id(&mut ids, &placement.id)?;
+        }
+        if let Some(courtyard) = &self.assembly.native_courtyard {
+            let complete_metadata = courtyard.tool == "kicad-cli"
+                && courtyard
+                    .version
+                    .as_deref()
+                    .and_then(crate::schematic::KiCadMajor::parse)
+                    .is_some()
+                && courtyard.source.as_deref().is_some_and(|source| {
+                    !source.is_empty()
+                        && source.len() <= self.limits.normalized_path_bytes
+                        && !source.chars().any(char::is_control)
+                });
+            if courtyard.tool.is_empty()
+                || courtyard.tool.len() > self.limits.max_text_bytes
+                || courtyard
+                    .version
+                    .as_deref()
+                    .is_some_and(|version| version.len() > self.limits.max_text_bytes)
+                || (courtyard.state == NativeCourtyardRunState::Complete && !complete_metadata)
+                || (matches!(
+                    courtyard.state,
+                    NativeCourtyardRunState::NotRun
+                        | NativeCourtyardRunState::Disabled
+                        | NativeCourtyardRunState::Failed
+                ) && !courtyard.observations.is_empty())
+            {
+                return Err(FabricationError::InvalidIdentity(
+                    "native-courtyard-evidence".into(),
+                ));
+            }
+            let mut observations = BTreeSet::new();
+            for observation in &courtyard.observations {
+                check_deadline()?;
+                let Some(version) = courtyard.version.as_deref() else {
+                    return Err(FabricationError::InvalidIdentity(observation.id.clone()));
+                };
+                if observation.location.is_empty()
+                    || observation.location.len() > self.limits.max_text_bytes
+                    || observation.location.chars().any(char::is_control)
+                    || observation.id
+                        != native_courtyard_observation_id(
+                            observation.kind,
+                            observation.exclusion,
+                            &courtyard.tool,
+                            version,
+                            &observation.location,
+                        )?
+                    || !observations.insert((
+                        observation.kind,
+                        observation.exclusion,
+                        observation.location.as_str(),
+                    ))
+                {
+                    return Err(FabricationError::InvalidIdentity(observation.id.clone()));
+                }
+                insert_id(&mut ids, &observation.id)?;
+            }
         }
         for layer_id in self
             .assembly
@@ -3980,6 +4556,79 @@ impl FabricationReview {
                 || conflict.left.provenance == conflict.right.provenance
             {
                 return Err(FabricationError::InvalidConflict(conflict.id.clone()));
+            }
+        }
+        let assembly_affected = self.omissions.iter().any(|omission| {
+            omission
+                .affected_capabilities
+                .contains(&CapabilityId::Assembly)
+        }) || self.conflicts.iter().any(|conflict| {
+            conflict
+                .affected_capabilities
+                .contains(&CapabilityId::Assembly)
+        });
+        let assembly_provided = !self.assembly.placements.is_empty() || assembly_affected;
+        let assembly_complete = native_assembly_complete && !assembly_affected;
+        match capability_states.get(&CapabilityId::Assembly) {
+            Some(CapabilityState::Complete) if !assembly_complete => {
+                return Err(FabricationError::InvalidIdentity(
+                    "assembly-capability".into(),
+                ));
+            }
+            Some(state) if assembly_complete && *state != CapabilityState::Complete => {
+                return Err(FabricationError::InvalidIdentity(
+                    "assembly-capability".into(),
+                ));
+            }
+            Some(CapabilityState::NotProvided) if assembly_provided => {
+                return Err(FabricationError::InvalidIdentity(
+                    "assembly-capability".into(),
+                ));
+            }
+            None if assembly_provided => {
+                return Err(FabricationError::DanglingReference(
+                    "assembly-capability".into(),
+                ));
+            }
+            _ => {}
+        }
+        if assembly_complete {
+            let capability = self
+                .capabilities
+                .records
+                .iter()
+                .find(|record| record.id == CapabilityId::Assembly)
+                .ok_or_else(|| FabricationError::DanglingReference("assembly-capability".into()))?;
+            let placement_provenance = self
+                .assembly
+                .placements
+                .iter()
+                .map(|placement| canonical_provenance(&placement.provenance))
+                .collect::<BTreeSet<_>>();
+            let capability_provenance = capability
+                .provenance
+                .iter()
+                .map(canonical_provenance)
+                .collect::<BTreeSet<_>>();
+            let placement_documents = self
+                .assembly
+                .placements
+                .iter()
+                .map(|placement| placement.provenance.document_id.as_str())
+                .collect::<BTreeSet<_>>();
+            let capability_documents = capability
+                .document_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            if placement_provenance.len() != self.assembly.placements.len()
+                || capability_provenance.len() != capability.provenance.len()
+                || placement_provenance != capability_provenance
+                || placement_documents != capability_documents
+            {
+                return Err(FabricationError::InvalidIdentity(
+                    "assembly-capability".into(),
+                ));
             }
         }
         native::validate_authoritative_states(self, authoritative_budget)?;
@@ -4216,6 +4865,7 @@ impl FabricationReview {
             serialized_len_with_deadline(deadline, &self.physical_bounds)?,
             serialized_len_with_deadline(deadline, &self.profile)?,
             serialized_len_with_deadline(deadline, &self.connectivity)?,
+            serialized_len_with_deadline(deadline, &self.pad_hole_associations)?,
             serialized_len_with_deadline(deadline, &self.x2_attributes)?,
             serialized_len_with_deadline(deadline, &self.job_file_functions)?,
             serialized_len_with_deadline(deadline, &self.assembly)?,
@@ -4878,6 +5528,50 @@ fn validate_geometry(
     }
 }
 
+pub(crate) fn exact_circle_geometry(
+    geometry: &Geometry,
+) -> Result<(CanonicalPoint, Picometres, Picometres), FabricationError> {
+    let Geometry::Contour(contour) = geometry else {
+        return Err(FabricationError::InvalidIdentity("circle-geometry".into()));
+    };
+    let [ContourSegment::Arc(first), ContourSegment::Arc(second)] = contour.segments.as_slice()
+    else {
+        return Err(FabricationError::InvalidIdentity("circle-geometry".into()));
+    };
+    let radius = i128::from(first.start.x.0)
+        .checked_sub(i128::from(first.center.x.0))
+        .map(i128::unsigned_abs)
+        .and_then(|value| i64::try_from(value).ok())
+        .map(Picometres)
+        .ok_or(FabricationError::ArithmeticOverflow)?;
+    let opposite = i128::from(first.center.x.0)
+        .checked_sub(i128::from(first.end.x.0))
+        .map(i128::unsigned_abs)
+        .and_then(|value| i64::try_from(value).ok())
+        .map(Picometres)
+        .ok_or(FabricationError::ArithmeticOverflow)?;
+    if !contour.closed
+        || first.center != second.center
+        || first.start != second.end
+        || first.end != second.start
+        || first.start.y != first.center.y
+        || first.end.y != first.center.y
+        || first.start == first.end
+        || radius != opposite
+        || radius.0 <= 0
+        || first.width.is_some()
+        || second.width.is_some()
+        || first.direction != second.direction
+        || first.quadrant != QuadrantMode::Multi
+        || second.quadrant != QuadrantMode::Multi
+        || first.source_resolution != second.source_resolution
+        || first.source_resolution.0 <= 0
+    {
+        return Err(FabricationError::InvalidIdentity("circle-geometry".into()));
+    }
+    Ok((first.center, radius, first.source_resolution))
+}
+
 fn validate_transformed_geometry(
     geometry: &Geometry,
     transforms: &TransformChain,
@@ -5289,7 +5983,7 @@ pub(crate) fn schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["status", "packageId", "modelDigest", "inputOutcomes", "product", "documents", "layers", "tools", "apertures", "macros", "blocks", "repetitions", "features", "physicalBounds", "profile", "connectivity", "x2Attributes", "jobFileFunctions", "assembly", "construction", "constraints", "capabilities", "omissions", "conflicts", "sourcePair", "nativeReconciliationSource", "integrationOutcome", "reconciliations", "warnings", "limits", "estimatedAllocationBytes"],
+        "required": ["status", "packageId", "modelDigest", "inputOutcomes", "product", "documents", "layers", "tools", "apertures", "macros", "blocks", "repetitions", "features", "physicalBounds", "profile", "connectivity", "padHoleAssociations", "x2Attributes", "jobFileFunctions", "assembly", "construction", "constraints", "capabilities", "omissions", "conflicts", "sourcePair", "nativeReconciliationSource", "integrationOutcome", "reconciliations", "warnings", "limits", "estimatedAllocationBytes"],
         "properties": {
             "status": { "enum": ["not_provided", "partial", "complete", "failed"] },
             "packageId": { "type": "string", "pattern": "^package-v1-[0-9a-f]{64}$" },
@@ -5307,6 +6001,7 @@ pub(crate) fn schema() -> Value {
             "physicalBounds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.recognized_files, "items": { "$ref": "#/$defs/documentPhysicalBounds" } },
             "profile": { "oneOf": [{ "$ref": "#/$defs/boardProfile" }, { "type": "null" }] },
             "connectivity": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/objectSemantics" } },
+            "padHoleAssociations": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/padHoleAssociation" } },
             "x2Attributes": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/scopedX2Attribute" } },
             "jobFileFunctions": { "type": "array", "maxItems": MANUFACTURING_LIMITS.recognized_files, "items": { "$ref": "#/$defs/jobFileFunctionFact" } },
             "assembly": { "$ref": "#/$defs/assemblyEvidence" },
@@ -5670,6 +6365,26 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
             } }),
         ),
         (
+            "padHoleAssociation",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "padId", "holeId", "toolId", "applicableLayerIds", "plating", "span", "padGeometry", "holeGeometry", "padProvenance", "holeProvenance"],
+                "properties": {
+                    "id": { "type": "string", "pattern": "^pad-hole-association-v1-[0-9a-f]{64}$" },
+                    "padId": { "type": "string", "pattern": "^pad-v1-[0-9a-f]{64}$" },
+                    "holeId": { "$ref": "#/$defs/featureId" },
+                    "toolId": { "$ref": "#/$defs/toolId" },
+                    "applicableLayerIds": { "type": "array", "minItems": 1, "maxItems": MANUFACTURING_LIMITS.geometry_features, "uniqueItems": true, "items": { "$ref": "#/$defs/layerId" } },
+                    "plating": { "const": "plated" },
+                    "span": { "$ref": "#/$defs/layerSpan" },
+                    "padGeometry": { "type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": { "kind": { "const": "contour" }, "value": { "$ref": "#/$defs/canonicalContour" } } },
+                    "holeGeometry": { "type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": { "kind": { "const": "drill" }, "value": { "$ref": "#/$defs/drillFeature" } } },
+                    "padProvenance": { "$ref": "#/$defs/manufacturingProvenance" },
+                    "holeProvenance": { "$ref": "#/$defs/manufacturingProvenance" }
+                }
+            }),
+        ),
+        (
             "scopedX2Attribute",
             json!({
                 "type": "object", "additionalProperties": false,
@@ -5714,16 +6429,71 @@ pub(crate) fn schema_defs() -> Vec<(&'static str, Value)> {
             }),
         ),
         (
+            "assemblyPlacementConvention",
+            json!({ "type": "object", "additionalProperties": false, "required": ["unit", "origin", "side", "bottomMirroring", "rotationDirection"], "properties": {
+                "unit": { "enum": ["millimetre", "inch", null] },
+                "origin": { "enum": ["kicad_board", "unknown"] },
+                "side": { "enum": ["top_bottom", "unknown"] },
+                "bottomMirroring": { "enum": ["mirrored", "unmirrored", "unknown"] },
+                "rotationDirection": { "enum": ["counter_clockwise", "clockwise", "unknown"] }
+            } }),
+        ),
+        (
             "assemblyPlacement",
-            json!({ "type": "object", "additionalProperties": false, "required": ["reference", "side", "position", "rotationMicrodegrees", "provenance"], "properties": {
-                "reference": { "type": "string", "maxLength": MANUFACTURING_LIMITS.max_text_bytes }, "side": { "enum": ["top", "bottom", "inner", "both", "not_applicable", "unknown"] },
-                "position": { "$ref": "#/$defs/canonicalPoint" }, "rotationMicrodegrees": { "type": "integer", "minimum": -9223372036854775808_i128, "maximum": 9223372036854775807_i128 }, "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
+            json!({ "type": "object", "additionalProperties": false, "required": ["id", "occurrenceId", "reference", "side", "position", "rotationMicrodegrees", "fitted", "revision", "convention", "provenance"], "properties": {
+                "id": { "type": "string", "pattern": "^assembly-placement-v1-[0-9a-f]{64}$" },
+                "occurrenceId": { "type": ["string", "null"], "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                "reference": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                "side": { "enum": ["top", "bottom", "inner", "both", "not_applicable", "unknown"] },
+                "position": { "$ref": "#/$defs/canonicalPoint" },
+                "rotationMicrodegrees": { "type": "integer", "minimum": 0, "maximum": 359_999_999 },
+                "fitted": { "enum": ["fitted", "not_fitted", "unknown"] },
+                "revision": { "type": ["string", "null"], "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                "convention": { "$ref": "#/$defs/assemblyPlacementConvention" },
+                "provenance": { "$ref": "#/$defs/manufacturingProvenance" }
+            } }),
+        ),
+        (
+            "declaredAssemblyPlacement",
+            json!({ "type": "object", "additionalProperties": false, "required": ["id", "reference", "side", "position", "rotationMicrodegrees", "fitted", "revision", "convention", "sourcePath", "artifactDigest", "line"], "properties": {
+                "id": { "type": "string", "pattern": "^declared-assembly-placement-v1-[0-9a-f]{64}$" },
+                "reference": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                "side": { "enum": ["top", "bottom"] },
+                "position": { "$ref": "#/$defs/canonicalPoint" },
+                "rotationMicrodegrees": { "type": "integer", "minimum": 0, "maximum": 359_999_999 },
+                "fitted": { "enum": ["fitted", "not_fitted"] },
+                "revision": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                "convention": { "$ref": "#/$defs/assemblyPlacementConvention" },
+                "sourcePath": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.normalized_path_bytes },
+                "artifactDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "line": { "type": "integer", "minimum": 1, "maximum": MANUFACTURING_LIMITS.geometry_features }
+            } }),
+        ),
+        (
+            "nativeCourtyardObservation",
+            json!({ "type": "object", "additionalProperties": false, "required": ["id", "kind", "exclusion", "location"], "properties": {
+                "id": { "type": "string", "pattern": "^native-courtyard-observation-v1-[0-9a-f]{64}$" },
+                "kind": { "enum": ["overlap", "malformed", "missing"] },
+                "exclusion": { "enum": ["active", "excluded", "unknown"] },
+                "location": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes }
+            } }),
+        ),
+        (
+            "nativeCourtyardEvidence",
+            json!({ "type": "object", "additionalProperties": false, "required": ["state", "tool", "version", "source", "observations"], "properties": {
+                "state": { "enum": ["complete", "partial", "not_run", "disabled", "failed"] },
+                "tool": { "type": "string", "minLength": 1, "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                "version": { "type": ["string", "null"], "maxLength": MANUFACTURING_LIMITS.max_text_bytes },
+                "source": { "type": ["string", "null"], "maxLength": MANUFACTURING_LIMITS.normalized_path_bytes },
+                "observations": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/nativeCourtyardObservation" } }
             } }),
         ),
         (
             "assemblyEvidence",
-            json!({ "type": "object", "additionalProperties": false, "required": ["placements", "maskLayerIds", "pasteLayerIds"], "properties": {
+            json!({ "type": "object", "additionalProperties": false, "required": ["placements", "declaredPlacements", "nativeCourtyard", "maskLayerIds", "pasteLayerIds"], "properties": {
                 "placements": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/assemblyPlacement" } },
+                "declaredPlacements": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/declaredAssemblyPlacement" } },
+                "nativeCourtyard": { "oneOf": [{ "$ref": "#/$defs/nativeCourtyardEvidence" }, { "type": "null" }] },
                 "maskLayerIds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/layerId" } },
                 "pasteLayerIds": { "type": "array", "maxItems": MANUFACTURING_LIMITS.geometry_features, "items": { "$ref": "#/$defs/layerId" } }
             } }),
@@ -11138,7 +11908,10 @@ fn analyze_x2_scopes<'a>(
                         file_supported = false;
                         unsupported.push((X2AttributeScope::File, attribute.provenance.clone()));
                     }
-                    "TA.AperFunction" if valid_values(1) => {
+                    "TA.AperFunction"
+                        if !attribute.values.is_empty()
+                            && attribute.values.iter().all(|value| !value.is_empty()) =>
+                    {
                         aperture_any = true;
                         aperture_active = Some(push_record(
                             &mut records,
@@ -14893,6 +15666,9 @@ fn append_review(target: &mut FabricationReview, mut source: FabricationReview) 
     target.features.append(&mut source.features);
     target.physical_bounds.append(&mut source.physical_bounds);
     target.connectivity.append(&mut source.connectivity);
+    target
+        .pad_hole_associations
+        .append(&mut source.pad_hole_associations);
     target.x2_attributes.append(&mut source.x2_attributes);
     target
         .job_file_functions

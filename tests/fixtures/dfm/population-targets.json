@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "familyId": "assembly.population-parity",
+  "familyVersion": "v1",
+  "fixtureDigest": "985e199bdaf7fd8a59c1a6ca7f63937e5d6f772794e0d597a0ab631edad674f9",
+  "targets": [
+    {
+      "caseId": "fitted-occurrence-missing-placement",
+      "caseClass": "positive",
+      "canonicalTargetIds": ["occurrence:root/sheet-a/r1", "placement:root-positions.csv#r1"],
+      "expectedLabel": "violation",
+      "actualLabel": "finding"
+    },
+    {
+      "caseId": "grouped-bom-quantity-mismatch",
+      "caseClass": "positive",
+      "canonicalTargetIds": ["bom:root-bom.csv#group-r1-r2", "occurrence:root/sheet-a/r1", "occurrence:root/sheet-a/r2"],
+      "expectedLabel": "violation",
+      "actualLabel": "finding"
+    },
+    {
+      "caseId": "fitted-occurrence-present-everywhere",
+      "caseClass": "hard_negative",
+      "canonicalTargetIds": ["bom:root-bom.csv#r3", "occurrence:root/sheet-a/r3", "placement:root-positions.csv#r3"],
+      "expectedLabel": "clean",
+      "actualLabel": "no_finding"
+    },
+    {
+      "caseId": "explicit-dnp-omitted-from-placement",
+      "caseClass": "hard_negative",
+      "canonicalTargetIds": ["bom:root-bom.csv#r4", "occurrence:root/sheet-a/r4"],
+      "expectedLabel": "clean",
+      "actualLabel": "no_finding"
+    }
+  ],
+  "unsupportedTargets": [
+    {
+      "caseId": "ambiguous-duplicate-reference",
+      "canonicalTargetIds": ["occurrence:root/sheet-a/r5", "occurrence:root/sheet-b/r5"],
+      "expectedStatus": "not_checked",
+      "actualStatus": "not_checked",
+      "reason": "Occurrence identity is ambiguous; reference-only fallback cannot establish a target."
+    }
+  ]
+}

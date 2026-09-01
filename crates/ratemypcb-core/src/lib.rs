@@ -1,13 +1,16 @@
 #![recursion_limit = "256"]
 
+mod dfm;
 pub mod fabrication;
 mod schematic;
 pub mod stackup;
 mod supply;
 
+pub use dfm::DfmDeclarations;
 pub use schematic::{
-    NativeMarker as NativeViolation, NativeReport as NativeDrc, SchematicCapability, SchematicFact,
-    SchematicMismatch, SchematicOccurrence, SchematicReview, SchematicSourcePair,
+    NativeMarker as NativeViolation, NativeReport as NativeDrc, SchematicCapability,
+    SchematicComparisonSource, SchematicFact, SchematicFootprintComparison, SchematicMismatch,
+    SchematicOccurrence, SchematicReview, SchematicSourcePair,
 };
 
 use serde::{Deserialize, Serialize};
@@ -633,6 +636,7 @@ pub struct ReviewOptions {
     pub bom: Option<PathBuf>,
     pub placement: Option<PathBuf>,
     pub supply_snapshot: Option<PathBuf>,
+    pub dfm_declarations: Option<DfmDeclarations>,
     pub preset: Preset,
     pub native: NativeMode,
     pub tool_version: String,
@@ -2902,6 +2906,58 @@ fn native_finding_summaries(violations: &[NativeViolation]) -> Vec<Finding> {
         .collect()
 }
 
+fn replaced_native_courtyard_check_ids(
+    review: &fabrication::FabricationReview,
+    assembly_findings: &[Finding],
+    assembly_coverage: &[Coverage],
+) -> BTreeSet<&'static str> {
+    let completed = assembly_coverage.iter().any(|coverage| {
+        coverage.id == "assembly.courtyard-native.v1"
+            && matches!(
+                coverage.status,
+                CoverageStatus::Passed | CoverageStatus::Attention | CoverageStatus::Unknown
+            )
+    });
+    let Some(courtyard) = completed
+        .then_some(review.assembly.native_courtyard.as_ref())
+        .flatten()
+        .filter(|courtyard| courtyard.state == fabrication::NativeCourtyardRunState::Complete)
+    else {
+        return BTreeSet::new();
+    };
+    [
+        (
+            fabrication::NativeCourtyardKind::Overlap,
+            "kicad-native-violations-courtyards-overlap",
+        ),
+        (
+            fabrication::NativeCourtyardKind::Malformed,
+            "kicad-native-violations-malformed-courtyard",
+        ),
+        (
+            fabrication::NativeCourtyardKind::Missing,
+            "kicad-native-violations-missing-courtyard",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(kind, native_id)| {
+        let active = courtyard.observations.iter().filter(|observation| {
+            observation.kind == kind
+                && observation.exclusion == fabrication::NativeExclusionState::Active
+        });
+        let mut count = 0_usize;
+        let all_replaced = active.fold(true, |replaced, observation| {
+            count += 1;
+            replaced
+                && assembly_findings.iter().any(|finding| {
+                    finding.id == format!("assembly.courtyard-native.v1/{}", observation.id)
+                })
+        });
+        (count > 0 && all_replaced).then_some(native_id)
+    })
+    .collect()
+}
+
 fn checks_score(findings: &[Finding]) -> u8 {
     let score_key = |finding: &Finding| {
         let title = finding.title.to_ascii_lowercase();
@@ -3396,6 +3452,21 @@ fn required_coverage(scope: ReviewScope) -> &'static [&'static str] {
     }
 }
 
+fn ensure_required_coverage_occurrences(scope: ReviewScope, coverage: &mut Vec<Coverage>) {
+    for check_id in required_coverage(scope) {
+        if !coverage.iter().any(|item| item.id == *check_id) {
+            coverage.push(Coverage {
+                id: (*check_id).into(),
+                label: format!("Required evidence: {check_id}"),
+                status: CoverageStatus::Unknown,
+                evidence:
+                    "The required coverage occurrence was not produced; release remains blocked."
+                        .into(),
+            });
+        }
+    }
+}
+
 fn category_summaries(
     scope: ReviewScope,
     coverage: &[Coverage],
@@ -3501,7 +3572,12 @@ fn finalize_evidence(
                       location: BTreeMap<String, String>,
                       confidence,
                       freshness| {
-        let artifact_digest = digest_for(source).to_string();
+        let artifact_digest = if dfm::is_assembly_model_family_check(check_id) {
+            digest_for("fabrication")
+        } else {
+            digest_for(source)
+        }
+        .to_string();
         let id = evidence_id(&artifact_digest, check_id, &location);
         let producer_name = if source.starts_with("kicad-cli")
             || matches!(source, "schematic-erc" | "schematic-parity")
@@ -3580,6 +3656,16 @@ fn finalize_evidence(
             "schematic-evidence" => "schematic-evidence",
             "schematic-erc" => "schematic-erc",
             "schematic-parity" => "schematic-parity",
+            dfm::POPULATION_PARITY_FAMILY => "schematic-reconciliation",
+            id if dfm::is_footprint_string_family_check(id) => "schematic-reconciliation",
+            id if id == "dfm-declarations" || id.starts_with("dfm-declaration-gap/") => {
+                "dfm-declarations"
+            }
+            id if dfm::is_fabrication_family_check(id)
+                || dfm::is_assembly_model_family_check(id) =>
+            {
+                "fabrication"
+            }
             "gerber-syntax" | "package-gerbers" | "drill-data" => "fabrication",
             _ => "board",
         };
@@ -3912,6 +3998,7 @@ fn validate_schematic_report(report: &SchematicReview) -> Result<(), Error> {
         || report.occurrences.len() > 20_000
         || report.capabilities.len() > 1024
         || report.mismatches.len() > 20_000
+        || report.footprint_comparisons.len() > 60_000
         || report.limitations.len() > 1024
         || report.artifact_digests.len() > 2_000
         || report.declared_revisions.len() > 2_000
@@ -4033,6 +4120,98 @@ fn validate_schematic_report(report: &SchematicReview) -> Result<(), Error> {
             "Schematic occurrence identities must be unique.".into(),
         ));
     }
+    let occurrences = report
+        .occurrences
+        .iter()
+        .map(|occurrence| (occurrence.key.as_str(), occurrence))
+        .collect::<BTreeMap<_, _>>();
+    let mut comparison_keys = BTreeSet::new();
+    for comparison in &report.footprint_comparisons {
+        let occurrence = occurrences
+            .get(comparison.occurrence_key.as_str())
+            .copied()
+            .ok_or_else(|| {
+                Error::Invalid("Schematic footprint comparison occurrence is dangling.".into())
+            })?;
+        let expected_location = format!(
+            "sheet={};item={};source={}",
+            occurrence.sheet_uuid_path, occurrence.item_uuid, occurrence.source_path
+        );
+        let join_valid = match comparison.source {
+            SchematicComparisonSource::Board | SchematicComparisonSource::Netlist => matches!(
+                comparison.join.as_str(),
+                "occurrence-uuid" | "reference-fallback"
+            ),
+            SchematicComparisonSource::Bom => comparison.join == "reference-fallback",
+        };
+        let source_pair_valid = comparison.source != SchematicComparisonSource::Board
+            || report.source_pair.as_ref().is_some_and(|pair| {
+                comparison.actual_source_path == pair.board_path
+                    && comparison.actual_source_digest == pair.board_digest
+            });
+        if comparison.field != "footprint"
+            || comparison.expected.is_empty()
+            || comparison.actual.is_empty()
+            || comparison.expected.len() > 4096
+            || comparison.actual.len() > 4096
+            || comparison.expected_source_path != occurrence.source_path
+            || comparison.expected_source_path.len() > 512
+            || comparison.actual_source_path.is_empty()
+            || comparison.actual_source_path.len() > 512
+            || comparison.actual_source_path == comparison.expected_source_path
+            || comparison.location != expected_location
+            || comparison.location.len() > 4096
+            || !lowercase_sha256(&comparison.expected_source_digest)
+            || !lowercase_sha256(&comparison.actual_source_digest)
+            || report
+                .artifact_digests
+                .get(&comparison.expected_source_path)
+                != Some(&comparison.expected_source_digest)
+            || report.artifact_digests.get(&comparison.actual_source_path)
+                != Some(&comparison.actual_source_digest)
+            || !join_valid
+            || comparison.confidence
+                != if comparison.join == "reference-fallback" {
+                    "low"
+                } else {
+                    "high"
+                }
+            || !source_pair_valid
+            || !comparison_keys.insert((
+                comparison.occurrence_key.as_str(),
+                comparison.field.as_str(),
+                comparison.source,
+            ))
+        {
+            return Err(Error::Invalid(
+                "Schematic footprint comparison authority is invalid or duplicated.".into(),
+            ));
+        }
+        let mismatch_field = match comparison.source {
+            SchematicComparisonSource::Board => "footprint",
+            SchematicComparisonSource::Bom => "bom-footprint",
+            SchematicComparisonSource::Netlist => "netlist-footprint",
+        };
+        let matching_mismatches = report
+            .mismatches
+            .iter()
+            .filter(|mismatch| {
+                mismatch.field == mismatch_field
+                    && mismatch.expected == comparison.expected
+                    && mismatch.actual == comparison.actual
+                    && mismatch.join == comparison.join
+                    && mismatch.confidence == comparison.confidence
+                    && mismatch.location == comparison.location
+            })
+            .count();
+        if (comparison.matched && matching_mismatches != 0)
+            || (!comparison.matched && matching_mismatches != 1)
+        {
+            return Err(Error::Invalid(
+                "Schematic footprint comparison result disagrees with typed mismatches.".into(),
+            ));
+        }
+    }
     if let Some(native) = &report.native_erc {
         validate_native_report(native, NativeReportChannel::Erc)?;
     }
@@ -4081,11 +4260,86 @@ fn validate_report_with_fabrication_deadline(
     }
     validate_bom_bounds(&report.bom)?;
     validate_schematic_report(&report.schematic)?;
+    let population_inputs_complete = dfm::population_inputs_complete(
+        &report.schematic,
+        report.coverage.iter().map(|coverage| {
+            (
+                evidence_check_id(&coverage.id, &report.evidence),
+                &coverage.status,
+            )
+        }),
+        report.artifacts.iter().map(|artifact| {
+            (
+                artifact.path.as_str(),
+                artifact.kind.as_str(),
+                artifact.selected,
+            )
+        }),
+    );
+    dfm::validate_population_parity(
+        &report.schematic,
+        population_inputs_complete,
+        &report.findings,
+        &report.coverage,
+        &report.evidence,
+    )
+    .map_err(|error| Error::Invalid(format!("Invalid population parity evidence: {error}")))?;
     match deadline {
         Some(deadline) => report.fabrication.validate_with_deadline(deadline),
         None => report.fabrication.validate(),
     }
     .map_err(|error| Error::Invalid(format!("Invalid fabrication model: {error}")))?;
+    let declaration_document = dfm::declaration_document(&report.fabrication)?;
+    let declaration_artifacts = report
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == "dfm-declarations")
+        .collect::<Vec<_>>();
+    if declaration_document.is_some_and(|document| {
+        declaration_artifacts.len() != 1
+            || !declaration_artifacts[0].selected
+            || declaration_artifacts[0].path != document.virtual_path
+    }) || (declaration_document.is_none() && !declaration_artifacts.is_empty())
+    {
+        return Err(Error::Invalid(
+            "DFM declaration artifact inventory does not match canonical evidence.".into(),
+        ));
+    }
+    if !report.fabrication.assembly.declared_placements.is_empty() {
+        let selected_placement_paths = report
+            .artifacts
+            .iter()
+            .filter(|artifact| artifact.kind == "placement" && artifact.selected)
+            .map(|artifact| artifact.path.as_str())
+            .collect::<BTreeSet<_>>();
+        let declared_paths = report
+            .fabrication
+            .assembly
+            .declared_placements
+            .iter()
+            .map(|placement| placement.source_path.as_str())
+            .collect::<BTreeSet<_>>();
+        let Some(path) = declared_paths.iter().copied().next() else {
+            return Err(Error::Invalid(
+                "Declared assembly rows have no selected placement artifact.".into(),
+            ));
+        };
+        if declared_paths.len() != 1
+            || !selected_placement_paths.contains(path)
+            || !report
+                .fabrication
+                .assembly
+                .declared_placements
+                .iter()
+                .all(|placement| {
+                    report.schematic.artifact_digests.get(path) == Some(&placement.artifact_digest)
+                })
+        {
+            return Err(Error::Invalid(
+                "Declared assembly rows do not match the selected placement artifact.".into(),
+            ));
+        }
+    }
     for requirements in fabrication::STABLE_FABRICATION_ANALYZERS {
         let passed = report.coverage.iter().any(|coverage| {
             evidence_check_id(&coverage.id, &report.evidence) == requirements.check_family
@@ -4107,6 +4361,23 @@ fn validate_report_with_fabrication_deadline(
         }
     }
     validate_native_report(&report.native_drc, NativeReportChannel::Drc)?;
+    let normalized_courtyard = fabrication::normalize_native_courtyard_report(&report.native_drc)
+        .map_err(|error| {
+        Error::Invalid(format!("Invalid native courtyard normalization: {error}"))
+    })?;
+    let retained_courtyard = report.fabrication.assembly.native_courtyard.as_ref();
+    let decision_bearing_courtyard = retained_courtyard.is_some_and(|courtyard| {
+        matches!(
+            courtyard.state,
+            fabrication::NativeCourtyardRunState::Complete
+                | fabrication::NativeCourtyardRunState::Partial
+        ) || !courtyard.observations.is_empty()
+    }) || !normalized_courtyard.observations.is_empty();
+    if decision_bearing_courtyard && retained_courtyard != Some(&normalized_courtyard) {
+        return Err(Error::Invalid(
+            "Canonical courtyard observations do not match the native DRC channel.".into(),
+        ));
+    }
     if let Some(profile) = &report.profile_drc {
         validate_native_report(profile, NativeReportChannel::Drc)?;
     }
@@ -4149,6 +4420,9 @@ fn validate_report_with_fabrication_deadline(
             report.schematic.root_digest.as_deref()
         } else if record.check_id == "schematic-evidence"
             || record.check_id == "schematic-parity"
+            || record.check_id == dfm::POPULATION_PARITY_FAMILY
+            || dfm::is_population_finding_check(&record.check_id)
+            || dfm::is_footprint_string_family_check(&record.check_id)
             || record.check_id.starts_with("schematic-reconcile-")
         {
             report
@@ -4156,10 +4430,17 @@ fn validate_report_with_fabrication_deadline(
                 .artifact_digests
                 .get("schematic:composite")
                 .map(String::as_str)
-        } else if matches!(
-            record.check_id.as_str(),
-            "package-gerbers" | "gerber-syntax" | "drill-data"
-        ) {
+        } else if record.check_id == "dfm-declarations"
+            || record.check_id.starts_with("dfm-declaration-gap/")
+        {
+            declaration_document.map(|document| document.artifact_digest.as_str())
+        } else if dfm::is_fabrication_family_check(&record.check_id)
+            || dfm::is_assembly_model_family_check(&record.check_id)
+            || matches!(
+                record.check_id.as_str(),
+                "package-gerbers" | "gerber-syntax" | "drill-data"
+            )
+        {
             Some(report.fabrication.model_digest.as_str())
         } else {
             None
@@ -4188,8 +4469,57 @@ fn validate_report_with_fabrication_deadline(
             "Every finding and coverage occurrence must have exactly one provenance record.".into(),
         ));
     }
+    if report.findings.iter().any(|finding| {
+        report
+            .evidence
+            .iter()
+            .find(|record| record.id == finding.id)
+            .is_none_or(|record| record.kind != "finding")
+    }) || report.coverage.iter().any(|coverage| {
+        report
+            .evidence
+            .iter()
+            .find(|record| record.id == coverage.id)
+            .is_none_or(|record| record.kind != "coverage")
+    }) {
+        return Err(Error::Invalid(
+            "Evidence kinds must match their finding or coverage occurrence.".into(),
+        ));
+    }
+    dfm::validate_fabrication_families(
+        &report.fabrication,
+        &report.schematic,
+        &report.findings,
+        &report.coverage,
+        &report.evidence,
+        deadline,
+    )
+    .map_err(|error| Error::Invalid(format!("Invalid fabrication DFM evidence: {error}")))?;
+    dfm::validate_assembly_families(
+        &report.fabrication,
+        &report.schematic,
+        &report.findings,
+        &report.coverage,
+        &report.evidence,
+        deadline,
+    )
+    .map_err(|error| Error::Invalid(format!("Invalid assembly evidence: {error}")))?;
+    dfm::validate_gate_impacts(&report.findings, &report.evidence)
+        .map_err(|error| Error::Invalid(format!("Invalid DFM GateImpact: {error}")))?;
     let expected_required =
         required_evidence_summary(report.review_scope, &report.coverage, &report.evidence);
+    if expected_required.iter().any(|item| {
+        item.evidence_id.is_empty()
+            || report.evidence.iter().all(|record| {
+                record.id != item.evidence_id
+                    || record.kind != "coverage"
+                    || record.check_id != item.check_id
+            })
+    }) {
+        return Err(Error::Invalid(
+            "Every required check needs canonical coverage evidence.".into(),
+        ));
+    }
     if report.required_evidence != expected_required {
         return Err(Error::Invalid(
             "Required evidence summary does not match authoritative coverage.".into(),
@@ -4319,6 +4649,32 @@ pub fn validate_assessment(report: &Report, assessment: &Assessment) -> Result<(
         }
         validate_refs("question", &item.evidence_refs, &evidence)?;
     }
+    if assessment.disposition != "approve" {
+        let top = dfm::top_unblock_evidence_refs(
+            required_coverage(report.review_scope),
+            &report.required_evidence,
+            &report.findings,
+            &report.evidence,
+        )
+        .map_err(|error| Error::Invalid(format!("Cannot rank release unblock: {error}")))?;
+        let priority_one = assessment
+            .actions
+            .iter()
+            .find(|action| action.priority == 1)
+            .ok_or_else(|| {
+                Error::Invalid("A non-approve assessment requires a priority 1 action.".into())
+            })?;
+        if top.is_empty()
+            || !priority_one
+                .evidence_refs
+                .iter()
+                .any(|reference| top.contains(reference))
+        {
+            return Err(Error::Invalid(
+                "Assessment priority 1 must reference the top release-unblock evidence.".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -4400,6 +4756,7 @@ fn manufacturing_review(
                 );
             }
             Ok(native) => {
+                let native_assembly = native.review.clone();
                 match fabrication::reconcile_native_package_with_deadline(
                     fabrication.clone(),
                     native,
@@ -4408,6 +4765,16 @@ fn manufacturing_review(
                     Ok(reconciled) => fabrication = reconciled,
                     Err(error) => {
                         semantic_failures.push(format!("native/package reconciliation: {error}"));
+                        fabrication::retain_native_assembly_only(
+                            &mut fabrication,
+                            &native_assembly,
+                            manufacturing_deadline,
+                        )
+                        .map_err(|assembly_error| {
+                            Error::Invalid(format!(
+                                "Invalid retained native assembly evidence: {assembly_error}"
+                            ))
+                        })?;
                         fabrication.status = fabrication::FabricationStatus::Partial;
                         set_fabrication_capability(
                             &mut fabrication,
@@ -4618,6 +4985,14 @@ fn manufacturing_review(
 
 pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
     let mut loaded = load_path(path, options.board.as_deref())?;
+    if let Some(declarations) = options.dfm_declarations.as_ref() {
+        loaded.artifacts.push(Artifact {
+            path: declarations.source_path().into(),
+            kind: "dfm-declarations".into(),
+            format: "ratemypcb-dfm-1".into(),
+            selected: true,
+        });
+    }
     if let Some(path) = options.bom.as_deref() {
         let bom = load_explicit_bom(path)?;
         loaded.artifacts.push(Artifact {
@@ -4691,12 +5066,23 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
         .map(|(preset, _)| *preset)
         .unwrap_or(project_preset);
     let manufacturing_deadline = loaded.manufacturing_deadline;
-    let (fabrication_review, manufacturing_findings, manufacturing_coverage) =
+    let (mut fabrication_review, manufacturing_findings, manufacturing_coverage) =
         manufacturing_review(&loaded, manufacturing_deadline)?;
+    dfm::apply_declared_assembly_placements(
+        &mut fabrication_review,
+        placement
+            .as_ref()
+            .map(|(name, source)| (name.as_str(), source.as_str())),
+    )?;
+    let declaration_coverage =
+        dfm::apply_declarations(&mut fabrication_review, options.dfm_declarations.as_ref())?;
+    let declaration_gaps = dfm::normalized_declaration_gaps(&declaration_coverage, None)
+        .map_err(|error| Error::Invalid(format!("Invalid DFM declaration gaps: {error}")))?;
     let mut findings = loaded.package_findings;
     findings.extend(manufacturing_findings);
     let mut coverage = loaded.package_coverage;
     coverage.extend(manufacturing_coverage);
+    coverage.extend(declaration_coverage);
     coverage.push(Coverage {
         id: "project-rules".into(),
         label: "Project manufacturing rules".into(),
@@ -4798,8 +5184,33 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
                 .map(|(name, source)| (name.as_str(), source.as_str())),
             native_mode: options.native,
         })?;
-    findings.extend(schematic_findings);
     coverage.extend(schematic_coverage);
+    let (fabrication_findings, fabrication_coverage) = dfm::fabrication_families_with_gaps(
+        &fabrication_review,
+        Some(&schematic_review),
+        &declaration_gaps,
+        manufacturing_deadline,
+    );
+    findings.extend(fabrication_findings);
+    coverage.extend(fabrication_coverage);
+    let population_inputs_complete = dfm::population_inputs_complete(
+        &schematic_review,
+        coverage
+            .iter()
+            .map(|coverage| (coverage.id.as_str(), &coverage.status)),
+        loaded.artifacts.iter().map(|artifact| {
+            (
+                artifact.path.as_str(),
+                artifact.kind.as_str(),
+                artifact.selected,
+            )
+        }),
+    );
+    let (population_findings, population_coverage) =
+        dfm::population_parity(&schematic_review, population_inputs_complete);
+    let population_checked = population_coverage.status != CoverageStatus::NotRun;
+    findings.extend(population_findings);
+    coverage.push(population_coverage);
     if let Some((_name, source)) = &supply {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -4881,7 +5292,6 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
             vec![],
         )
     };
-    findings.extend(native_findings);
     coverage.push(Coverage {
         id: "native-drc".into(),
         label: "Exact clearance and connectivity".into(),
@@ -4896,6 +5306,43 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
         },
         evidence: native.note.clone(),
     });
+    fabrication_review.assembly.native_courtyard = Some(
+        fabrication::normalize_native_courtyard_report(&native).map_err(|error| {
+            Error::Invalid(format!("Invalid native courtyard evidence: {error}"))
+        })?,
+    );
+    fabrication_review
+        .refresh_digests_with_deadline(manufacturing_deadline)
+        .and_then(|_| fabrication_review.validate_with_deadline(manufacturing_deadline))
+        .map_err(|error| {
+            Error::Invalid(format!(
+                "Invalid normalized native courtyard evidence: {error}"
+            ))
+        })?;
+    let (assembly_findings, assembly_coverage) = dfm::assembly_families(
+        &fabrication_review,
+        &schematic_review,
+        manufacturing_deadline,
+    );
+    let replaced_native_courtyard = replaced_native_courtyard_check_ids(
+        &fabrication_review,
+        &assembly_findings,
+        &assembly_coverage,
+    );
+    let footprint_checked = assembly_coverage.iter().any(|item| {
+        item.id == "assembly.footprint-string-parity.v1" && item.status != CoverageStatus::NotRun
+    });
+    findings.extend(schematic_findings.into_iter().filter(|finding| {
+        (!population_checked || !dfm::is_population_reconciliation_check(&finding.id))
+            && (!footprint_checked || !dfm::is_footprint_reconciliation_check(&finding.id))
+    }));
+    findings.extend(
+        native_findings
+            .into_iter()
+            .filter(|finding| !replaced_native_courtyard.contains(finding.id.as_str())),
+    );
+    findings.extend(assembly_findings);
+    coverage.extend(assembly_coverage);
     let profile_drc = if let Some((preset, profile)) = requested_profile.as_ref() {
         if let Some(board) = &native_board {
             let project_root = native_project_root.expect("native board has a project root");
@@ -4998,6 +5445,7 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
             evidence: "No current provider snapshot was supplied.".into(),
         });
     }
+    ensure_required_coverage_occurrences(options.scope, &mut coverage);
     findings.sort_by(|a, b| b.severity.cmp(&a.severity).then_with(|| a.id.cmp(&b.id)));
     let raw = checks_score(&findings);
     let value = f32::from(raw) / 10.0;
@@ -5061,6 +5509,9 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
     }
     if let Some((_, source)) = &supply {
         artifact_digests.insert("supply".into(), sha256(source));
+    }
+    if let Some(document) = dfm::declaration_document(&fabrication_review)? {
+        artifact_digests.insert("dfm-declarations".into(), document.artifact_digest.clone());
     }
     artifact_digests.extend(schematic_review.artifact_digests.clone());
     if let Some(composite) = schematic_review
@@ -5288,9 +5739,21 @@ pub fn report_schema() -> Value {
           "required": ["checkId", "field", "expected", "actual", "join", "confidence", "gateImpact", "location"],
           "properties": { "checkId": { "type": "string", "maxLength": 512 }, "field": { "type": "string", "maxLength": 512 }, "expected": { "type": "string", "maxLength": 4096 }, "actual": { "type": "string", "maxLength": 4096 }, "join": { "enum": ["occurrence-uuid", "board-uuid-path", "reference-fallback", "unmatched", "artifact-revision"] }, "confidence": { "enum": ["high", "medium", "low", "unknown"] }, "gateImpact": { "const": "evidence_only" }, "location": { "type": "string", "maxLength": 4096 } }
         },
+        "schematicFootprintComparison": {
+          "type": "object", "additionalProperties": false,
+          "required": ["occurrenceKey", "field", "source", "expected", "actual", "join", "confidence", "expectedSourcePath", "expectedSourceDigest", "actualSourcePath", "actualSourceDigest", "location", "matched"],
+          "properties": {
+            "occurrenceKey": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "field": { "const": "footprint" }, "source": { "enum": ["board", "bom", "netlist"] },
+            "expected": { "type": "string", "minLength": 1, "maxLength": 4096 }, "actual": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "join": { "enum": ["occurrence-uuid", "reference-fallback"] }, "confidence": { "enum": ["high", "low"] },
+            "expectedSourcePath": { "type": "string", "minLength": 1, "maxLength": 512 }, "expectedSourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "actualSourcePath": { "type": "string", "minLength": 1, "maxLength": 512 }, "actualSourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "location": { "type": "string", "minLength": 1, "maxLength": 4096 }, "matched": { "type": "boolean" }
+          }
+        },
         "schematicReview": {
           "type": "object", "additionalProperties": false,
-          "required": ["status", "projectIdentity", "rootPath", "rootDigest", "boardPath", "boardDigest", "sourcePair", "artifactDigests", "declaredRevisions", "occurrenceCount", "occurrences", "capabilities", "mismatches", "nativeErc", "nativeParity", "limitations"],
+          "required": ["status", "projectIdentity", "rootPath", "rootDigest", "boardPath", "boardDigest", "sourcePair", "artifactDigests", "declaredRevisions", "occurrenceCount", "occurrences", "capabilities", "mismatches", "footprintComparisons", "nativeErc", "nativeParity", "limitations"],
           "properties": {
             "status": { "type": "string", "maxLength": 512 }, "projectIdentity": { "type": ["string", "null"], "maxLength": 512 }, "rootPath": { "type": ["string", "null"], "maxLength": 512 }, "rootDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
             "boardPath": { "type": ["string", "null"], "maxLength": 512 }, "boardDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
@@ -5298,7 +5761,7 @@ pub fn report_schema() -> Value {
             "artifactDigests": { "type": "object", "maxProperties": 2000, "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }, "declaredRevisions": { "type": "object", "maxProperties": 2000, "additionalProperties": { "type": "string", "maxLength": 512 } },
             "occurrenceCount": { "type": "integer", "minimum": 0, "maximum": 20000 },
             "occurrences": { "type": "array", "maxItems": 20000, "items": { "$ref": "#/$defs/schematicOccurrence" } }, "capabilities": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/schematicCapability" } },
-            "mismatches": { "type": "array", "maxItems": 20000, "items": { "$ref": "#/$defs/schematicMismatch" } }, "nativeErc": { "oneOf": [{ "$ref": "#/$defs/nativeReport" }, { "type": "null" }] }, "nativeParity": { "oneOf": [{ "$ref": "#/$defs/nativeReport" }, { "type": "null" }] },
+            "mismatches": { "type": "array", "maxItems": 20000, "items": { "$ref": "#/$defs/schematicMismatch" } }, "footprintComparisons": { "type": "array", "maxItems": 60000, "items": { "$ref": "#/$defs/schematicFootprintComparison" } }, "nativeErc": { "oneOf": [{ "$ref": "#/$defs/nativeReport" }, { "type": "null" }] }, "nativeParity": { "oneOf": [{ "$ref": "#/$defs/nativeReport" }, { "type": "null" }] },
             "limitations": { "type": "array", "maxItems": 1024, "items": { "type": "string", "maxLength": 4096 } }
           }
         },
@@ -5544,6 +6007,91 @@ mod tests {
         let findings = native_finding_summaries(&[violation, second]);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].evidence.starts_with("2 active KiCad"));
+    }
+
+    #[test]
+    fn partial_courtyard_run_preserves_active_native_finding_until_replaced() {
+        let marker = NativeViolation {
+            id: "overlap-marker".into(),
+            group: "violations".into(),
+            violation_type: "courtyards_overlap".into(),
+            severity: "error".into(),
+            description: "overlap".into(),
+            items: vec![],
+            excluded: Some(false),
+            comment: None,
+            sheet_path: None,
+            sheet_uuid_path: None,
+            structural_location: "channel=violations;sheet=root;items=footprints;index=0".into(),
+        };
+        let mut native = NativeDrc {
+            status: "completed".into(),
+            tool: "kicad-cli".into(),
+            version: Some("10.0.5".into()),
+            report_version: Some("10.0.5".into()),
+            finding_count: 1,
+            excluded_count: 0,
+            unknown_exclusion_count: 0,
+            note: "partial courtyard fixture".into(),
+            source: Some("board.kicad_pcb".into()),
+            date: Some("2026-09-01T00:00:00Z".into()),
+            included_severities: vec!["error".into(), "warning".into(), "exclusion".into()],
+            ignored_checks: vec![serde_json::json!({"key": "missing_courtyard"})],
+            violations: vec![marker.clone()],
+        };
+        let native_findings = native_finding_summaries(&native.violations);
+        assert_eq!(native_findings.len(), 1);
+        let mut review = fabrication::FabricationReview::default();
+        review.assembly.native_courtyard =
+            Some(fabrication::normalize_native_courtyard_report(&native).unwrap());
+        assert_eq!(
+            review.assembly.native_courtyard.as_ref().unwrap().state,
+            fabrication::NativeCourtyardRunState::Partial
+        );
+        let not_checked = vec![Coverage {
+            id: "assembly.courtyard-native.v1".into(),
+            label: "courtyard".into(),
+            status: CoverageStatus::NotRun,
+            evidence: "not_checked: ignored courtyard check".into(),
+        }];
+        let replaced = replaced_native_courtyard_check_ids(&review, &[], &not_checked);
+        assert!(replaced.is_empty());
+        assert!(
+            native_findings
+                .iter()
+                .any(|finding| !replaced.contains(finding.id.as_str()))
+        );
+
+        native.ignored_checks.clear();
+        review.assembly.native_courtyard =
+            Some(fabrication::normalize_native_courtyard_report(&native).unwrap());
+        let observation = &review
+            .assembly
+            .native_courtyard
+            .as_ref()
+            .unwrap()
+            .observations[0];
+        let assembly_findings = vec![finding(
+            &format!("assembly.courtyard-native.v1/{}", observation.id),
+            Severity::Medium,
+            "Assembly",
+            "Native courtyard overlap",
+            "active overlap".into(),
+            "Resolve it",
+            &observation.location,
+            "kicad-cli",
+        )];
+        let completed = vec![Coverage {
+            id: "assembly.courtyard-native.v1".into(),
+            label: "courtyard".into(),
+            status: CoverageStatus::Attention,
+            evidence: "completed".into(),
+        }];
+        let replaced = replaced_native_courtyard_check_ids(&review, &assembly_findings, &completed);
+        assert_eq!(
+            replaced,
+            BTreeSet::from(["kicad-native-violations-courtyards-overlap"])
+        );
     }
 
     #[test]
@@ -6009,6 +6557,7 @@ mod tests {
                 bom: None,
                 placement: None,
                 supply_snapshot: None,
+                dfm_declarations: None,
                 preset: Preset::named("standard").unwrap(),
                 native: NativeMode::Off,
                 tool_version: "test".into(),
@@ -6022,16 +6571,30 @@ mod tests {
             .iter()
             .map(|item| evidence_check_id(&item.id, &report.evidence))
             .collect();
-        assert_eq!(report.score.raw, 68);
+        assert_eq!(report.score.raw, 60);
+        assert_eq!(ids.len(), 14);
+        for check_id in [
+            "annular-width",
+            "dfm.finish-profile.v1/gap/castellation",
+            "dfm.finish-profile.v1/gap/edge-plating",
+            "dfm.finish-profile.v1/gap/finish",
+            "dfm.finish-profile.v1/gap/profile",
+            "dfm.impedance-special-process.v1/gap/impedance",
+            "dfm.impedance-special-process.v1/gap/special-process",
+            "dfm.stackup-order-confirmation.v1/gap/stackup-order",
+            "dfm.total-thickness-material.v1/gap/thickness-material",
+            "ground-zone",
+            "track-width",
+            "via-diameter",
+            "via-drill",
+        ] {
+            assert!(ids.contains(check_id), "{check_id}");
+        }
         assert_eq!(
-            ids,
-            BTreeSet::from([
-                "annular-width",
-                "ground-zone",
-                "track-width",
-                "via-diameter",
-                "via-drill"
-            ])
+            ids.iter()
+                .filter(|check_id| check_id.starts_with("dfm.drill-span-plating.v1/gap/tool/"))
+                .count(),
+            1
         );
     }
 
@@ -6054,6 +6617,7 @@ mod tests {
                 bom: Some(bom),
                 placement: None,
                 supply_snapshot: None,
+                dfm_declarations: None,
                 preset: Preset::named("standard").unwrap(),
                 native: NativeMode::Off,
                 tool_version: "test".into(),
@@ -6282,6 +6846,7 @@ mod tests {
                 bom: Some(bom),
                 placement: None,
                 supply_snapshot: Some(snapshot),
+                dfm_declarations: None,
                 preset: Preset::named("standard").unwrap(),
                 native: NativeMode::Off,
                 tool_version: "test".into(),
@@ -6324,6 +6889,7 @@ mod tests {
                 bom: None,
                 placement: None,
                 supply_snapshot: None,
+                dfm_declarations: None,
                 preset: Preset::named("standard").unwrap(),
                 native: NativeMode::Off,
                 tool_version: "test".into(),
@@ -6344,6 +6910,20 @@ mod tests {
         assert!(!report.approval_eligible);
         assert!(matches!(report.freshness, EvidenceFreshness::Unknown));
         let evidence_id = report.findings[0].id.clone();
+        let top_unblock = report
+            .required_evidence
+            .iter()
+            .find(|item| {
+                item.execution != EvidenceExecution::Completed
+                    || item.result != EvidenceResult::Pass
+                    || !matches!(
+                        item.freshness,
+                        EvidenceFreshness::Current | EvidenceFreshness::NotApplicable
+                    )
+            })
+            .unwrap()
+            .evidence_id
+            .clone();
         let assessment = Assessment {
             assessment_schema_version: ASSESSMENT_SCHEMA_VERSION.into(),
             report_digest: "0".repeat(64),
@@ -6359,9 +6939,9 @@ mod tests {
             }],
             actions: vec![AssessmentAction {
                 priority: 1,
-                title: "Fix blocker".into(),
+                title: "Supply the top required evidence".into(),
                 rationale: "Required before release".into(),
-                evidence_refs: vec![evidence_id.clone()],
+                evidence_refs: vec![top_unblock],
             }],
             questions: vec![AssessmentQuestion {
                 question: "Has the blocker been corrected?".into(),
@@ -6428,6 +7008,35 @@ mod tests {
                 .to_string()
                 .contains("authoritative coverage")
         );
+    }
+
+    #[test]
+    fn assessment_missing_required_coverage_gets_evidence_bearing_occurrences() {
+        let mut coverage = Vec::new();
+        ensure_required_coverage_occurrences(ReviewScope::Design, &mut coverage);
+        assert_eq!(
+            coverage
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["source-structure", "native-drc"]
+        );
+        let digest = "a".repeat(64);
+        let evidence = finalize_evidence(
+            &mut [],
+            &mut coverage,
+            &BTreeMap::from([("board".into(), digest.clone())]),
+            &digest,
+            "test",
+            EvidenceVersions {
+                native: None,
+                profile_native: None,
+                schematic_erc: None,
+                schematic_parity: None,
+            },
+        );
+        let required = required_evidence_summary(ReviewScope::Design, &coverage, &evidence);
+        assert!(required.iter().all(|item| !item.evidence_id.is_empty()));
     }
 
     #[test]
@@ -6582,6 +7191,7 @@ mod tests {
                 bom: None,
                 placement: None,
                 supply_snapshot: None,
+                dfm_declarations: None,
                 preset: Preset::named("standard").unwrap(),
                 native: NativeMode::Off,
                 tool_version: "test".into(),

@@ -1,19 +1,19 @@
 ---
 gsd_state_version: 1.0
-current_phase: 5
-current_phase_name: Manufacturing Evidence Model and Gerber Baseline
-status: complete
-stopped_at: Phase 5 accepted by one ordinary bounded independent product review; no product findings
-last_updated: "2026-08-30T08:34:23Z"
-last_activity: 2026-08-30
-last_activity_desc: Phase 5 ordinary gates and bounded independent product review passed; withdrawn custom review ceremony remains removed
-state_head: 9a3aaed386996fea8338fb2422ea7aadc66396aa
+current_phase: 7
+current_phase_name: Decision-Grade DFM and Assembly Analysis
+status: in_progress
+stopped_at: Plan 07-09 implementation gates green; repository-lead independent review pending; Plan 07-10 not started
+last_updated: "2026-09-01T14:15:26Z"
+last_activity: 2026-09-01
+last_activity_desc: Implemented bounded assembly access and explicit-target testpoint access; both inference families remain EvidenceOnly and review is pending
+state_head: 5e0fa62a5865cdea1a7755c6bedcedab3a64ba07
 progress:
   total_phases: 8
-  completed_phases: 4
-  total_plans: 18
-  completed_plans: 18
-  percent: 50
+  completed_phases: 5
+  total_plans: 37
+  completed_plans: 34
+  percent: 67
 ---
 
 # Project State
@@ -23,23 +23,23 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-08-26)
 
 **Core value:** A release decision must be honest, actionable, and traceable; missing evidence blocks approval and never becomes low risk or a pass.  
-**Current focus:** Phase 5 complete; Phase 6 not started
+**Current focus:** Phase 7 Plan 07-09 implementation gates green; repository-lead independent review pending; Plan 07-10 not started
 
 ## Current Position
 
-Phase: 5 — Manufacturing Evidence Model and Gerber Baseline
-Plan: 05-06 complete
-Status: Phase 5 complete; FAB-04/FAB-05/FAB-06/FAB-08 accepted
-Last activity: 2026-08-30 — 226 locked Rust tests, 31 Node tests, Clippy, fmt, schema comparison, official local Gerber/XNC corpus coverage, both round-8 regressions, summary verification, and Plan 05-06 structure validation exited 0; one ordinary bounded independent product review returned ACCEPT with no product findings.
+Phase: 7 — Decision-Grade DFM and Assembly Analysis
+Plan: 07-09 implementation complete; independent review pending; Plan 07-10 not started
+Status: The sole `--dfm-declarations` path now carries exact named/versioned inference records with strict units, ranges, IDs, counts, freshness, completeness, and duplicate checks. `assembly.access.v1` compares complete source-linked placement/profile/component-copper geometry only to an explicit process/tool envelope. `assembly.testpoint-access.v1` also requires complete connectivity/component/pin geometry, a named probe/process envelope, and explicit canonical target-net IDs. Names never establish intent. Both families and every finding remain EvidenceOnly because the human checkpoint has no approval.
+Last activity: 2026-09-01 — Plan 07-09 focused filters, 42 DFM tests, 299 workspace Rust tests, all 31 Node tests, fmt, strict workspace Clippy, schema equality, JSON, and diff checks passed. No independent review ran in this feature-lead run; the repository lead owns that one pending review.
 
-Official totals were identical across all four accepted runs: 32 files, 102,909 parser results, 102,908 successes, one parser error, one resolved Route, zero unaccounted errors, 32 warnings, 83,570 features, 54,578 lines, 78 arcs, 23 regions, 28,891 flashes, and 6 macros.
+Exact external decision receipts: `/Users/mattiafiumara/.paseo/worktrees/3s4r2ob6/phase6-interchange-decision/.planning/phases/06-intelligent-interchange-decision-gate/06-01-SUMMARY.md` and `06-08-SUMMARY.md`. PRIVATE SHA `a4216f6909754155555e9290c2ec84e0eb16d267` remains quarantined research only and is not a Phase 7 input.
 
-Progress: [█████░░░░░] 50%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
-- Total plans completed: 18 of 18 written plans.
-- Requirements completed: 39 of 60 v1 requirements.
+- Total plans implemented: 35 of 37 written plans; Plan 07-09 awaits the repository lead's independent review and Plan 07-10 was not started.
+- Requirements completed: 43 complete and 1 not applicable of 60 v1 requirements; DFM-03 is implemented through Plan 07-09, with review and final Phase 7 closure still pending.
 - Phase 3 through Phase 5 Plan 03 execution durations were not measured.
 
 **Per-Plan Metrics:**
@@ -64,6 +64,18 @@ Progress: [█████░░░░░] 50%
 | Phase 05 P04 | not-measured | 1 task | X2/Job/XNC/package foundations and fixtures |
 | Phase 05 P05 | not-measured | 1 task | native/package reconciliation and product surfaces |
 | Phase 05 P06 | not-measured | 1 task | hostile/resource/corpus/full product gates and review |
+| Phase 06 P01 | not-measured | decision | symmetric comparison and human no-go receipt |
+| Phase 06 P02-P07 | not-measured | research | quarantined private evidence only |
+| Phase 06 P08 | not-measured | 2 tasks | verification-only no-go closure; planning files only |
+| Phase 07 P01 | 24min | 1 task | inert contract, fixtures, and review remediation |
+| Phase 07 P02 | not-measured | 2 tasks | format-independent population tracer and validation |
+| Phase 07 P03 | not-measured | 3 tasks | bounded authority seam, family qualification, and deterministic P1 ranking |
+| Phase 07 P04 | 1h 8m | 2 tasks | source-authoritative drill/tool and bounded outline topology |
+| Phase 07 P05 | not-measured | 3 tasks | exact copper edge/clearance and authoritative native annular ring |
+| Phase 07 P06 | not-measured | 2 tasks | exact negative-mask sliver, fitted-SMD paste/mask, and DFM-01 matrix |
+| Phase 07 P07 | complete; one review remediated | 3 tasks | represented construction comparisons, deferred confirmation gaps, and DFM-02 matrix |
+| Phase 07 P08 | complete; reviewed and remediated | 3 tasks | native assembly facts and four deterministic assembly families |
+| Phase 07 P09 | implementation gates green; review pending | 3 tasks | bounded inference declarations, assembly access, testpoint access, and DFM-03 matrix |
 
 ## Accumulated Context
 
@@ -71,23 +83,34 @@ Progress: [█████░░░░░] 50%
 
 - Preserve deterministic report + exact-byte-digest-bound assessment.
 - Separate risk, coverage, confidence, freshness, and approval; required missing evidence closes approval.
-- Keep Gerber/X2+Excellon baseline; ODB++ and IPC-2581 remain gated.
+- Keep native KiCad plus Gerber/X2+Excellon as the strongest supported path; ODB++ and IPC-2581 are no-go for this release and require separately authorized future reopening.
 - Use native `kicad-cli` ERC/DRC/parity before custom source semantics.
 - Exact manufacturer+MPN identity; no provider suggestion is an approved alternate.
 - [Phase 03]: Ship provider-neutral offline supply v2; keep Nexar, Mouser, DigiKey, and LCSC live adapters disabled until written use-specific approval. — Provider terms/account evidence does not authorize RateMyPCB query, retention, embedding, sharing, fixtures, or payload storage.
+- [Phase 06]: Human no-go for both ODB++ and IPC-2581 this release completes FMT-03/FMT-05; FMT-04 is not applicable because no adapter was adopted. Native KiCad plus Gerber/X2+Excellon remains the strongest supported path.
+- [Phase 06]: PRIVATE SHA `a4216f6909754155555e9290c2ec84e0eb16d267` remains quarantined research only; it grants no adoption, integration, distribution, publication, release, or support claim.
+- [Phase 07]: Production DFM/order authority enters only through one bounded source/version/digest/location/applicability declaration seam and normalizes into existing fixed-point constraints/construction; unrepresented facts remain confirmation gaps.
+- [Phase 07]: Exact static family/version policy and report recomputation keep every current family EvidenceOnly; non-approve assessment P1 must intersect the score-independent core-ranked release unblock.
+- [Phase 07]: Minimum-finished-drill accepts only the Plan 07-03 declaration document plus complete round-hit/tool/plating/span facts; routes, slots, presets, and direct constraints cannot supply threshold authority.
+- [Phase 07]: Outline topology uses checked fixed-point line predicates and a bounded conservative arc subset; unsupported arc intersections, polarity, transforms, expansion, or ambiguous exterior/cutout classification remain not_checked.
+- [Phase 07]: Copper-edge and clearance use checked exact axis-line/round-flash distance, deterministic bounded pruning, explicit physical-layer/connectivity identity, and only Plan 07-03 declaration authority; unsupported shapes and unresolved/inexact nearest candidates remain not_checked.
+- [Phase 07]: `PadHoleAssociation` is emitted only from one authoritative native KiCad plated round-pad object with exact pad/hole geometry, span/layers, stable identities, and dual provenance; no package/Gerber/XNC proximity, name, or dimension join is allowed.
+- [Phase 07]: Mask sliver requires explicit negative board-mask polarity, exact dark top-level line/round-flash openings, and one component/pad intent per opening; overlap or multi-pad association without explicit merge authority remains not_checked.
+- [Phase 07]: Paste/mask requires standards-valid X2 `SMDPad` aperture authority, exact concentric round geometry, explicit typed schematic `dnp=false`, and matching placement side; placement or absent hole association alone proves neither fitted state nor SMD applicability.
+- [Phase 07]: Construction match/conflict is limited to represented stackup/order/material/thickness/finish/impedance/special-process facts with exact customer and design provenance. Drill-span/plating and profile/castellation/edge-plating customer acknowledgements have no canonical representation and remain EvidenceOnly confirmation gaps.
+- [Phase 07]: Access inference uses the sole declaration seam, exact 2D component-copper/profile geometry, and named process/tool or probe envelopes. Testpoint intent requires canonical target-net IDs; TP-like references and net names have no authority. The closed checkpoint keeps both family versions EvidenceOnly.
 
 ### Pending Todos
 
-None outside the roadmap.
+- The repository lead must run the one independent Plan 07-09 review. Plan 07-10 must not start in this run.
 
 ### Blockers/Concerns
 
-- Dirty uncommitted 0.2 baseline cannot be inherited by implementation worktrees from HEAD; a reviewed baseline commit requires explicit authorization.
 - `ratemypcb-core` publication remains blocked by the Git-only production dependency lacking a publishable version requirement.
 - KiCad 8/9 remain documentation-attested; Phase 2 human accessibility, browser-matrix, and representative-comprehension gates remain deferred.
 - Supply adapters await per-provider terms/account-schema decisions.
-- ODB++ and IPC-2581 await legal/corpus/conformance/security/maintenance gates.
 - Human-needed provider gate: obtain RateMyPCB-specific Nexar, Mouser, DigiKey, and LCSC approval for query, logging/cache, fixtures, embedding, sharing/export, backup, retention, and expiry before any live adapter.
+- Future intelligent-format reopening requires separate human authorization plus new rights-cleared corpus, conformance, security/performance, and maintenance evidence; it is not a Phase 7 blocker.
 
 ## Deferred Items
 
@@ -98,6 +121,8 @@ None outside the roadmap.
 
 ## Session Continuity
 
-Last session: 2026-08-28T07:49:09Z
-Stopped candidate: exact crates.io 0.5.0 rejected historically; immutable fork head 54004bc completed human-PASS Plan 05-03 and remains otherwise immutable
-Resume file: .planning/phases/05-manufacturing-evidence-model-and-gerber-baseline/05-VERIFICATION.md
+**Stopped at:** Plan 07-09 implementation gates green; repository-lead independent review pending; Plan 07-10 not started
+
+Last external decision receipt: 2026-08-30T18:26:58.000Z
+Stopped candidate: access and testpoint families are source-linked, deterministic, and EvidenceOnly; no inference approval exists
+Resume file: `.planning/phases/07-decision-grade-dfm-and-assembly-analysis/07-09-SUMMARY.md`

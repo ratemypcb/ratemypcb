@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "familyId": "assembly.population-parity",
+  "familyVersion": "v1",
+  "fixtureDigest": "145cb25ffba66e0fa2967a775b969ff32c83c23c7fcfa88db09670e01f621cc3",
+  "mutations": [
+    {
+      "id": "missing-prerequisite",
+      "kind": "missing_prerequisite",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Remove one required reconciliation fact."
+    },
+    {
+      "id": "state-partial",
+      "kind": "state_partial",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Change one required capability to Partial."
+    },
+    {
+      "id": "state-not-provided",
+      "kind": "state_not_provided",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Change one required capability to NotProvided."
+    },
+    {
+      "id": "state-unsupported",
+      "kind": "state_unsupported",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Change one required capability to Unsupported."
+    },
+    {
+      "id": "state-failed",
+      "kind": "state_failed",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Change one required capability to Failed."
+    },
+    {
+      "id": "state-stale",
+      "kind": "state_stale",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Change one required capability to Stale."
+    },
+    {
+      "id": "state-omitted",
+      "kind": "state_omitted",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Change one required capability to Omitted."
+    },
+    {
+      "id": "duplicate-capability",
+      "kind": "duplicate_capability",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Duplicate a required capability record in either order."
+    },
+    {
+      "id": "affected-omission",
+      "kind": "affected_omission",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Add an omission affecting a required prerequisite."
+    },
+    {
+      "id": "affected-conflict",
+      "kind": "affected_conflict",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Add a conflict affecting a required prerequisite."
+    },
+    {
+      "id": "dangling-identity",
+      "kind": "dangling_identity",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Replace a source or canonical target identity with a dangling value."
+    },
+    {
+      "id": "reordered-facts",
+      "kind": "reordered_facts",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Reorder facts while withholding the canonical reconciliation identity needed to prove equivalence."
+    },
+    {
+      "id": "unit-changed",
+      "kind": "unit_changed",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Change the declared source unit without a qualified conversion."
+    },
+    {
+      "id": "resolution-changed",
+      "kind": "resolution_changed",
+      "expectedStatus": "not_checked",
+      "contributesToConfusionMatrix": false,
+      "detail": "Change source resolution without matching provenance."
+    }
+  ]
+}

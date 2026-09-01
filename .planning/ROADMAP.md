@@ -11,7 +11,7 @@ The milestone first makes release truth explicit and testable, then turns that c
 - [x] **Phase 3: Supply Snapshot v2 and Demand-Aware Risk** - Deliver exact-identity, named-provider, terms-aware BOM sourcing evidence without invented substitutes. (completed 2026-08-26)
 - [x] **Phase 4: KiCad Schematic Release Evidence** - Add native schematic/ERC/parity and source-aware cross-artifact consistency with honest boundaries. (completed 2026-08-27)
 - [x] **Phase 5: Manufacturing Evidence Model and Gerber Baseline** - Parse real Gerber/X2+Excellon into one canonical model and reconcile release artifacts. (completed 2026-08-30)
-- [ ] **Phase 6: Intelligent Interchange Decision Gate** - Evaluate ODB++ and IPC-2581 symmetrically and ship only adapters that earn adoption.
+- [x] **Phase 6: Intelligent Interchange Decision Gate** - Evaluate ODB++ and IPC-2581 symmetrically and ship only adapters that earn adoption. (completed 2026-08-30; no-go for both formats this release)
 - [ ] **Phase 7: Decision-Grade DFM and Assembly Analysis** - Turn validated geometry, construction, connectivity, BOM, and placement facts into calibrated release actions.
 - [ ] **Phase 8: Hardened Release and Skill Adoption** - Prove parser security, performance, privacy, version alignment, and end-to-end skill usefulness.
 
@@ -151,9 +151,9 @@ Plans:
 3. Any adopted adapter passes representative corpus and hostile-input tests and reports omissions; format presence alone never raises approval.
 4. If no adapter passes, reports honestly say unsupported/not checked while native KiCad plus Gerber/X2+Excellon remains fully supported.
 
-**Research**: Deep research/spike is the phase outcome; implementation must not precede evidence.  
-**Checkpoint**: Blocking one-way/costly decision after legal approval and spike evidence; ODB++ is not preselected.  
-**Plans**: TBD
+**Research**: Symmetric evidence found neither ODB++ nor IPC-2581 adoption-ready. Private parser SHA `a4216f6909754155555e9290c2ec84e0eb16d267` remains quarantined research only.
+**Checkpoint**: Complete — the human selected no-go for both formats for this release. FMT-03 and FMT-05 are complete; FMT-04 is not applicable because no adapter was adopted.
+**Plans**: 8/8 complete. Exact decision receipts: external Phase 6 `06-01-SUMMARY.md` and `06-08-SUMMARY.md`. Future reopening requires separate authorization and new rights/corpus/conformance evidence.
 
 ### Phase 7: Decision-Grade DFM and Assembly Analysis
 
@@ -170,7 +170,7 @@ Plans:
 
 **Research**: Per-analyzer engineering references, capability prerequisites, and adjudication protocol required.  
 **Checkpoint**: Human approval before any inference family becomes release-blocking.  
-**Plans**: TBD  
+**Plans**: 9/11 implemented. Plans 07-01 through 07-08 are accepted/reviewed. Plan 07-09 implementation gates are green and the repository lead's one independent review is pending. Plan 07-10 was not started.
 **UI hint**: yes
 
 ### Phase 8: Hardened Release and Skill Adoption
@@ -199,7 +199,7 @@ Plans:
 | 2. Report UX and Golden Corpus | 3/3 | In Progress | |
 | 3. Supply Snapshot v2 and Demand-Aware Risk | 3/3 | Complete | 2026-08-26 |
 | 4. KiCad Schematic Release Evidence | 3/3 | Complete | 2026-08-27 |
-| 5. Manufacturing Evidence Model and Gerber Baseline | 3/6 | In Progress | - |
-| 6. Intelligent Interchange Decision Gate | 0/TBD | Not started | - |
-| 7. Decision-Grade DFM and Assembly Analysis | 0/TBD | Not started | - |
+| 5. Manufacturing Evidence Model and Gerber Baseline | 6/6 | Complete | 2026-08-30 |
+| 6. Intelligent Interchange Decision Gate | 8/8 | Complete — no-go | 2026-08-30 |
+| 7. Decision-Grade DFM and Assembly Analysis | 9/11 | In Progress — Plan 07-09 implementation green; independent review pending; Plan 07-10 not started | - |
 | 8. Hardened Release and Skill Adoption | 0/TBD | Not started | - |

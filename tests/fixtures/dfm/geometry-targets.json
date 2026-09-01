@@ -1,0 +1,1508 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "families": [
+    {
+      "familyId": "dfm.minimum-finished-drill",
+      "familyVersion": "v1",
+      "fixtureDigest": "5d1aca9c2296ed543a65fc23421b9622ec200446df5076e3087c45117ddac831",
+      "targets": [
+        {
+          "caseId": "minimum-drill-one-resolution-violation",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "drill:strict:T01:record-11",
+            "threshold:declaration:record-1:0.601mm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "minimum-drill-exact-threshold",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "drill:strict:T01:record-11",
+            "threshold:declaration:record-1:0.600mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "minimum-drill-missing-production-authority",
+          "canonicalTargetIds": [
+            "drill:strict:T01:record-11"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Preset and directly injected constraints are not source/version-bound declaration authority."
+        },
+        {
+          "caseId": "minimum-drill-unknown-plating-span",
+          "canonicalTargetIds": [
+            "drill:strict:T01:record-11",
+            "threshold:declaration:record-1"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unknown plating or layer span cannot support the finished-drill statement."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "minimum-drill-affected-conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A threshold/tool conflict fails closed."
+        },
+        {
+          "id": "minimum-drill-affected-omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected omission fails closed."
+        },
+        {
+          "id": "minimum-drill-dangling-identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A dangling tool or declaration identity fails closed."
+        },
+        {
+          "id": "minimum-drill-duplicate-capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Duplicate capability authority fails closed."
+        },
+        {
+          "id": "minimum-drill-missing-prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A missing prerequisite fails closed."
+        },
+        {
+          "id": "minimum-drill-reordered-facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Reordering preserves the same deterministic result."
+        },
+        {
+          "id": "minimum-drill-resolution-changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An unsupported or inconsistent source resolution fails closed."
+        },
+        {
+          "id": "minimum-drill-state-failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Failed prerequisite state fails closed."
+        },
+        {
+          "id": "minimum-drill-state-not-provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Not-provided prerequisite state fails closed."
+        },
+        {
+          "id": "minimum-drill-state-omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Omitted prerequisite state fails closed."
+        },
+        {
+          "id": "minimum-drill-state-partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Partial prerequisite state fails closed."
+        },
+        {
+          "id": "minimum-drill-state-stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Stale prerequisite state fails closed."
+        },
+        {
+          "id": "minimum-drill-state-unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Unsupported prerequisite state fails closed."
+        },
+        {
+          "id": "minimum-drill-unit-changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A mismatched declaration unit fails closed."
+        }
+      ]
+    },
+    {
+      "familyId": "dfm.drill-tool-integrity",
+      "familyVersion": "v1",
+      "fixtureDigest": "b502b7f44605d37aef01660212bb914ef2e5285a2202c791c2d80ba8036f7839",
+      "targets": [
+        {
+          "caseId": "drill-tool-diameter-mismatch",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "drill:mutated:T01:record-11",
+            "tool:strict:T01"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "drill-route-slot-semantics-distinct",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "drill:strict:T01:record-11",
+            "route:strict:T01:record-14",
+            "slot:strict:T01:record-20",
+            "tool:strict:T01"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "drill-tool-ambiguous-reference",
+          "canonicalTargetIds": [
+            "drill:strict:T01:record-11",
+            "tool:strict:T01"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "A missing, duplicate, cross-document, or inconsistent tool reference is ambiguous."
+        },
+        {
+          "caseId": "drill-tool-unknown-plating-span",
+          "canonicalTargetIds": [
+            "drill:strict:T01:record-11",
+            "plating:unknown",
+            "span:unknown",
+            "tool:strict:T01"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unknown plating or layer span remains explicit and unmeasured."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "drill-tool-affected-conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A tool conflict fails closed."
+        },
+        {
+          "id": "drill-tool-affected-omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected omission fails closed."
+        },
+        {
+          "id": "drill-tool-dangling-identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A dangling geometry/tool identity fails closed."
+        },
+        {
+          "id": "drill-tool-duplicate-capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Duplicate capability authority fails closed."
+        },
+        {
+          "id": "drill-tool-missing-prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A missing relevant drill/route/slot prerequisite fails closed."
+        },
+        {
+          "id": "drill-tool-reordered-facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Reordering preserves deterministic target ordering."
+        },
+        {
+          "id": "drill-tool-resolution-changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An unsupported source resolution fails closed."
+        },
+        {
+          "id": "drill-tool-state-failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Failed prerequisite state fails closed."
+        },
+        {
+          "id": "drill-tool-state-not-provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Not-provided prerequisite state fails closed."
+        },
+        {
+          "id": "drill-tool-state-omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Omitted prerequisite state fails closed."
+        },
+        {
+          "id": "drill-tool-state-partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Partial prerequisite state fails closed."
+        },
+        {
+          "id": "drill-tool-state-stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Stale prerequisite state fails closed."
+        },
+        {
+          "id": "drill-tool-state-unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Unsupported prerequisite state fails closed."
+        },
+        {
+          "id": "drill-tool-unit-changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A mismatched source unit fails closed."
+        }
+      ]
+    },
+    {
+      "familyId": "dfm.outline-topology",
+      "familyVersion": "v1",
+      "fixtureDigest": "1ccc6e6831aa72daf5698a79ba46083a7f6585a9742cfa87219e488e5579a94f",
+      "targets": [
+        {
+          "caseId": "outline-open-contour",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "classification:exterior",
+            "contour:open-lines"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "outline-self-intersection",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "classification:exterior",
+            "contour:bow-tie-lines"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "outline-closed-exterior-cutout",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "classification:cutout",
+            "classification:exterior",
+            "contour:closed-lines"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "outline-represented-arc",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "classification:exterior",
+            "contour:line-arc-closed"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "outline-unsupported-polarity",
+          "canonicalTargetIds": [
+            "contour:polarity-unknown"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unknown or unsupported profile polarity cannot establish material topology."
+        },
+        {
+          "caseId": "outline-unresolved-transform",
+          "canonicalTargetIds": [
+            "contour:transform-unresolved"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Non-materialized profile transforms remain not checked."
+        },
+        {
+          "caseId": "outline-unexpanded-or-ambiguous",
+          "canonicalTargetIds": [
+            "contour:classification-ambiguous",
+            "contour:unexpanded"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unexpanded constructs or ambiguous exterior/cutout identity remain not checked."
+        },
+        {
+          "caseId": "outline-resource-ceiling",
+          "canonicalTargetIds": [
+            "contour:resource-limit"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "The bounded segment/pair budget expires before a topology claim."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "outline-affected-conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected profile conflict fails closed."
+        },
+        {
+          "id": "outline-affected-omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected geometry omission fails closed."
+        },
+        {
+          "id": "outline-dangling-identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A dangling contour identity fails closed."
+        },
+        {
+          "id": "outline-duplicate-capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Duplicate profile capability authority fails closed."
+        },
+        {
+          "id": "outline-missing-prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A missing exact geometry prerequisite fails closed."
+        },
+        {
+          "id": "outline-reordered-facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Reordering preserves deterministic contour and finding order."
+        },
+        {
+          "id": "outline-resolution-changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An inconsistent arc source resolution fails closed."
+        },
+        {
+          "id": "outline-state-failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Failed prerequisite state fails closed."
+        },
+        {
+          "id": "outline-state-not-provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Not-provided prerequisite state fails closed."
+        },
+        {
+          "id": "outline-state-omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Omitted prerequisite state fails closed."
+        },
+        {
+          "id": "outline-state-partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Partial prerequisite state fails closed."
+        },
+        {
+          "id": "outline-state-stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Stale prerequisite state fails closed."
+        },
+        {
+          "id": "outline-state-unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Unsupported prerequisite state fails closed."
+        },
+        {
+          "id": "outline-unit-changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A mismatched fixed-point source unit fails closed."
+        }
+      ]
+    },
+    {
+      "familyId": "dfm.copper-edge",
+      "familyVersion": "v1",
+      "fixtureDigest": "6e6da925b794970ba80ba4433071732094a61c12cee8a369f7ffcd281bd7d6c8",
+      "targets": [
+        {
+          "caseId": "copper-edge-exterior-one-resolution-violation",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "boundary:exterior",
+            "copper:line",
+            "threshold:declaration:0.900001mm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "copper-edge-cutout-one-resolution-violation",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "boundary:cutout",
+            "copper:line",
+            "threshold:declaration"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "copper-edge-routed-one-resolution-violation",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "boundary:routed",
+            "copper:line",
+            "threshold:declaration:0.401mm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "copper-edge-exact-threshold",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "boundary:exterior",
+            "copper:line",
+            "threshold:declaration:0.900mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "copper-edge-one-resolution-safe",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "boundary:exterior",
+            "copper:line",
+            "threshold:declaration:0.899999mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "copper-edge-missing-production-authority",
+          "canonicalTargetIds": [
+            "boundary:exterior",
+            "copper:line"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing, direct, preset, stale, duplicate, or inapplicable threshold authority is not checked."
+        },
+        {
+          "caseId": "copper-edge-unresolved-shape",
+          "canonicalTargetIds": [
+            "boundary:arc-or-transform",
+            "copper:unsupported"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unsupported arcs, regions, polarity, transforms, or expansion cannot establish exact distance."
+        },
+        {
+          "caseId": "copper-edge-resource-ceiling",
+          "canonicalTargetIds": [
+            "boundary:bounded-candidates",
+            "copper:bounded-candidates"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "The deterministic primitive or candidate ceiling expires before a claim."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "copper-edge-affected-conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected conflict fails closed."
+        },
+        {
+          "id": "copper-edge-affected-omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected omission fails closed."
+        },
+        {
+          "id": "copper-edge-dangling-identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A dangling canonical identity fails closed."
+        },
+        {
+          "id": "copper-edge-duplicate-capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Duplicate capability authority fails closed."
+        },
+        {
+          "id": "copper-edge-missing-prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A missing prerequisite fails closed."
+        },
+        {
+          "id": "copper-edge-reordered-facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Reordering cannot change canonical output and the mutation remains fail closed."
+        },
+        {
+          "id": "copper-edge-resolution-changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An inconsistent source resolution fails closed."
+        },
+        {
+          "id": "copper-edge-state-failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Failed prerequisite state fails closed."
+        },
+        {
+          "id": "copper-edge-state-not-provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Not-provided prerequisite state fails closed."
+        },
+        {
+          "id": "copper-edge-state-omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Omitted prerequisite state fails closed."
+        },
+        {
+          "id": "copper-edge-state-partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Partial prerequisite state fails closed."
+        },
+        {
+          "id": "copper-edge-state-stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Stale prerequisite state fails closed."
+        },
+        {
+          "id": "copper-edge-state-unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Unsupported prerequisite state fails closed."
+        },
+        {
+          "id": "copper-edge-unit-changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A mismatched fixed-point source unit fails closed."
+        }
+      ]
+    },
+    {
+      "familyId": "dfm.copper-clearance",
+      "familyVersion": "v1",
+      "fixtureDigest": "273bdfeacf60f6f4fa4ad65e01dc71a96f93c6e10b29cf3ff00f8e2b09ce251a",
+      "targets": [
+        {
+          "caseId": "copper-clearance-one-resolution-violation",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "copper:GND:line",
+            "copper:VCC:line",
+            "layer:F.Cu",
+            "threshold:declaration:0.200001mm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "copper-clearance-stable-nearest-tie",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "copper:N1:line",
+            "copper:N2:line",
+            "layer:F.Cu",
+            "tie:canonical-order"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "copper-clearance-exact-threshold",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "copper:GND:line",
+            "copper:VCC:line",
+            "layer:F.Cu",
+            "threshold:declaration:0.200mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "copper-clearance-same-net",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "copper:GND:left",
+            "copper:GND:right",
+            "layer:F.Cu"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "copper-clearance-adjacent-layer",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "copper:N1:F.Cu",
+            "copper:N2:B.Cu"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "copper-clearance-missing-connectivity",
+          "canonicalTargetIds": [
+            "copper:line:left",
+            "copper:line:right"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing, partial, duplicate, or dangling explicit connectivity is not checked."
+        },
+        {
+          "caseId": "copper-clearance-unresolved-shape",
+          "canonicalTargetIds": [
+            "copper:arc-region-zone-or-transform"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unsupported zone, region, arc, polarity, transform, or expansion is not checked."
+        },
+        {
+          "caseId": "copper-clearance-missing-production-authority",
+          "canonicalTargetIds": [
+            "copper:different-net-pair"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing, direct, preset, stale, duplicate, or inapplicable threshold authority is not checked."
+        },
+        {
+          "caseId": "copper-clearance-resource-ceiling",
+          "canonicalTargetIds": [
+            "copper:bounded-layer-sweep"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "The deterministic layer-local pair ceiling expires before a claim."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "copper-clearance-affected-conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected conflict fails closed."
+        },
+        {
+          "id": "copper-clearance-affected-omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected omission fails closed."
+        },
+        {
+          "id": "copper-clearance-dangling-identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A dangling canonical identity fails closed."
+        },
+        {
+          "id": "copper-clearance-duplicate-capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Duplicate capability authority fails closed."
+        },
+        {
+          "id": "copper-clearance-missing-prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A missing prerequisite fails closed."
+        },
+        {
+          "id": "copper-clearance-reordered-facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Reordering cannot change canonical output and the mutation remains fail closed."
+        },
+        {
+          "id": "copper-clearance-resolution-changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An inconsistent source resolution fails closed."
+        },
+        {
+          "id": "copper-clearance-state-failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Failed prerequisite state fails closed."
+        },
+        {
+          "id": "copper-clearance-state-not-provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Not-provided prerequisite state fails closed."
+        },
+        {
+          "id": "copper-clearance-state-omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Omitted prerequisite state fails closed."
+        },
+        {
+          "id": "copper-clearance-state-partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Partial prerequisite state fails closed."
+        },
+        {
+          "id": "copper-clearance-state-stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Stale prerequisite state fails closed."
+        },
+        {
+          "id": "copper-clearance-state-unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Unsupported prerequisite state fails closed."
+        },
+        {
+          "id": "copper-clearance-unit-changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A mismatched fixed-point source unit fails closed."
+        }
+      ]
+    },
+    {
+      "familyId": "dfm.annular-ring",
+      "familyVersion": "v1",
+      "fixtureDigest": "dca43e3dbb44268fa3ed9023bde7b7c61d126d5ae2544c625cac838c97fe9889",
+      "targets": [
+        {
+          "caseId": "annular-ring-one-resolution-violation-per-layer",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "association:native-pad-hole",
+            "layer:B.Cu",
+            "layer:F.Cu",
+            "threshold:declaration:0.201mm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "annular-ring-stable-association-order",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "association:native-pad-hole:A",
+            "association:native-pad-hole:B",
+            "tie:canonical-order"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "annular-ring-exact-threshold",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "association:native-pad-hole",
+            "layer:B.Cu",
+            "layer:F.Cu",
+            "threshold:declaration:0.200mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "annular-ring-non-authoritative-association",
+          "canonicalTargetIds": [
+            "hole:package-or-xnc",
+            "pad:gerber-or-package"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Package, Gerber, and XNC proximity, name, or dimension joins are not authority."
+        },
+        {
+          "caseId": "annular-ring-npth-slot-unknown",
+          "canonicalTargetIds": [
+            "hole:npth-slot-or-unknown",
+            "pad:native"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "NPTH, slots, unknown plating/span, and unsupported pad geometry are not checked."
+        },
+        {
+          "caseId": "annular-ring-missing-production-authority",
+          "canonicalTargetIds": [
+            "association:native-pad-hole"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing, direct, preset, stale, duplicate, or inapplicable threshold authority is not checked."
+        },
+        {
+          "caseId": "annular-ring-resource-ceiling",
+          "canonicalTargetIds": [
+            "association:bounded-native-facts"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "The deterministic association or layer ceiling expires before a claim."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "annular-ring-affected-conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected conflict fails closed."
+        },
+        {
+          "id": "annular-ring-affected-omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected omission fails closed."
+        },
+        {
+          "id": "annular-ring-dangling-identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A dangling canonical identity fails closed."
+        },
+        {
+          "id": "annular-ring-duplicate-capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Duplicate capability authority fails closed."
+        },
+        {
+          "id": "annular-ring-missing-prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A missing prerequisite fails closed."
+        },
+        {
+          "id": "annular-ring-reordered-facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Reordering cannot change canonical output and the mutation remains fail closed."
+        },
+        {
+          "id": "annular-ring-resolution-changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An inconsistent source resolution fails closed."
+        },
+        {
+          "id": "annular-ring-state-failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Failed prerequisite state fails closed."
+        },
+        {
+          "id": "annular-ring-state-not-provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Not-provided prerequisite state fails closed."
+        },
+        {
+          "id": "annular-ring-state-omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Omitted prerequisite state fails closed."
+        },
+        {
+          "id": "annular-ring-state-partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Partial prerequisite state fails closed."
+        },
+        {
+          "id": "annular-ring-state-stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Stale prerequisite state fails closed."
+        },
+        {
+          "id": "annular-ring-state-unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Unsupported prerequisite state fails closed."
+        },
+        {
+          "id": "annular-ring-unit-changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A mismatched fixed-point source unit fails closed."
+        }
+      ]
+    },
+    {
+      "familyId": "dfm.mask-sliver",
+      "familyVersion": "v1",
+      "fixtureDigest": "de9ca50f2abf0e82be8f8d9cc8bfe9c2399647563f5ae325145044e8ceefbc1f",
+      "targets": [
+        {
+          "caseId": "mask-sliver-one-resolution-violation",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "mask-opening:R1:1",
+            "mask-opening:R1:2",
+            "sliver:0.199mm",
+            "threshold:declaration:0.200mm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "mask-sliver-stable-nearest-tie",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "mask-opening:R1:1",
+            "mask-opening:R1:2",
+            "mask-opening:R1:3",
+            "tie:canonical-order"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "mask-sliver-exact-threshold",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "mask-opening:R1:1",
+            "mask-opening:R1:2",
+            "sliver:0.200mm",
+            "threshold:declaration:0.200mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "mask-sliver-one-resolution-safe",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "mask-opening:R1:1",
+            "mask-opening:R1:2",
+            "sliver:0.201mm",
+            "threshold:declaration:0.200mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "mask-sliver-single-resolved-opening-no-pair",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "mask-opening:R1:1",
+            "threshold:declaration"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "mask-sliver-layer-presence-only",
+          "canonicalTargetIds": [
+            "layer:Soldermask:Top"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "A mask layer ID without actual negative-polarity opening geometry and intent proves nothing."
+        },
+        {
+          "caseId": "mask-sliver-missing-production-authority",
+          "canonicalTargetIds": [
+            "mask-opening:R1:1",
+            "mask-opening:R1:2"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing, direct, preset, stale, duplicate, or inapplicable threshold authority is not checked."
+        },
+        {
+          "caseId": "mask-sliver-unresolved-intent-polarity-or-shape",
+          "canonicalTargetIds": [
+            "mask-opening:merged-tented-override-unknown"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing merged, tented, or override intent, negative polarity, or exact represented shape is not checked."
+        },
+        {
+          "caseId": "mask-sliver-resource-ceiling",
+          "canonicalTargetIds": [
+            "mask-opening:bounded-candidates"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "The deterministic opening or candidate ceiling expires before a claim."
+        },
+        {
+          "caseId": "mask-sliver-unrepresented-merged-intent",
+          "canonicalTargetIds": [
+            "mask-opening:ambiguous:R1:1+R1:2"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Multiple component/pad associations do not represent deliberate merged or override intent."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "mask-sliver-affected-conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected conflict fails closed."
+        },
+        {
+          "id": "mask-sliver-affected-omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected omission fails closed."
+        },
+        {
+          "id": "mask-sliver-dangling-identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A dangling geometry or intent identity fails closed."
+        },
+        {
+          "id": "mask-sliver-duplicate-capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Duplicate capability authority fails closed."
+        },
+        {
+          "id": "mask-sliver-missing-prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A missing prerequisite fails closed."
+        },
+        {
+          "id": "mask-sliver-reordered-facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Reordering preserves canonical output and remains fail closed."
+        },
+        {
+          "id": "mask-sliver-resolution-changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An inconsistent source resolution fails closed."
+        },
+        {
+          "id": "mask-sliver-state-failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Failed prerequisite state fails closed."
+        },
+        {
+          "id": "mask-sliver-state-not-provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Not-provided prerequisite state fails closed."
+        },
+        {
+          "id": "mask-sliver-state-omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Omitted prerequisite state fails closed."
+        },
+        {
+          "id": "mask-sliver-state-partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Partial prerequisite state fails closed."
+        },
+        {
+          "id": "mask-sliver-state-stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Stale prerequisite state fails closed."
+        },
+        {
+          "id": "mask-sliver-state-unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Unsupported prerequisite state fails closed."
+        },
+        {
+          "id": "mask-sliver-unit-changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A mismatched fixed-point source unit fails closed."
+        }
+      ]
+    },
+    {
+      "familyId": "dfm.paste-mask-relationship",
+      "familyVersion": "v1",
+      "fixtureDigest": "a635af2ebcffbdaaf882b1c5b66de7e8cbca76a0cba2fbceb31450f5e66ef163",
+      "targets": [
+        {
+          "caseId": "paste-mask-expansion-one-resolution-violation",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "component:R1",
+            "mask-opening:pad-1",
+            "pad:1",
+            "paste-opening:pad-1",
+            "relation:mask_subset_of_paste",
+            "threshold:declaration:0.099mm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "paste-mask-reduction-one-resolution-violation",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "component:R1",
+            "mask-opening:pad-1",
+            "pad:1",
+            "paste-opening:pad-1",
+            "relation:paste_subset_of_mask",
+            "threshold:declaration:0.099mm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "paste-mask-equal-set",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "component:R1",
+            "pad:1",
+            "relation:equal"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "paste-mask-exact-expansion-limit",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "component:R1",
+            "pad:1",
+            "relation:mask_subset_of_paste",
+            "threshold:declaration:0.100mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "paste-mask-exact-reduction-limit",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "component:R1",
+            "pad:1",
+            "relation:paste_subset_of_mask",
+            "threshold:declaration:0.100mm"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "paste-mask-layer-presence-only",
+          "canonicalTargetIds": [
+            "layer:Paste:Top",
+            "layer:Soldermask:Top"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Layer IDs without actual per-pad geometry, association, fitted state, and side prove nothing."
+        },
+        {
+          "caseId": "paste-mask-omission-windowpane-pin-in-paste",
+          "canonicalTargetIds": [
+            "component:R1",
+            "pad:unknown-policy"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Deliberate omission, windowpane, or pin-in-paste uncertainty without positive SMD authority is not checked."
+        },
+        {
+          "caseId": "paste-mask-missing-production-authority",
+          "canonicalTargetIds": [
+            "component:R1",
+            "pad:1"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing, direct, preset, stale, duplicate, or inapplicable relationship authority is not checked."
+        },
+        {
+          "caseId": "paste-mask-unknown-fitted-side-association-or-shape",
+          "canonicalTargetIds": [
+            "component:unknown",
+            "pad:unknown"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unknown explicit fitted/DNP state, side, component/pad association, positive SMD authority, or exact set geometry is not checked."
+        },
+        {
+          "caseId": "paste-mask-resource-ceiling",
+          "canonicalTargetIds": [
+            "paste-mask:bounded-pads"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "The deterministic feature, placement, or per-pad ceiling expires before a claim."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "paste-mask-affected-conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected conflict fails closed."
+        },
+        {
+          "id": "paste-mask-affected-omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An affected omission fails closed."
+        },
+        {
+          "id": "paste-mask-dangling-identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A dangling geometry or intent identity fails closed."
+        },
+        {
+          "id": "paste-mask-duplicate-capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Duplicate capability authority fails closed."
+        },
+        {
+          "id": "paste-mask-missing-prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A missing prerequisite fails closed."
+        },
+        {
+          "id": "paste-mask-reordered-facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Reordering preserves canonical output and remains fail closed."
+        },
+        {
+          "id": "paste-mask-resolution-changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "An inconsistent source resolution fails closed."
+        },
+        {
+          "id": "paste-mask-state-failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Failed prerequisite state fails closed."
+        },
+        {
+          "id": "paste-mask-state-not-provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Not-provided prerequisite state fails closed."
+        },
+        {
+          "id": "paste-mask-state-omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Omitted prerequisite state fails closed."
+        },
+        {
+          "id": "paste-mask-state-partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Partial prerequisite state fails closed."
+        },
+        {
+          "id": "paste-mask-state-stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Stale prerequisite state fails closed."
+        },
+        {
+          "id": "paste-mask-state-unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "Unsupported prerequisite state fails closed."
+        },
+        {
+          "id": "paste-mask-unit-changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "A mismatched fixed-point source unit fails closed."
+        }
+      ]
+    }
+  ]
+}

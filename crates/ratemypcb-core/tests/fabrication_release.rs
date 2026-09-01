@@ -1,10 +1,11 @@
 use gerber_parser::{ContentError, parse as parse_gerber};
 use ratemypcb_core::fabrication::*;
 use ratemypcb_core::{
-    NativeMode, Preset, ReviewOptions, ReviewScope, report_schema, review, validate_report,
+    NativeDrc, NativeMode, NativeViolation, Preset, ReviewOptions, ReviewScope, report_schema,
+    review, validate_report,
 };
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -100,6 +101,7 @@ fn review_options(scope: ReviewScope) -> ReviewOptions {
         bom: None,
         placement: None,
         supply_snapshot: None,
+        dfm_declarations: None,
         preset: Preset::named("standard").unwrap(),
         native: NativeMode::Off,
         tool_version: "test".into(),
@@ -310,12 +312,22 @@ fn sample_model() -> FabricationReview {
         }],
         assembly: AssemblyEvidence {
             placements: vec![AssemblyPlacement {
+                id: fixture_stable_id(
+                    "assembly-placement",
+                    &(&document_id, Some("fixture-occurrence"), "U1", location(7)),
+                ),
+                occurrence_id: Some("fixture-occurrence".into()),
                 reference: "U1".into(),
                 side: LayerSide::Top,
                 position: CanonicalPoint::new(100, 200),
                 rotation_microdegrees: 90_000_000,
+                fitted: AssemblyFittedState::Fitted,
+                revision: Some("r1".into()),
+                convention: AssemblyPlacementConvention::native_kicad(),
                 provenance: provenance(&document_id, &digest, 7),
             }],
+            declared_placements: vec![],
+            native_courtyard: None,
             mask_layer_ids: vec![layer_id.clone()],
             paste_layer_ids: vec![],
         },
@@ -359,6 +371,14 @@ fn sample_model() -> FabricationReview {
                     document_ids: vec![document_id.clone()],
                     provenance: vec![provenance(&document_id, &digest, 6)],
                     detail: "one object has attributes".into(),
+                },
+                CapabilityRecord {
+                    id: CapabilityId::Assembly,
+                    state: CapabilityState::Complete,
+                    authority: Authority::Explicit,
+                    document_ids: vec![document_id.clone()],
+                    provenance: vec![provenance(&document_id, &digest, 7)],
+                    detail: "one exact assembly placement".into(),
                 },
             ],
         },
@@ -1172,6 +1192,7 @@ fn model_generated_schema_structurally_excludes_runtime_incompatible_values() {
         ("tools", "manufacturingTool"),
         ("features", "manufacturingFeature"),
         ("connectivity", "objectSemantics"),
+        ("padHoleAssociations", "padHoleAssociation"),
         ("constraints", "manufacturingConstraint"),
         ("warnings", "manufacturingWarning"),
     ] {
@@ -1185,6 +1206,7 @@ fn model_generated_schema_structurally_excludes_runtime_incompatible_values() {
         "manufacturingTool",
         "manufacturingFeature",
         "objectSemantics",
+        "padHoleAssociation",
         "assemblyEvidence",
         "constructionEvidence",
         "manufacturingConstraint",
@@ -1249,6 +1271,12 @@ fn model_generated_schema_structurally_excludes_runtime_incompatible_values() {
                 "pasteLayerIds": []
             });
         }),
+        (
+            "malformed pad-hole association",
+            |value: &mut serde_json::Value| {
+                value["padHoleAssociations"] = serde_json::json!([42]);
+            },
+        ),
         ("empty outcome reason", |value: &mut serde_json::Value| {
             value["inputOutcomes"] = serde_json::json!([{
                 "id": format!("input-v1-{}", "0".repeat(64)),
@@ -1298,6 +1326,7 @@ fn model_report_integration_retains_native_facts_and_revalidates_digest() {
             bom: None,
             placement: None,
             supply_snapshot: None,
+            dfm_declarations: None,
             preset: Preset::named("standard").unwrap(),
             native: NativeMode::Off,
             tool_version: "test".into(),
@@ -5407,7 +5436,9 @@ fn matching_native_kicad() -> Vec<u8> {
   (net 0 "")
   (net 1 "GND")
   (footprint "Fixture:Connector" (layer "F.Cu") (at 0 0)
+    (uuid "11111111-1111-4111-8111-111111111111")
     (property "Reference" "U1")
+    (attr through_hole)
     (pad "1" thru_hole circle (at 1 1) (size 1 1) (drill 0.6)
       (layers "*.Cu" "*.Mask") (net 1 "GND"))
     (pad "1" thru_hole oval (at 5.5 5) (size 2 1) (drill oval 1.6 0.6)
@@ -5416,6 +5447,275 @@ fn matching_native_kicad() -> Vec<u8> {
   (gr_rect (start 0 0) (end 10 10) (layer "Edge.Cuts"))
 )"#
     .to_vec()
+}
+
+#[test]
+fn native_assembly_placement_is_exact_source_linked_and_fail_closed() {
+    let bytes = matching_native_kicad();
+    let native = parse_native_kicad_manufacturing("board.kicad_pcb", &bytes).unwrap();
+    assert_eq!(
+        package_capability(&native.review, CapabilityId::Assembly),
+        CapabilityState::Complete
+    );
+    let [placement] = native.review.assembly.placements.as_slice() else {
+        panic!("one authoritative native placement expected")
+    };
+    assert!(placement.id.starts_with("assembly-placement-v1-"));
+    assert_eq!(
+        placement.occurrence_id.as_deref(),
+        Some("11111111-1111-4111-8111-111111111111")
+    );
+    assert_eq!(placement.reference, "U1");
+    assert_eq!(placement.position, CanonicalPoint::new(0, 0));
+    assert_eq!(placement.side, LayerSide::Top);
+    assert_eq!(placement.rotation_microdegrees, 0);
+    assert_eq!(placement.fitted, AssemblyFittedState::Fitted);
+    assert_eq!(placement.revision.as_deref(), Some("r1"));
+    assert_eq!(
+        placement.convention,
+        AssemblyPlacementConvention {
+            unit: Some(SourceUnit::Millimetre),
+            origin: AssemblyPlacementOrigin::KicadBoard,
+            side: AssemblySideConvention::TopBottom,
+            bottom_mirroring: AssemblyBottomMirroring::Mirrored,
+            rotation_direction: AssemblyRotationDirection::CounterClockwise,
+        }
+    );
+    assert_eq!(
+        placement.provenance.artifact_digest,
+        native.review.documents[0].artifact_digest
+    );
+    assert!(placement.provenance.location.byte_end < bytes.len() as u64);
+
+    let exact_decimal = String::from_utf8(bytes.clone()).unwrap().replacen(
+        "(at 0 0)",
+        "(at 1.234567891 -0.000000001 360)",
+        1,
+    );
+    let exact_decimal =
+        parse_native_kicad_manufacturing("exact-decimal.kicad_pcb", exact_decimal.as_bytes())
+            .unwrap();
+    assert_eq!(
+        exact_decimal.review.assembly.placements[0].position,
+        CanonicalPoint::new(1_234_567_891, -1)
+    );
+    assert_eq!(
+        exact_decimal.review.assembly.placements[0].rotation_microdegrees,
+        0
+    );
+
+    for mutate in [
+        (|review: &mut FabricationReview| review.assembly.placements.clear())
+            as fn(&mut FabricationReview),
+        |review: &mut FabricationReview| {
+            review
+                .assembly
+                .placements
+                .push(review.assembly.placements[0].clone());
+        },
+        |review: &mut FabricationReview| {
+            review.assembly.placements[0].convention.rotation_direction =
+                AssemblyRotationDirection::Unknown;
+        },
+        |review: &mut FabricationReview| {
+            review.assembly.placements[0].provenance.artifact_digest = "0".repeat(64);
+        },
+    ] {
+        let mut forged = native.review.clone();
+        mutate(&mut forged);
+        forged.refresh_digests().unwrap();
+        assert!(forged.validate().is_err());
+    }
+
+    let no_revision = String::from_utf8(bytes.clone())
+        .unwrap()
+        .replace(" (rev \"r1\")", "");
+    let no_revision =
+        parse_native_kicad_manufacturing("no-revision.kicad_pcb", no_revision.as_bytes()).unwrap();
+    assert_eq!(
+        package_capability(&no_revision.review, CapabilityId::Assembly),
+        CapabilityState::Partial
+    );
+    assert_eq!(no_revision.review.assembly.placements[0].revision, None);
+    assert!(no_revision.review.omissions.iter().any(|omission| {
+        omission
+            .affected_capabilities
+            .contains(&CapabilityId::Assembly)
+    }));
+
+    let duplicate_reference = String::from_utf8(bytes.clone()).unwrap().replace(
+        "  (gr_rect",
+        "  (footprint \"Fixture:Duplicate\" (layer \"B.Cu\") (at 2 3 360)\n    (uuid \"22222222-2222-4222-8222-222222222222\")\n    (property \"Reference\" \"U1\")\n    (attr smd))\n  (gr_rect",
+    );
+    let duplicate_reference = parse_native_kicad_manufacturing(
+        "duplicate-reference.kicad_pcb",
+        duplicate_reference.as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(
+        package_capability(&duplicate_reference.review, CapabilityId::Assembly),
+        CapabilityState::Partial
+    );
+
+    let invalid_coordinate =
+        String::from_utf8(bytes)
+            .unwrap()
+            .replacen("(at 0 0)", "(at unknown 0)", 1);
+    assert!(
+        parse_native_kicad_manufacturing(
+            "invalid-coordinate.kicad_pcb",
+            invalid_coordinate.as_bytes()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn native_assembly_board_only_never_hides_fitted_or_excluded_population() {
+    let source = String::from_utf8(matching_native_kicad()).unwrap().replace(
+        "  (gr_rect",
+        r#"  (footprint "Fixture:BoardOnly" (layer "F.Cu") (at 2 2)
+    (uuid "22222222-2222-4222-8222-222222222222")
+    (property "Reference" "U2")
+    (attr smd board_only))
+  (footprint "Fixture:BoardOnlyDnp" (layer "F.Cu") (at 3 3)
+    (uuid "33333333-3333-4333-8333-333333333333")
+    (property "Reference" "U3")
+    (attr smd board_only dnp))
+  (footprint "Fixture:BoardOnlyExcluded" (layer "F.Cu") (at 4 4)
+    (uuid "44444444-4444-4444-8444-444444444444")
+    (property "Reference" "U4")
+    (attr smd board_only exclude_from_pos_files))
+  (gr_rect"#,
+    );
+    let review = parse_native_kicad_manufacturing("mixed-board-only.kicad_pcb", source.as_bytes())
+        .unwrap()
+        .review;
+
+    assert_eq!(
+        package_capability(&review, CapabilityId::Assembly),
+        CapabilityState::Partial
+    );
+    let fitted = review
+        .assembly
+        .placements
+        .iter()
+        .map(|placement| (placement.reference.as_str(), placement.fitted))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        fitted,
+        BTreeMap::from([
+            ("U1", AssemblyFittedState::Fitted),
+            ("U2", AssemblyFittedState::Fitted),
+            ("U3", AssemblyFittedState::NotFitted),
+            ("U4", AssemblyFittedState::Unknown),
+        ])
+    );
+    assert!(review.omissions.iter().any(|omission| {
+        omission
+            .affected_capabilities
+            .contains(&CapabilityId::Assembly)
+    }));
+}
+
+#[test]
+fn native_assembly_courtyard_normalization_preserves_execution_and_exclusion_state() {
+    let marker = |kind: &str, excluded: Option<bool>, index: usize| NativeViolation {
+        id: format!("native-{index}"),
+        group: "violations".into(),
+        violation_type: kind.into(),
+        severity: "error".into(),
+        description: kind.into(),
+        items: vec![],
+        excluded,
+        comment: None,
+        sheet_path: None,
+        sheet_uuid_path: None,
+        structural_location: format!("channel=violations;sheet=root;items=none;index={index}"),
+    };
+    let report = NativeDrc {
+        status: "completed".into(),
+        tool: "kicad-cli".into(),
+        version: Some("10.0.5".into()),
+        report_version: Some("10.0.5".into()),
+        finding_count: 1,
+        excluded_count: 1,
+        unknown_exclusion_count: 1,
+        note: "completed fixture".into(),
+        source: Some("root.kicad_pcb".into()),
+        date: Some("2026-08-31T00:00:00Z".into()),
+        included_severities: vec!["error".into(), "warning".into(), "exclusion".into()],
+        ignored_checks: vec![],
+        violations: vec![
+            marker("courtyards_overlap", Some(false), 0),
+            marker("malformed_courtyard", Some(true), 1),
+            marker("missing_courtyard", None, 2),
+        ],
+    };
+    let normalized = normalize_native_courtyard_report(&report).unwrap();
+    assert_eq!(normalized.state, NativeCourtyardRunState::Complete);
+    assert_eq!(normalized.tool, "kicad-cli");
+    assert_eq!(normalized.version.as_deref(), Some("10.0.5"));
+    assert_eq!(normalized.source.as_deref(), Some("root.kicad_pcb"));
+    assert_eq!(normalized.observations.len(), 3);
+    assert_eq!(
+        normalized.observations[0].kind,
+        NativeCourtyardKind::Overlap
+    );
+    assert_eq!(
+        normalized.observations[0].exclusion,
+        NativeExclusionState::Active
+    );
+    assert!(normalized.observations.iter().any(|observation| {
+        observation.kind == NativeCourtyardKind::Malformed
+            && observation.exclusion == NativeExclusionState::Excluded
+    }));
+    assert!(normalized.observations.iter().any(|observation| {
+        observation.kind == NativeCourtyardKind::Missing
+            && observation.exclusion == NativeExclusionState::Unknown
+    }));
+
+    let mut ignored = report.clone();
+    ignored.ignored_checks = vec![serde_json::json!({"key": "missing_courtyard"})];
+    assert_eq!(
+        normalize_native_courtyard_report(&ignored).unwrap().state,
+        NativeCourtyardRunState::Partial
+    );
+    let mut failed = report.clone();
+    failed.status = "not_run".into();
+    assert_eq!(
+        normalize_native_courtyard_report(&failed).unwrap(),
+        NativeCourtyardEvidence {
+            state: NativeCourtyardRunState::NotRun,
+            tool: "kicad-cli".into(),
+            version: Some("10.0.5".into()),
+            source: Some("root.kicad_pcb".into()),
+            observations: vec![],
+        }
+    );
+
+    let mut native = parse_native_kicad_manufacturing("board.kicad_pcb", &matching_native_kicad())
+        .unwrap()
+        .review;
+    native.assembly.native_courtyard = Some(normalized);
+    native.refresh_digests().unwrap();
+    native.validate().unwrap();
+    let duplicate = native
+        .assembly
+        .native_courtyard
+        .as_ref()
+        .unwrap()
+        .observations[0]
+        .clone();
+    native
+        .assembly
+        .native_courtyard
+        .as_mut()
+        .unwrap()
+        .observations
+        .push(duplicate);
+    native.refresh_digests().unwrap();
+    assert!(native.validate().is_err());
 }
 
 fn four_layer_native_kicad() -> Vec<u8> {
@@ -6755,6 +7055,60 @@ fn package_reconciliation_native_parser_is_bounded_explicit_and_quote_safe() {
         package_capability(&native.review, CapabilityId::Connectivity),
         CapabilityState::Complete
     );
+    assert_eq!(native.review.pad_hole_associations.len(), 1);
+    let association = &native.review.pad_hole_associations[0];
+    assert!(association.id.starts_with("pad-hole-association-v1-"));
+    assert!(association.pad_id.starts_with("pad-v1-"));
+    assert_eq!(association.applicable_layer_ids.len(), 2);
+    assert_eq!(association.plating, Plating::Plated);
+    assert_eq!(association.pad_provenance, association.hole_provenance);
+    assert!(matches!(association.pad_geometry, Geometry::Contour(_)));
+    assert!(matches!(association.hole_geometry, Geometry::Drill(_)));
+    assert!(
+        native
+            .review
+            .features
+            .iter()
+            .any(|feature| feature.id == association.hole_id)
+    );
+
+    for mutate in [
+        (|review: &mut FabricationReview| {
+            review
+                .pad_hole_associations
+                .push(review.pad_hole_associations[0].clone());
+        }) as fn(&mut FabricationReview),
+        |review: &mut FabricationReview| {
+            review.pad_hole_associations[0].hole_id = "feature-v1-dangling".into();
+        },
+        |review: &mut FabricationReview| {
+            review.pad_hole_associations[0]
+                .pad_provenance
+                .location
+                .record += 1;
+        },
+        |review: &mut FabricationReview| {
+            review.pad_hole_associations[0]
+                .applicable_layer_ids
+                .reverse();
+        },
+        |review: &mut FabricationReview| {
+            let Geometry::Drill(hole) = &mut review.pad_hole_associations[0].hole_geometry else {
+                unreachable!()
+            };
+            hole.diameter.0 += 1;
+        },
+    ] {
+        let mut forged = native.review.clone();
+        mutate(&mut forged);
+        forged.refresh_digests().unwrap();
+        assert!(forged.validate().is_err());
+    }
+    let mut forged_adapter = native.review.clone();
+    forged_adapter.documents[0].adapter_version = "forged-native-adapter".into();
+    forged_adapter.refresh_digests().unwrap();
+    assert!(forged_adapter.validate().is_err());
+
     assert!(
         native
             .review
@@ -6832,6 +7186,7 @@ fn package_reconciliation_native_parser_is_bounded_explicit_and_quote_safe() {
         package_capability(&unsupported.review, CapabilityId::Profile),
         CapabilityState::Partial
     );
+    assert!(unsupported.review.pad_hole_associations.is_empty());
     assert!(!unsupported.review.omissions.is_empty());
 
     let rotated = String::from_utf8(matching_native_kicad())

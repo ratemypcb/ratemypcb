@@ -1,0 +1,660 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "targetKeyFields": [
+    "familyId",
+    "familyVersion",
+    "fixtureDigest",
+    "canonicalTargetIds"
+  ],
+  "requiredFixtureClasses": [
+    "positive",
+    "hard_negative",
+    "mutation"
+  ],
+  "qualificationPolicy": {
+    "defaultGateImpact": "evidence_only",
+    "minimumBlockingPrecisionBps": 9500,
+    "recallThreshold": null,
+    "mutationStatus": "not_checked",
+    "unsupportedStatus": "not_checked"
+  },
+  "forbiddenSources": [
+    {
+      "id": "distributor_order_packaging",
+      "claim": "physical_package_compatibility",
+      "action": "reject",
+      "reason": "Tape, reel, tray, and other order packaging do not establish package-to-land-pattern compatibility."
+    },
+    {
+      "id": "paste_layer_presence",
+      "claim": "component_paste_coverage",
+      "action": "reject",
+      "reason": "A paste layer identifier does not establish fitted-pad paste geometry."
+    },
+    {
+      "id": "common_practice_construction_default",
+      "claim": "construction_or_order_compliance",
+      "action": "reject",
+      "reason": "Common practice is not source/version-bound construction or customer-order authority."
+    },
+    {
+      "id": "net_name_intent",
+      "claim": "electrical_or_interface_intent",
+      "action": "reject",
+      "reason": "Net and reference names do not establish voltage, current, frequency, pair, return-path, or interface intent."
+    }
+  ],
+  "families": [
+    {
+      "familyId": "dfm.outline-topology",
+      "familyVersion": "v1",
+      "requirement": "DFM-01",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "layer_roles",
+        "profile",
+        "geometry_lines",
+        "geometry_arcs",
+        "geometry_regions",
+        "geometry_expanded",
+        "transforms",
+        "polarity"
+      ],
+      "factPrerequisites": [],
+      "authority": [
+        "canonical_model"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "geometry-targets.json#dfm.outline-topology.v1"
+    },
+    {
+      "familyId": "dfm.minimum-finished-drill",
+      "familyVersion": "v1",
+      "requirement": "DFM-01",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "units_and_format",
+        "tools",
+        "drills",
+        "constraints"
+      ],
+      "factPrerequisites": [],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_threshold"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "geometry-targets.json#dfm.minimum-finished-drill.v1"
+    },
+    {
+      "familyId": "dfm.copper-clearance",
+      "familyVersion": "v1",
+      "requirement": "DFM-01",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "layer_roles",
+        "geometry_lines",
+        "geometry_arcs",
+        "geometry_regions",
+        "geometry_flashes",
+        "geometry_expanded",
+        "transforms",
+        "polarity",
+        "connectivity",
+        "constraints"
+      ],
+      "factPrerequisites": [],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_threshold"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "geometry-targets.json#dfm.copper-clearance.v1"
+    },
+    {
+      "familyId": "dfm.annular-ring",
+      "familyVersion": "v1",
+      "requirement": "DFM-01",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "layer_roles",
+        "layer_order",
+        "geometry_flashes",
+        "geometry_expanded",
+        "transforms",
+        "polarity",
+        "tools",
+        "drills",
+        "plating",
+        "layer_spans",
+        "constraints"
+      ],
+      "factPrerequisites": [
+        "pad_hole_association"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_threshold"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "geometry-targets.json#dfm.annular-ring.v1"
+    },
+    {
+      "familyId": "dfm.copper-edge",
+      "familyVersion": "v1",
+      "requirement": "DFM-01",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "layer_roles",
+        "profile",
+        "geometry_lines",
+        "geometry_arcs",
+        "geometry_regions",
+        "geometry_flashes",
+        "geometry_expanded",
+        "transforms",
+        "polarity",
+        "constraints"
+      ],
+      "factPrerequisites": [],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_threshold"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "geometry-targets.json#dfm.copper-edge.v1"
+    },
+    {
+      "familyId": "dfm.mask-sliver",
+      "familyVersion": "v1",
+      "requirement": "DFM-01",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "layer_roles",
+        "geometry_lines",
+        "geometry_arcs",
+        "geometry_regions",
+        "geometry_flashes",
+        "geometry_expanded",
+        "transforms",
+        "polarity",
+        "constraints"
+      ],
+      "factPrerequisites": [
+        "mask_opening_intent"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_threshold"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "geometry-targets.json#dfm.mask-sliver.v1"
+    },
+    {
+      "familyId": "dfm.paste-mask-relationship",
+      "familyVersion": "v1",
+      "requirement": "DFM-01",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "layer_roles",
+        "apertures",
+        "x2_aperture_attributes",
+        "geometry_lines",
+        "geometry_arcs",
+        "geometry_regions",
+        "geometry_flashes",
+        "geometry_expanded",
+        "transforms",
+        "polarity",
+        "components",
+        "pins",
+        "assembly",
+        "constraints"
+      ],
+      "factPrerequisites": [
+        "fitted_state",
+        "smd_pad_authority"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_threshold"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "geometry-targets.json#dfm.paste-mask-relationship.v1"
+    },
+    {
+      "familyId": "dfm.drill-tool-integrity",
+      "familyVersion": "v1",
+      "requirement": "DFM-01",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "units_and_format",
+        "tools"
+      ],
+      "factPrerequisites": [
+        "relevant_drill_route_slot_capabilities"
+      ],
+      "authority": [
+        "canonical_model"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "geometry-targets.json#dfm.drill-tool-integrity.v1"
+    },
+    {
+      "familyId": "dfm.stackup-order-confirmation",
+      "familyVersion": "v1",
+      "requirement": "DFM-02",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "construction",
+        "layer_order"
+      ],
+      "factPrerequisites": [
+        "order_profile_authority"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_order_profile"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "construction-targets.json#dfm.stackup-order-confirmation.v1"
+    },
+    {
+      "familyId": "dfm.total-thickness-material",
+      "familyVersion": "v1",
+      "requirement": "DFM-02",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "construction",
+        "constraints"
+      ],
+      "factPrerequisites": [
+        "order_profile_authority"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_order_profile"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "construction-targets.json#dfm.total-thickness-material.v1"
+    },
+    {
+      "familyId": "dfm.drill-span-plating",
+      "familyVersion": "v1",
+      "requirement": "DFM-02",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "tools",
+        "drills",
+        "plating",
+        "layer_spans",
+        "layer_order"
+      ],
+      "factPrerequisites": [
+        "order_profile_authority"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_order_profile"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "construction-targets.json#dfm.drill-span-plating.v1"
+    },
+    {
+      "familyId": "dfm.finish-profile",
+      "familyVersion": "v1",
+      "requirement": "DFM-02",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "construction",
+        "profile",
+        "constraints"
+      ],
+      "factPrerequisites": [
+        "order_profile_authority"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_order_profile"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "construction-targets.json#dfm.finish-profile.v1"
+    },
+    {
+      "familyId": "dfm.impedance-special-process",
+      "familyVersion": "v1",
+      "requirement": "DFM-02",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "constraints",
+        "construction"
+      ],
+      "factPrerequisites": [
+        "order_profile_authority"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_version_bound_order_profile"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "construction-targets.json#dfm.impedance-special-process.v1"
+    },
+    {
+      "familyId": "assembly.population-parity",
+      "familyVersion": "v1",
+      "requirement": "DFM-03",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [],
+      "factPrerequisites": [
+        "schematic_reconciliation_complete",
+        "schematic_artifact_identity"
+      ],
+      "authority": [
+        "typed_schematic_reconciliation"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false
+    },
+    {
+      "familyId": "assembly.side-rotation",
+      "familyVersion": "v1",
+      "requirement": "DFM-03",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "assembly",
+        "native_kicad_facts"
+      ],
+      "factPrerequisites": [
+        "placement_convention"
+      ],
+      "authority": [
+        "source_linked_assembly_facts"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "assembly-targets.json#assembly.side-rotation.v1"
+    },
+    {
+      "familyId": "assembly.paste-availability",
+      "familyVersion": "v1",
+      "requirement": "DFM-03",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "assembly",
+        "components",
+        "pins",
+        "layer_roles",
+        "apertures",
+        "x2_aperture_attributes",
+        "geometry_flashes",
+        "geometry_expanded",
+        "transforms",
+        "polarity"
+      ],
+      "factPrerequisites": [
+        "fitted_state",
+        "paste_requiring_pad_authority"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_assembly_facts"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "assembly-targets.json#assembly.paste-availability.v1"
+    },
+    {
+      "familyId": "assembly.courtyard-native",
+      "familyVersion": "v1",
+      "requirement": "DFM-03",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "native_kicad_facts"
+      ],
+      "factPrerequisites": [
+        "native_drc_complete"
+      ],
+      "authority": [
+        "completed_native_drc"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "assembly-targets.json#assembly.courtyard-native.v1"
+    },
+    {
+      "familyId": "assembly.footprint-string-parity",
+      "familyVersion": "v1",
+      "requirement": "DFM-03",
+      "familyClass": "deterministic",
+      "capabilityPrerequisites": [
+        "components"
+      ],
+      "factPrerequisites": [
+        "schematic_reconciliation_complete",
+        "per_source_footprint_comparisons"
+      ],
+      "authority": [
+        "typed_schematic_reconciliation"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": false,
+      "corpusRef": "assembly-targets.json#assembly.footprint-string-parity.v1"
+    },
+    {
+      "familyId": "assembly.access",
+      "familyVersion": "v1",
+      "requirement": "DFM-03",
+      "familyClass": "inference",
+      "capabilityPrerequisites": [
+        "assembly",
+        "profile",
+        "components",
+        "layer_roles",
+        "apertures",
+        "geometry_flashes",
+        "geometry_regions",
+        "geometry_expanded",
+        "transforms",
+        "polarity"
+      ],
+      "factPrerequisites": [
+        "assembly_process_envelope",
+        "complete_component_geometry",
+        "complete_placement_geometry",
+        "complete_profile_geometry"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_intent_declaration"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": true,
+      "corpusRef": "assembly-targets.json#assembly.access.v1"
+    },
+    {
+      "familyId": "assembly.testpoint-access",
+      "familyVersion": "v1",
+      "requirement": "DFM-03",
+      "familyClass": "inference",
+      "capabilityPrerequisites": [
+        "connectivity",
+        "components",
+        "pins",
+        "assembly",
+        "profile",
+        "layer_roles",
+        "apertures",
+        "geometry_flashes",
+        "geometry_regions",
+        "geometry_expanded",
+        "transforms",
+        "polarity"
+      ],
+      "factPrerequisites": [
+        "probe_envelope",
+        "target_net_authority",
+        "complete_connectivity_geometry",
+        "complete_component_geometry",
+        "complete_pin_geometry",
+        "complete_placement_geometry",
+        "complete_profile_geometry"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_intent_declaration"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": true,
+      "corpusRef": "assembly-targets.json#assembly.testpoint-access.v1"
+    },
+    {
+      "familyId": "inference.return-path",
+      "familyVersion": "v1",
+      "requirement": "DFM-04",
+      "familyClass": "inference",
+      "capabilityPrerequisites": [
+        "layer_order",
+        "connectivity",
+        "geometry_lines",
+        "geometry_arcs"
+      ],
+      "factPrerequisites": [
+        "signal_intent",
+        "reference_plane_intent"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_intent_declaration"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": true
+    },
+    {
+      "familyId": "inference.high-current",
+      "familyVersion": "v1",
+      "requirement": "DFM-04",
+      "familyClass": "inference",
+      "capabilityPrerequisites": [
+        "geometry_lines",
+        "geometry_arcs",
+        "construction",
+        "constraints"
+      ],
+      "factPrerequisites": [
+        "current_intent",
+        "process_envelope"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_intent_declaration"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": true
+    },
+    {
+      "familyId": "inference.creepage",
+      "familyVersion": "v1",
+      "requirement": "DFM-04",
+      "familyClass": "inference",
+      "capabilityPrerequisites": [
+        "connectivity",
+        "profile",
+        "geometry_lines",
+        "geometry_arcs",
+        "geometry_regions"
+      ],
+      "factPrerequisites": [
+        "voltage_domains",
+        "creepage_rule",
+        "material_environment"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_intent_declaration"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": true
+    },
+    {
+      "familyId": "inference.differential",
+      "familyVersion": "v1",
+      "requirement": "DFM-04",
+      "familyClass": "inference",
+      "capabilityPrerequisites": [
+        "connectivity",
+        "layer_order",
+        "geometry_lines",
+        "geometry_arcs",
+        "construction"
+      ],
+      "factPrerequisites": [
+        "differential_pair_intent",
+        "impedance_skew_target"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_intent_declaration"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": true
+    },
+    {
+      "familyId": "inference.thermal",
+      "familyVersion": "v1",
+      "requirement": "DFM-04",
+      "familyClass": "inference",
+      "capabilityPrerequisites": [
+        "construction",
+        "geometry_lines",
+        "geometry_regions",
+        "drills"
+      ],
+      "factPrerequisites": [
+        "power_intent",
+        "thermal_boundary_conditions"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_intent_declaration"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": true
+    },
+    {
+      "familyId": "inference.interface",
+      "familyVersion": "v1",
+      "requirement": "DFM-04",
+      "familyClass": "inference",
+      "capabilityPrerequisites": [
+        "connectivity",
+        "components",
+        "pins",
+        "constraints"
+      ],
+      "factPrerequisites": [
+        "interface_intent"
+      ],
+      "authority": [
+        "canonical_model",
+        "source_linked_intent_declaration"
+      ],
+      "promotionState": "evidence_only",
+      "humanApprovalRequired": true
+    }
+  ]
+}

@@ -205,12 +205,29 @@
     "assemblyEvidence": {
       "additionalProperties": false,
       "properties": {
+        "declaredPlacements": {
+          "items": {
+            "$ref": "#/$defs/declaredAssemblyPlacement"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
         "maskLayerIds": {
           "items": {
             "$ref": "#/$defs/layerId"
           },
           "maxItems": 419425,
           "type": "array"
+        },
+        "nativeCourtyard": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/nativeCourtyardEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "pasteLayerIds": {
           "items": {
@@ -229,6 +246,8 @@
       },
       "required": [
         "placements",
+        "declaredPlacements",
+        "nativeCourtyard",
         "maskLayerIds",
         "pasteLayerIds"
       ],
@@ -237,6 +256,28 @@
     "assemblyPlacement": {
       "additionalProperties": false,
       "properties": {
+        "convention": {
+          "$ref": "#/$defs/assemblyPlacementConvention"
+        },
+        "fitted": {
+          "enum": [
+            "fitted",
+            "not_fitted",
+            "unknown"
+          ]
+        },
+        "id": {
+          "pattern": "^assembly-placement-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "occurrenceId": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "position": {
           "$ref": "#/$defs/canonicalPoint"
         },
@@ -245,11 +286,20 @@
         },
         "reference": {
           "maxLength": 4096,
+          "minLength": 1,
           "type": "string"
         },
+        "revision": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "rotationMicrodegrees": {
-          "maximum": 9223372036854775807,
-          "minimum": -9223372036854775808,
+          "maximum": 359999999,
+          "minimum": 0,
           "type": "integer"
         },
         "side": {
@@ -264,11 +314,62 @@
         }
       },
       "required": [
+        "id",
+        "occurrenceId",
         "reference",
         "side",
         "position",
         "rotationMicrodegrees",
+        "fitted",
+        "revision",
+        "convention",
         "provenance"
+      ],
+      "type": "object"
+    },
+    "assemblyPlacementConvention": {
+      "additionalProperties": false,
+      "properties": {
+        "bottomMirroring": {
+          "enum": [
+            "mirrored",
+            "unmirrored",
+            "unknown"
+          ]
+        },
+        "origin": {
+          "enum": [
+            "kicad_board",
+            "unknown"
+          ]
+        },
+        "rotationDirection": {
+          "enum": [
+            "counter_clockwise",
+            "clockwise",
+            "unknown"
+          ]
+        },
+        "side": {
+          "enum": [
+            "top_bottom",
+            "unknown"
+          ]
+        },
+        "unit": {
+          "enum": [
+            "millimetre",
+            "inch",
+            null
+          ]
+        }
+      },
+      "required": [
+        "unit",
+        "origin",
+        "side",
+        "bottomMirroring",
+        "rotationDirection"
       ],
       "type": "object"
     },
@@ -992,6 +1093,76 @@
         }
       ]
     },
+    "declaredAssemblyPlacement": {
+      "additionalProperties": false,
+      "properties": {
+        "artifactDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "convention": {
+          "$ref": "#/$defs/assemblyPlacementConvention"
+        },
+        "fitted": {
+          "enum": [
+            "fitted",
+            "not_fitted"
+          ]
+        },
+        "id": {
+          "pattern": "^declared-assembly-placement-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "line": {
+          "maximum": 419425,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "position": {
+          "$ref": "#/$defs/canonicalPoint"
+        },
+        "reference": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "rotationMicrodegrees": {
+          "maximum": 359999999,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "side": {
+          "enum": [
+            "top",
+            "bottom"
+          ]
+        },
+        "sourcePath": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "reference",
+        "side",
+        "position",
+        "rotationMicrodegrees",
+        "fitted",
+        "revision",
+        "convention",
+        "sourcePath",
+        "artifactDigest",
+        "line"
+      ],
+      "type": "object"
+    },
     "documentId": {
       "pattern": "^document-v1-[0-9a-f]{64}$",
       "type": "string"
@@ -1321,6 +1492,13 @@
           "pattern": "^package-v1-[0-9a-f]{64}$",
           "type": "string"
         },
+        "padHoleAssociations": {
+          "items": {
+            "$ref": "#/$defs/padHoleAssociation"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
         "physicalBounds": {
           "items": {
             "$ref": "#/$defs/documentPhysicalBounds"
@@ -1419,6 +1597,7 @@
         "physicalBounds",
         "profile",
         "connectivity",
+        "padHoleAssociations",
         "x2Attributes",
         "jobFileFunctions",
         "assembly",
@@ -2828,6 +3007,89 @@
       ],
       "type": "object"
     },
+    "nativeCourtyardEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "observations": {
+          "items": {
+            "$ref": "#/$defs/nativeCourtyardObservation"
+          },
+          "maxItems": 419425,
+          "type": "array"
+        },
+        "source": {
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "enum": [
+            "complete",
+            "partial",
+            "not_run",
+            "disabled",
+            "failed"
+          ]
+        },
+        "tool": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "tool",
+        "version",
+        "source",
+        "observations"
+      ],
+      "type": "object"
+    },
+    "nativeCourtyardObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "exclusion": {
+          "enum": [
+            "active",
+            "excluded",
+            "unknown"
+          ]
+        },
+        "id": {
+          "pattern": "^native-courtyard-observation-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "overlap",
+            "malformed",
+            "missing"
+          ]
+        },
+        "location": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "exclusion",
+        "location"
+      ],
+      "type": "object"
+    },
     "nativeMarker": {
       "additionalProperties": false,
       "properties": {
@@ -3063,6 +3325,92 @@
         "component",
         "pin",
         "provenance"
+      ],
+      "type": "object"
+    },
+    "padHoleAssociation": {
+      "additionalProperties": false,
+      "properties": {
+        "applicableLayerIds": {
+          "items": {
+            "$ref": "#/$defs/layerId"
+          },
+          "maxItems": 419425,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "holeGeometry": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "drill"
+            },
+            "value": {
+              "$ref": "#/$defs/drillFeature"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        "holeId": {
+          "$ref": "#/$defs/featureId"
+        },
+        "holeProvenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "id": {
+          "pattern": "^pad-hole-association-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "padGeometry": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "contour"
+            },
+            "value": {
+              "$ref": "#/$defs/canonicalContour"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        "padId": {
+          "pattern": "^pad-v1-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "padProvenance": {
+          "$ref": "#/$defs/manufacturingProvenance"
+        },
+        "plating": {
+          "const": "plated"
+        },
+        "span": {
+          "$ref": "#/$defs/layerSpan"
+        },
+        "toolId": {
+          "$ref": "#/$defs/toolId"
+        }
+      },
+      "required": [
+        "id",
+        "padId",
+        "holeId",
+        "toolId",
+        "applicableLayerIds",
+        "plating",
+        "span",
+        "padGeometry",
+        "holeGeometry",
+        "padProvenance",
+        "holeProvenance"
       ],
       "type": "object"
     },
@@ -3374,6 +3722,89 @@
       ],
       "type": "object"
     },
+    "schematicFootprintComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "actual": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "actualSourceDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "actualSourcePath": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "high",
+            "low"
+          ]
+        },
+        "expected": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "expectedSourceDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "expectedSourcePath": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "field": {
+          "const": "footprint"
+        },
+        "join": {
+          "enum": [
+            "occurrence-uuid",
+            "reference-fallback"
+          ]
+        },
+        "location": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "matched": {
+          "type": "boolean"
+        },
+        "occurrenceKey": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "board",
+            "bom",
+            "netlist"
+          ]
+        }
+      },
+      "required": [
+        "occurrenceKey",
+        "field",
+        "source",
+        "expected",
+        "actual",
+        "join",
+        "confidence",
+        "expectedSourcePath",
+        "expectedSourceDigest",
+        "actualSourcePath",
+        "actualSourceDigest",
+        "location",
+        "matched"
+      ],
+      "type": "object"
+    },
     "schematicMismatch": {
       "additionalProperties": false,
       "properties": {
@@ -3532,6 +3963,13 @@
           "maxProperties": 2000,
           "type": "object"
         },
+        "footprintComparisons": {
+          "items": {
+            "$ref": "#/$defs/schematicFootprintComparison"
+          },
+          "maxItems": 60000,
+          "type": "array"
+        },
         "limitations": {
           "items": {
             "maxLength": 4096,
@@ -3629,6 +4067,7 @@
         "occurrences",
         "capabilities",
         "mismatches",
+        "footprintComparisons",
         "nativeErc",
         "nativeParity",
         "limitations"

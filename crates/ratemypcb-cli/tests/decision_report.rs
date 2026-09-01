@@ -108,6 +108,21 @@ fn assessment(report: &Value, digest: &str) -> Value {
         .unwrap()["id"]
         .as_str()
         .unwrap();
+    let top_unblock = report["requiredEvidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| {
+            item["execution"] != "completed"
+                || item["result"] != "pass"
+                || !matches!(
+                    item["freshness"].as_str(),
+                    Some("current" | "not_applicable")
+                )
+        })
+        .unwrap()["evidenceId"]
+        .as_str()
+        .unwrap();
     json!({
         "assessmentSchemaVersion": "2.0",
         "reportDigest": digest,
@@ -125,7 +140,7 @@ fn assessment(report: &Value, digest: &str) -> Value {
             "priority": 1,
             "title": "Run the required fabrication checks",
             "rationale": "Supply the missing release evidence before approval.",
-            "evidenceRefs": [finding, coverage]
+            "evidenceRefs": [finding, top_unblock]
         }],
         "questions": [{
             "question": "Which fabrication profile applies?",
@@ -653,10 +668,24 @@ fn schematic_doctor_and_snapshot_expose_capabilities_without_client_policy() {
         .find(|record| record["checkId"] == "schematic-evidence")
         .unwrap()["id"]
         .clone();
+    let top_unblock = report["requiredEvidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| {
+            item["execution"] != "completed"
+                || item["result"] != "pass"
+                || !matches!(
+                    item["freshness"].as_str(),
+                    Some("current" | "not_applicable")
+                )
+        })
+        .unwrap()["evidenceId"]
+        .clone();
     let mut assessment = assessment(&report, &digest(&report_path));
     assessment["verdictEvidenceRefs"] = json!([schematic_evidence.clone()]);
     assessment["categorySummaries"][0]["evidenceRefs"] = json!([schematic_evidence.clone()]);
-    assessment["actions"][0]["evidenceRefs"] = json!([schematic_evidence.clone()]);
+    assessment["actions"][0]["evidenceRefs"] = json!([schematic_evidence.clone(), top_unblock]);
     assessment["questions"][0]["evidenceRefs"] = json!([schematic_evidence.clone()]);
     let assessment_path = write_assessment(&temp, &assessment, "assessment.json");
     let html_path = temp.join("report.html");
@@ -674,4 +703,226 @@ fn schematic_doctor_and_snapshot_expose_capabilities_without_client_policy() {
     }
     assert!(html.contains(schematic_evidence.as_str().unwrap()));
     assert!(!html.contains("<script>alert(1)</script>"));
+}
+
+#[test]
+fn dfm_inference_declarations_reach_core_and_names_only_remains_not_checked() {
+    let temp = TempDir::new();
+    let report_path = temp.join("dfm-inference.json");
+    let declarations = repository_root().join("tests/fixtures/dfm/declarations.json");
+    let output = cli(&[
+        "review",
+        FIXTURE,
+        "--native",
+        "off",
+        "--format",
+        "json",
+        "--dfm-declarations",
+        &declarations.to_string_lossy(),
+        "--output",
+        &report_path.to_string_lossy(),
+    ]);
+    assert_success(&output);
+    let report: Value = serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    let document = report["fabrication"]["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|document| document["adapter"] == "ratemypcb-dfm-declarations")
+        .unwrap();
+    let inference = report["fabrication"]["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|constraint| {
+            constraint["declaredValue"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("inference:"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(inference.len(), 15);
+    assert!(inference.iter().all(|constraint| {
+        constraint["kind"] == "other"
+            && constraint["value"].is_null()
+            && constraint["authority"] == "explicit"
+            && constraint["provenance"]["artifactDigest"] == document["artifactDigest"]
+            && constraint["provenance"]["producer"] == "ratemypcb-project-authority"
+            && constraint["provenance"]["producerVersion"] == "2026.08"
+    }));
+    for (record, id, model) in [
+        (
+            17,
+            "assembly_process_envelope",
+            "assembly.component-copper-envelope-2d",
+        ),
+        (18, "probe_envelope", "assembly.testpoint-probe-envelope-2d"),
+        (19, "target_net_authority", "canonical.connectivity-net-set"),
+    ] {
+        let constraint = inference
+            .iter()
+            .find(|constraint| constraint["provenance"]["location"]["record"] == record)
+            .unwrap();
+        let encoded = constraint["declaredValue"].as_str().unwrap();
+        let normalized: Value = serde_json::from_str(encoded.split_once('=').unwrap().1).unwrap();
+        assert_eq!(normalized["id"], id);
+        assert_eq!(normalized["model"], model);
+        assert_eq!(normalized["modelVersion"], "1");
+        assert_eq!(normalized["applicability"], "board");
+    }
+    let coverage = |report: &Value, check_id: &str| {
+        let evidence_id = report["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["checkId"] == check_id && record["kind"] == "coverage")
+            .unwrap()["id"]
+            .clone();
+        report["coverage"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|coverage| coverage["id"] == evidence_id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(coverage(&report, "assembly.access.v1")["status"], "not_run");
+    assert_eq!(
+        coverage(&report, "assembly.testpoint-access.v1")["status"],
+        "not_run"
+    );
+
+    let names_board = temp.join("names-only.kicad_pcb");
+    let source = fs::read_to_string(repository_root().join(FIXTURE)).unwrap();
+    fs::write(
+        &names_board,
+        source.replace("R1", "TP99").replace("GND", "TEST_TARGET"),
+    )
+    .unwrap();
+    let names_report_path = temp.join("names-only.json");
+    let names = cli(&[
+        "review",
+        &names_board.to_string_lossy(),
+        "--native",
+        "off",
+        "--format",
+        "json",
+        "--output",
+        &names_report_path.to_string_lossy(),
+    ]);
+    assert_success(&names);
+    let names_report: Value =
+        serde_json::from_slice(&fs::read(&names_report_path).unwrap()).unwrap();
+    for family in ["assembly.access.v1", "assembly.testpoint-access.v1"] {
+        let observed = coverage(&names_report, family);
+        assert_eq!(observed["status"], "not_run", "{family}: {observed}");
+        assert!(
+            observed["evidence"]
+                .as_str()
+                .unwrap()
+                .starts_with("not_checked:")
+        );
+    }
+
+    let mut malformed: Value = serde_json::from_slice(&fs::read(declarations).unwrap()).unwrap();
+    malformed["inferenceRecords"][0]["modelVersion"] = Value::String("2".into());
+    let malformed_path = temp.join("malformed-inference.json");
+    fs::write(&malformed_path, serde_json::to_vec(&malformed).unwrap()).unwrap();
+    let rejected = cli(&[
+        "review",
+        FIXTURE,
+        "--native",
+        "off",
+        "--dfm-declarations",
+        &malformed_path.to_string_lossy(),
+    ]);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("DFM declarations"));
+
+    let help = cli(&["--help"]);
+    assert_success(&help);
+    assert_eq!(
+        String::from_utf8_lossy(&help.stdout)
+            .matches("--dfm-declarations")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn dfm_authority_cli_normalizes_bounded_source_linked_declarations() {
+    let temp = TempDir::new();
+    let report_path = temp.join("dfm-authority.json");
+    let declarations = repository_root().join("tests/fixtures/dfm/declarations.json");
+    let output = cli(&[
+        "review",
+        FIXTURE,
+        "--native",
+        "off",
+        "--format",
+        "json",
+        "--dfm-declarations",
+        &declarations.to_string_lossy(),
+        "--output",
+        &report_path.to_string_lossy(),
+    ]);
+    assert_success(&output);
+    let report: Value = serde_json::from_slice(&fs::read(report_path).unwrap()).unwrap();
+    let document = report["fabrication"]["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|document| document["adapter"] == "ratemypcb-dfm-declarations")
+        .unwrap();
+    assert_eq!(
+        document["virtualPath"],
+        "tests/fixtures/dfm/declarations.json"
+    );
+    assert!(
+        report["fabrication"]["constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|constraint| {
+                constraint["kind"] == "minimum_drill"
+                    && constraint["value"] == 200_000_000
+                    && constraint["authority"] == "explicit"
+                    && constraint["provenance"]["artifactDigest"] == document["artifactDigest"]
+            })
+    );
+    assert!(
+        report["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["checkId"] == "dfm-declarations"
+                && record["provenance"]["artifactDigest"] == document["artifactDigest"])
+    );
+
+    let mut invalid: Value = serde_json::from_slice(&fs::read(declarations).unwrap()).unwrap();
+    invalid["rules"][0]["id"] = Value::String("unknown-rule".into());
+    let invalid_path = temp.join("invalid-declarations.json");
+    fs::write(&invalid_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    let invalid_output = cli(&[
+        "review",
+        FIXTURE,
+        "--native",
+        "off",
+        "--dfm-declarations",
+        &invalid_path.to_string_lossy(),
+    ]);
+    assert_eq!(invalid_output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&invalid_output.stderr).contains("DFM declarations"));
+
+    let oversized_path = temp.join("oversized-declarations.json");
+    fs::write(&oversized_path, vec![b' '; 256 * 1024 + 1]).unwrap();
+    let oversized = cli(&[
+        "review",
+        FIXTURE,
+        "--native",
+        "off",
+        "--dfm-declarations",
+        &oversized_path.to_string_lossy(),
+    ]);
+    assert_eq!(oversized.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&oversized.stderr).contains("256 KiB limit"));
 }

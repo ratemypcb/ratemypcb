@@ -1,0 +1,860 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "families": [
+    {
+      "familyId": "assembly.side-rotation",
+      "familyVersion": "v1",
+      "fixtureDigest": "8cb05c2df287af00c1aef079109c1c9b9d711ca59fe9de66415c20b2886e9a0f",
+      "targets": [
+        {
+          "caseId": "side-mismatch",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "R1",
+            "side"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "rotation-mismatch",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "R1",
+            "rotation"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "equivalent-angle",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "R1",
+            "rotation-equivalent"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "exact-side-rotation",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "R1",
+            "side-rotation-exact"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "unknown-convention",
+          "canonicalTargetIds": [
+            "R1",
+            "unknown-convention"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unknown unit, origin, side, mirroring, or direction cannot be compared."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "assembly-side-rotation-affected_conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "affected conflict must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-affected_omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "affected omission must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-dangling_identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "dangling identity must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-duplicate_capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "duplicate capability must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-missing_prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "missing prerequisite must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-reordered_facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "reordered facts must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-resolution_changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "resolution changed must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-state_failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state failed must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-state_not_provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state not provided must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-state_omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state omitted must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-state_partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state partial must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-state_stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state stale must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-state_unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state unsupported must fail closed for assembly-side-rotation."
+        },
+        {
+          "id": "assembly-side-rotation-unit_changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "unit changed must fail closed for assembly-side-rotation."
+        }
+      ]
+    },
+    {
+      "familyId": "assembly.paste-availability",
+      "familyVersion": "v1",
+      "fixtureDigest": "1f56f6a2f1ca81ebd774def1f822075dfef98e6b39eefaa44ac77f88d9474aee",
+      "targets": [
+        {
+          "caseId": "wrong-side-paste",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "R1",
+            "pad-1",
+            "paste-top"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "actual-fitted-pad-paste",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "R1",
+            "pad-1",
+            "paste-exact"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "dnp-pad",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "R2",
+            "pad-1",
+            "paste-dnp"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "windowpane",
+          "canonicalTargetIds": [
+            "R1",
+            "pad-1",
+            "windowpane"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Multiple paste openings need explicit windowpane intent."
+        },
+        {
+          "caseId": "deliberate-omission",
+          "canonicalTargetIds": [
+            "R1",
+            "omitted-paste",
+            "pad-2"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Absent paste may be deliberate and is not clean evidence."
+        },
+        {
+          "caseId": "layer-presence-only",
+          "canonicalTargetIds": [
+            "paste-layer",
+            "without-geometry"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "A paste layer ID does not establish per-pad geometry."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "assembly-paste-availability-affected_conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "affected conflict must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-affected_omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "affected omission must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-dangling_identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "dangling identity must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-duplicate_capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "duplicate capability must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-missing_prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "missing prerequisite must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-reordered_facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "reordered facts must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-resolution_changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "resolution changed must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-state_failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state failed must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-state_not_provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state not provided must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-state_omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state omitted must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-state_partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state partial must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-state_stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state stale must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-state_unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state unsupported must fail closed for assembly-paste-availability."
+        },
+        {
+          "id": "assembly-paste-availability-unit_changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "unit changed must fail closed for assembly-paste-availability."
+        }
+      ]
+    },
+    {
+      "familyId": "assembly.courtyard-native",
+      "familyVersion": "v1",
+      "fixtureDigest": "1c547f62117dc30800305b9deac789a0dbf7be796a1dccc38596479c3213545a",
+      "targets": [
+        {
+          "caseId": "active-overlap",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "courtyard",
+            "marker-1",
+            "overlap"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "active-malformed",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "courtyard",
+            "malformed",
+            "marker-2"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "active-missing",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "courtyard",
+            "marker-3",
+            "missing"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "explicit-exclusion",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "courtyard",
+            "excluded",
+            "marker-4"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "completed-clean",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "courtyard",
+            "no-active-markers"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "unknown-exclusion",
+          "canonicalTargetIds": [
+            "courtyard",
+            "marker-5",
+            "unknown-exclusion"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unknown exclusion state cannot be clean."
+        },
+        {
+          "caseId": "native-failure",
+          "canonicalTargetIds": [
+            "courtyard",
+            "native-not-run"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Absent or failed native execution cannot be clean."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "assembly-courtyard-native-affected_conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "affected conflict must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-affected_omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "affected omission must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-dangling_identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "dangling identity must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-duplicate_capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "duplicate capability must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-missing_prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "missing prerequisite must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-reordered_facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "reordered facts must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-resolution_changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "resolution changed must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-state_failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state failed must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-state_not_provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state not provided must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-state_omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state omitted must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-state_partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state partial must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-state_stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state stale must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-state_unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state unsupported must fail closed for assembly-courtyard-native."
+        },
+        {
+          "id": "assembly-courtyard-native-unit_changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "unit changed must fail closed for assembly-courtyard-native."
+        }
+      ]
+    },
+    {
+      "familyId": "assembly.footprint-string-parity",
+      "familyVersion": "v1",
+      "fixtureDigest": "8f8d93bb018140287172ed717acb793d8789c76ac9abce800411598a4859394b",
+      "targets": [
+        {
+          "caseId": "board-string-mismatch",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "R1",
+            "board-footprint",
+            "schematic-footprint"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "bom-string-mismatch",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "R1",
+            "bom-footprint",
+            "schematic-footprint"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "exact-full-string",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "R1",
+            "exact-footprint"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "adjudicated-library-suffix",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "R1",
+            "library-suffix"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "ambiguous-reference",
+          "canonicalTargetIds": [
+            "R1",
+            "ambiguous-fallback"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Ambiguous unique-reference fallback is not checked."
+        },
+        {
+          "caseId": "distributor-packaging",
+          "canonicalTargetIds": [
+            "R1",
+            "tape-reel"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Distributor packaging cannot establish footprint or package suitability."
+        },
+        {
+          "caseId": "name-similarity",
+          "canonicalTargetIds": [
+            "R1",
+            "similar-name"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Name similarity is not typed source-string parity."
+        }
+      ],
+      "mutations": [
+        {
+          "id": "assembly-footprint-string-parity-affected_conflict",
+          "kind": "affected_conflict",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "affected conflict must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-affected_omission",
+          "kind": "affected_omission",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "affected omission must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-dangling_identity",
+          "kind": "dangling_identity",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "dangling identity must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-duplicate_capability",
+          "kind": "duplicate_capability",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "duplicate capability must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-missing_prerequisite",
+          "kind": "missing_prerequisite",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "missing prerequisite must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-reordered_facts",
+          "kind": "reordered_facts",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "reordered facts must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-resolution_changed",
+          "kind": "resolution_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "resolution changed must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-state_failed",
+          "kind": "state_failed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state failed must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-state_not_provided",
+          "kind": "state_not_provided",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state not provided must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-state_omitted",
+          "kind": "state_omitted",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state omitted must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-state_partial",
+          "kind": "state_partial",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state partial must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-state_stale",
+          "kind": "state_stale",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state stale must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-state_unsupported",
+          "kind": "state_unsupported",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "state unsupported must fail closed for assembly-footprint-string-parity."
+        },
+        {
+          "id": "assembly-footprint-string-parity-unit_changed",
+          "kind": "unit_changed",
+          "expectedStatus": "not_checked",
+          "contributesToConfusionMatrix": false,
+          "detail": "unit changed must fail closed for assembly-footprint-string-parity."
+        }
+      ]
+    },
+    {
+      "familyId": "assembly.access",
+      "familyVersion": "v1",
+      "fixtureDigest": "0cd840929c657fb9b7cdff7cef8a4887cd77a9fc217dbca77f616dc89d7ebfb5",
+      "targets": [
+        {
+          "caseId": "component-envelope-obstruction",
+          "caseClass": "positive",
+          "canonicalTargetIds": ["component-clearance", "r1", "r2"],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "profile-envelope-obstruction",
+          "caseClass": "positive",
+          "canonicalTargetIds": ["profile-clearance", "r1"],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "exact-component-envelope",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": ["component-clearance-exact", "r1", "r2"],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "safe-profile-envelope",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": ["profile-clearance-safe", "r1"],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "missing-process-envelope",
+          "canonicalTargetIds": ["missing-envelope", "r1"],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "No process or tool name and numeric envelope means no assembly-access comparison."
+        },
+        {
+          "caseId": "incomplete-component-geometry",
+          "canonicalTargetIds": ["incomplete-component-geometry", "r1"],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "A placement point or component name is not complete component geometry."
+        },
+        {
+          "caseId": "incomplete-profile-or-placement",
+          "canonicalTargetIds": ["incomplete-profile", "placement"],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Incomplete placement or profile geometry cannot establish access."
+        }
+      ],
+      "mutations": [
+        {"id":"assembly-access-affected-conflict","kind":"affected_conflict","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Affected assembly, profile, component, or geometry conflict fails closed."},
+        {"id":"assembly-access-affected-omission","kind":"affected_omission","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Affected assembly, profile, component, or geometry omission fails closed."},
+        {"id":"assembly-access-dangling-identity","kind":"dangling_identity","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Dangling placement, component geometry, profile, or declaration identity fails closed."},
+        {"id":"assembly-access-duplicate-capability","kind":"duplicate_capability","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Duplicate prerequisite capability authority fails closed."},
+        {"id":"assembly-access-missing-prerequisite","kind":"missing_prerequisite","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Missing process envelope or canonical prerequisite fails closed."},
+        {"id":"assembly-access-reordered-facts","kind":"reordered_facts","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Reordered facts preserve deterministic observations and IDs."},
+        {"id":"assembly-access-resolution-changed","kind":"resolution_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Off-grid process or geometry resolution fails closed."},
+        {"id":"assembly-access-state-failed","kind":"state_failed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Failed prerequisite state fails closed."},
+        {"id":"assembly-access-state-not-provided","kind":"state_not_provided","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Not-provided prerequisite state fails closed."},
+        {"id":"assembly-access-state-omitted","kind":"state_omitted","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Omitted prerequisite state fails closed."},
+        {"id":"assembly-access-state-partial","kind":"state_partial","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Partial prerequisite state fails closed."},
+        {"id":"assembly-access-state-stale","kind":"state_stale","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Stale prerequisite state fails closed."},
+        {"id":"assembly-access-state-unsupported","kind":"state_unsupported","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unsupported prerequisite state fails closed."},
+        {"id":"assembly-access-unit-changed","kind":"unit_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unknown model, version, unit, or range fails before comparison."}
+      ]
+    },
+    {
+      "familyId": "assembly.testpoint-access",
+      "familyVersion": "v1",
+      "fixtureDigest": "19345edcc110b73234530a35fc381aa213abb6737bb4d1b55a99ca677bece0f0",
+      "targets": [
+        {
+          "caseId": "component-obstructed-target",
+          "caseClass": "positive",
+          "canonicalTargetIds": ["component-obstruction", "net-v1-target", "pad-r1-1"],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "profile-obstructed-target",
+          "caseClass": "positive",
+          "canonicalTargetIds": ["edge-obstruction", "net-v1-target", "pad-r1-1"],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "explicit-accessible-target",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": ["explicit-target", "net-v1-target", "pad-r1-1"],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        },
+        {
+          "caseId": "tp-like-names-do-not-add-targets",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": ["net-v1-target", "tp-like-names-ignored"],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "tp-reference-only",
+          "canonicalTargetIds": ["tp-reference-only"],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "TP-like references do not establish target-net authority."
+        },
+        {
+          "caseId": "test-net-name-only",
+          "canonicalTargetIds": ["test-net-name-only"],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Net names do not establish target-net authority."
+        },
+        {
+          "caseId": "missing-probe-envelope",
+          "canonicalTargetIds": ["missing-probe-envelope", "net-v1-target"],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "A target without a named probe and process envelope is not checked."
+        },
+        {
+          "caseId": "incomplete-connectivity-pin-placement-profile",
+          "canonicalTargetIds": ["incomplete-canonical-facts", "net-v1-target"],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Connectivity, component, pin, placement, profile, and geometry must all be complete."
+        }
+      ],
+      "mutations": [
+        {"id":"assembly-testpoint-access-affected-conflict","kind":"affected_conflict","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Affected connectivity, component, pin, placement, profile, or geometry conflict fails closed."},
+        {"id":"assembly-testpoint-access-affected-omission","kind":"affected_omission","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Affected connectivity, component, pin, placement, profile, or geometry omission fails closed."},
+        {"id":"assembly-testpoint-access-dangling-identity","kind":"dangling_identity","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Dangling target net, feature, placement, profile, or declaration identity fails closed."},
+        {"id":"assembly-testpoint-access-duplicate-capability","kind":"duplicate_capability","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Duplicate prerequisite capability authority fails closed."},
+        {"id":"assembly-testpoint-access-missing-prerequisite","kind":"missing_prerequisite","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Missing target, probe envelope, or canonical prerequisite fails closed."},
+        {"id":"assembly-testpoint-access-reordered-facts","kind":"reordered_facts","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Reordered facts preserve deterministic observations and IDs."},
+        {"id":"assembly-testpoint-access-resolution-changed","kind":"resolution_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Off-grid probe or geometry resolution fails closed."},
+        {"id":"assembly-testpoint-access-state-failed","kind":"state_failed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Failed prerequisite state fails closed."},
+        {"id":"assembly-testpoint-access-state-not-provided","kind":"state_not_provided","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Not-provided prerequisite state fails closed."},
+        {"id":"assembly-testpoint-access-state-omitted","kind":"state_omitted","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Omitted prerequisite state fails closed."},
+        {"id":"assembly-testpoint-access-state-partial","kind":"state_partial","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Partial prerequisite state fails closed."},
+        {"id":"assembly-testpoint-access-state-stale","kind":"state_stale","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Stale prerequisite state fails closed."},
+        {"id":"assembly-testpoint-access-state-unsupported","kind":"state_unsupported","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unsupported prerequisite state fails closed."},
+        {"id":"assembly-testpoint-access-unit-changed","kind":"unit_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unknown model, version, unit, range, or target ID fails before comparison."}
+      ]
+    }
+  ]
+}

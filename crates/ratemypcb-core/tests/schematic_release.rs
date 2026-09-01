@@ -22,6 +22,7 @@ fn options() -> ReviewOptions {
         bom: None,
         placement: None,
         supply_snapshot: None,
+        dfm_declarations: None,
         preset: Preset::named("standard").unwrap(),
         native: NativeMode::Off,
         tool_version: "schematic-release-test".into(),

@@ -1,0 +1,365 @@
+{
+  "schemaVersion": 1,
+  "origin": "project-authored",
+  "license": "MIT OR Apache-2.0",
+  "families": [
+    {
+      "familyId": "dfm.stackup-order-confirmation",
+      "familyVersion": "v1",
+      "fixtureDigest": "d1269c18cd29b96f930096c82c78bce48e1d169ee578e18ff937007a6c2561f7",
+      "targets": [
+        {
+          "caseId": "stackup-order-conflict",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "design:layer-order:L1,L2",
+            "requirement:declaration:record-1:L2,L1"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "stackup-order-exact-match",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "design:layer-order:L1,L2",
+            "requirement:declaration:record-1:L1,L2"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "stackup-order-missing-production-authority",
+          "canonicalTargetIds": [
+            "design:layer-order:L1,L2"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "A direct requirement, filename layer count, or absent declaration is not production order authority."
+        },
+        {
+          "caseId": "stackup-order-unrepresented-layer-list",
+          "canonicalTargetIds": [
+            "requirement:declaration:record-1:missing-layer"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "A declaration that cannot resolve exact canonical layers remains a source-linked confirmation gap."
+        }
+      ],
+      "mutations": [
+        {"id":"stackup-order-affected-conflict","kind":"affected_conflict","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected construction or layer-order conflict fails closed."},
+        {"id":"stackup-order-affected-omission","kind":"affected_omission","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected construction or layer-order omission fails closed."},
+        {"id":"stackup-order-dangling-identity","kind":"dangling_identity","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"A dangling declared layer identity fails closed."},
+        {"id":"stackup-order-duplicate-capability","kind":"duplicate_capability","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Duplicate capability authority fails closed."},
+        {"id":"stackup-order-missing-prerequisite","kind":"missing_prerequisite","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Missing construction or layer-order capability fails closed."},
+        {"id":"stackup-order-reordered-facts","kind":"reordered_facts","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Container reordering preserves the exact canonical result."},
+        {"id":"stackup-order-resolution-changed","kind":"resolution_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"A changed source resolution cannot supply order authority."},
+        {"id":"stackup-order-state-failed","kind":"state_failed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Failed prerequisite state fails closed."},
+        {"id":"stackup-order-state-not-provided","kind":"state_not_provided","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Not-provided prerequisite state fails closed."},
+        {"id":"stackup-order-state-omitted","kind":"state_omitted","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Omitted prerequisite state fails closed."},
+        {"id":"stackup-order-state-partial","kind":"state_partial","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Partial prerequisite state fails closed."},
+        {"id":"stackup-order-state-stale","kind":"state_stale","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Stale prerequisite state fails closed."},
+        {"id":"stackup-order-state-unsupported","kind":"state_unsupported","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unsupported prerequisite state fails closed."},
+        {"id":"stackup-order-unit-changed","kind":"unit_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Filename or legacy floating-point substitution fails closed."}
+      ]
+    },
+    {
+      "familyId": "dfm.total-thickness-material",
+      "familyVersion": "v1",
+      "fixtureDigest": "b42e8b5a5fd348341f28781983ae9c3e1aada1917e607552667d8f6f4d85b6ce",
+      "targets": [
+        {
+          "caseId": "total-thickness-one-picometre-conflict",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "design:total-thickness:1600000000pm",
+            "requirement:declaration:record-2:1600000001pm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "layer-material-exact-string-conflict",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "design:layer:L1:material:FR-4",
+            "requirement:declaration:record-11:material:FR4"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "thickness-material-exact-match",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "design:layer:L1:35000000pm:FR-4",
+            "design:layer:L2:35000000pm:FR-4",
+            "design:total-thickness:1600000000pm",
+            "requirement:declaration:records-2,3,11-14"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "thickness-material-missing-production-authority",
+          "canonicalTargetIds": [
+            "design:construction:represented"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Direct constraints, presets, legacy floating-point stackup, and absent declarations do not qualify."
+        },
+        {
+          "caseId": "thickness-material-incomplete-design-provenance",
+          "canonicalTargetIds": [
+            "requirement:declaration:records-2,3,11-14"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing or duplicate design material/thickness provenance remains a confirmation gap."
+        }
+      ],
+      "mutations": [
+        {"id":"thickness-material-affected-conflict","kind":"affected_conflict","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected construction or constraint conflict fails closed."},
+        {"id":"thickness-material-affected-omission","kind":"affected_omission","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected construction or constraint omission fails closed."},
+        {"id":"thickness-material-dangling-identity","kind":"dangling_identity","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"A dangling layer or provenance identity fails closed."},
+        {"id":"thickness-material-duplicate-capability","kind":"duplicate_capability","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Duplicate capability authority fails closed."},
+        {"id":"thickness-material-missing-prerequisite","kind":"missing_prerequisite","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Missing construction or constraints capability fails closed."},
+        {"id":"thickness-material-reordered-facts","kind":"reordered_facts","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Container reordering preserves deterministic comparison ordering."},
+        {"id":"thickness-material-resolution-changed","kind":"resolution_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An inexact or changed numeric resolution fails closed."},
+        {"id":"thickness-material-state-failed","kind":"state_failed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Failed prerequisite state fails closed."},
+        {"id":"thickness-material-state-not-provided","kind":"state_not_provided","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Not-provided prerequisite state fails closed."},
+        {"id":"thickness-material-state-omitted","kind":"state_omitted","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Omitted prerequisite state fails closed."},
+        {"id":"thickness-material-state-partial","kind":"state_partial","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Partial prerequisite state fails closed."},
+        {"id":"thickness-material-state-stale","kind":"state_stale","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Stale prerequisite state fails closed."},
+        {"id":"thickness-material-state-unsupported","kind":"state_unsupported","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unsupported prerequisite state fails closed."},
+        {"id":"thickness-material-unit-changed","kind":"unit_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unit mutation must not round or fall back to floating point."}
+      ]
+    },
+    {
+      "familyId": "dfm.drill-span-plating",
+      "familyVersion": "v1",
+      "fixtureDigest": "b5410b2c0d14a207df977ed98f5d92217e0a6e0970fcd45587024e7e0e5b4b7b",
+      "targets": [
+        {
+          "caseId": "drill-span-present-but-unrepresented-acknowledgement",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "design:tool:T01:plated:L1-L2",
+            "requirement:declaration:record-7:unrepresented"
+          ],
+          "expectedLabel": "confirmation_gap",
+          "actualLabel": "confirmation_gap"
+        },
+        {
+          "caseId": "drill-span-unknown-design-never-compares",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "design:tool:T01:plating-unknown:span-unknown",
+            "requirement:declaration:record-7:unrepresented"
+          ],
+          "expectedLabel": "no_match_or_conflict",
+          "actualLabel": "no_match_or_conflict"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "drill-span-acknowledgement-absent",
+          "canonicalTargetIds": [
+            "design:tool:T01:plated:L1-L2"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Absent customer acknowledgement remains a confirmation gap."
+        },
+        {
+          "caseId": "drill-span-design-evidence-partial",
+          "canonicalTargetIds": [
+            "design:tool:T01:partial"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Unknown/mixed plating or absent/ambiguous span cannot pass, conflict, or assume through-hole construction."
+        }
+      ],
+      "mutations": [
+        {"id":"drill-span-affected-conflict","kind":"affected_conflict","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected tool/plating/span conflict fails closed."},
+        {"id":"drill-span-affected-omission","kind":"affected_omission","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected tool/plating/span omission fails closed."},
+        {"id":"drill-span-dangling-identity","kind":"dangling_identity","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"A dangling tool or layer identity fails closed."},
+        {"id":"drill-span-duplicate-capability","kind":"duplicate_capability","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Duplicate capability authority fails closed."},
+        {"id":"drill-span-missing-prerequisite","kind":"missing_prerequisite","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Missing tools, drills, plating, spans, or layer order fails closed."},
+        {"id":"drill-span-reordered-facts","kind":"reordered_facts","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Container reordering preserves deterministic per-tool gaps."},
+        {"id":"drill-span-resolution-changed","kind":"resolution_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Changed or absent exact tool resolution remains a gap."},
+        {"id":"drill-span-state-failed","kind":"state_failed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Failed prerequisite state fails closed."},
+        {"id":"drill-span-state-not-provided","kind":"state_not_provided","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Not-provided prerequisite state fails closed."},
+        {"id":"drill-span-state-omitted","kind":"state_omitted","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Omitted prerequisite state fails closed."},
+        {"id":"drill-span-state-partial","kind":"state_partial","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Partial prerequisite state fails closed."},
+        {"id":"drill-span-state-stale","kind":"state_stale","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Stale prerequisite state fails closed."},
+        {"id":"drill-span-state-unsupported","kind":"state_unsupported","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unsupported prerequisite state fails closed."},
+        {"id":"drill-span-unit-changed","kind":"unit_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unit or layer-order mutation never creates a through-hole assumption."}
+      ]
+    },
+    {
+      "familyId": "dfm.finish-profile",
+      "familyVersion": "v1",
+      "fixtureDigest": "ba41d4c170bccaaf8b7e43cef369c4cd70d18d457980e7bea74a448f694b3bd2",
+      "targets": [
+        {
+          "caseId": "finish-exact-string-conflict",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "design:finish:ENIG",
+            "requirement:declaration:record-4:finish:HASL"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "finish-exact-match",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "design:finish:ENIG",
+            "requirement:declaration:record-4:finish:ENIG"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "profile-present-but-unrepresented-acknowledgement",
+          "canonicalTargetIds": [
+            "design:profile:represented",
+            "requirement:declaration:record-10:profile:unrepresented"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Profile geometry and a textual acknowledgement cannot be compared without a canonical customer profile representation."
+        },
+        {
+          "caseId": "castellation-present-but-unrepresented-acknowledgement",
+          "canonicalTargetIds": [
+            "requirement:declaration:record-8:castellation:unrepresented"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Castellation acknowledgement remains a source-linked confirmation gap."
+        },
+        {
+          "caseId": "edge-plating-present-but-unrepresented-acknowledgement",
+          "canonicalTargetIds": [
+            "requirement:declaration:record-9:edge-plating:unrepresented"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Edge-plating acknowledgement remains a source-linked confirmation gap."
+        },
+        {
+          "caseId": "finish-missing-production-authority",
+          "canonicalTargetIds": [
+            "design:finish:ENIG"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "A direct fixture value, filename, preset, or absent declaration cannot supply customer finish authority."
+        }
+      ],
+      "mutations": [
+        {"id":"finish-profile-affected-conflict","kind":"affected_conflict","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected construction, profile, or constraint conflict fails closed."},
+        {"id":"finish-profile-affected-omission","kind":"affected_omission","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected construction, profile, or constraint omission fails closed."},
+        {"id":"finish-profile-dangling-identity","kind":"dangling_identity","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Dangling profile or provenance identity fails closed."},
+        {"id":"finish-profile-duplicate-capability","kind":"duplicate_capability","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Duplicate capability authority fails closed."},
+        {"id":"finish-profile-missing-prerequisite","kind":"missing_prerequisite","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Missing construction, profile, or constraints capability fails closed."},
+        {"id":"finish-profile-reordered-facts","kind":"reordered_facts","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Container reordering preserves deterministic finish and gap ordering."},
+        {"id":"finish-profile-resolution-changed","kind":"resolution_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Changed source identity cannot create profile comparison authority."},
+        {"id":"finish-profile-state-failed","kind":"state_failed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Failed prerequisite state fails closed."},
+        {"id":"finish-profile-state-not-provided","kind":"state_not_provided","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Not-provided prerequisite state fails closed."},
+        {"id":"finish-profile-state-omitted","kind":"state_omitted","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Omitted prerequisite state fails closed."},
+        {"id":"finish-profile-state-partial","kind":"state_partial","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Partial prerequisite state fails closed."},
+        {"id":"finish-profile-state-stale","kind":"state_stale","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Stale prerequisite state fails closed."},
+        {"id":"finish-profile-state-unsupported","kind":"state_unsupported","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unsupported prerequisite state fails closed."},
+        {"id":"finish-profile-unit-changed","kind":"unit_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Other encoding or inferred profile defaults cannot create comparison authority."}
+      ]
+    },
+    {
+      "familyId": "dfm.impedance-special-process",
+      "familyVersion": "v1",
+      "fixtureDigest": "b13115a2b858f67de82afc794c18b9799048c093d3f91787f1d71e934e76362a",
+      "targets": [
+        {
+          "caseId": "impedance-exact-string-conflict",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "design:impedance:50-ohm-plus-minus-10-percent",
+            "requirement:declaration:record-5:impedance:75-ohm"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "special-process-exact-string-conflict",
+          "caseClass": "positive",
+          "canonicalTargetIds": [
+            "design:special-process:controlled-impedance",
+            "requirement:declaration:record-6:special-process:none"
+          ],
+          "expectedLabel": "violation",
+          "actualLabel": "finding"
+        },
+        {
+          "caseId": "impedance-special-process-exact-match",
+          "caseClass": "hard_negative",
+          "canonicalTargetIds": [
+            "design:impedance:50-ohm-plus-minus-10-percent",
+            "design:special-process:controlled-impedance",
+            "requirement:declaration:records-5-6"
+          ],
+          "expectedLabel": "clean",
+          "actualLabel": "no_finding"
+        }
+      ],
+      "unsupportedTargets": [
+        {
+          "caseId": "impedance-missing-production-authority",
+          "canonicalTargetIds": [
+            "design:impedance:represented"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Missing source/version-bound acknowledgement remains a confirmation gap and does not trigger impedance calculation."
+        },
+        {
+          "caseId": "special-process-duplicate-design-authority",
+          "canonicalTargetIds": [
+            "design:special-process:duplicate",
+            "requirement:declaration:record-6:special-process:represented"
+          ],
+          "expectedStatus": "not_checked",
+          "actualStatus": "not_checked",
+          "reason": "Duplicate or partial semantic constraints cannot produce match or conflict."
+        }
+      ],
+      "mutations": [
+        {"id":"impedance-process-affected-conflict","kind":"affected_conflict","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected construction or constraint conflict fails closed."},
+        {"id":"impedance-process-affected-omission","kind":"affected_omission","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"An affected construction or constraint omission fails closed."},
+        {"id":"impedance-process-dangling-identity","kind":"dangling_identity","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Dangling declaration or design provenance fails closed."},
+        {"id":"impedance-process-duplicate-capability","kind":"duplicate_capability","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Duplicate capability authority fails closed."},
+        {"id":"impedance-process-missing-prerequisite","kind":"missing_prerequisite","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Missing construction or constraints capability fails closed."},
+        {"id":"impedance-process-reordered-facts","kind":"reordered_facts","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Container reordering preserves deterministic comparison ordering."},
+        {"id":"impedance-process-resolution-changed","kind":"resolution_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Changed provenance or semantic text cannot invoke impedance calculation."},
+        {"id":"impedance-process-state-failed","kind":"state_failed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Failed prerequisite state fails closed."},
+        {"id":"impedance-process-state-not-provided","kind":"state_not_provided","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Not-provided prerequisite state fails closed."},
+        {"id":"impedance-process-state-omitted","kind":"state_omitted","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Omitted prerequisite state fails closed."},
+        {"id":"impedance-process-state-partial","kind":"state_partial","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Partial prerequisite state fails closed."},
+        {"id":"impedance-process-state-stale","kind":"state_stale","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Stale prerequisite state fails closed."},
+        {"id":"impedance-process-state-unsupported","kind":"state_unsupported","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Unsupported prerequisite state fails closed."},
+        {"id":"impedance-process-unit-changed","kind":"unit_changed","expectedStatus":"not_checked","contributesToConfusionMatrix":false,"detail":"Other encoding, derived values, or calculated impedance cannot become authority."}
+      ]
+    }
+  ]
+}

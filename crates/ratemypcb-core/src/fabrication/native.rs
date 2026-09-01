@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
+pub const KICAD_MANUFACTURING_ADAPTER: &str = "ratemypcb-kicad-source";
 pub const KICAD_MANUFACTURING_ADAPTER_VERSION: &str = "kicad-pcb-source-ratemypcb-1";
 
 #[derive(Debug)]
@@ -427,7 +428,7 @@ fn provenance(
     ManufacturingProvenance {
         document_id: document_id.into(),
         artifact_digest: digest.into(),
-        producer: "ratemypcb-kicad-source".into(),
+        producer: KICAD_MANUFACTURING_ADAPTER.into(),
         producer_version: KICAD_MANUFACTURING_ADAPTER_VERSION.into(),
         location: StructuralLocation {
             record: form as u64,
@@ -446,46 +447,8 @@ fn parse_length(value: &str, reason: &'static str) -> Result<Picometres, NativeM
 
 fn parse_angle(value: Option<&String>) -> Result<i64, NativeManufacturingError> {
     let Some(value) = value else { return Ok(0) };
-    let (negative, value) = value
-        .strip_prefix('-')
-        .map_or((false, value.as_str()), |value| (true, value));
-    let value = value.strip_prefix('+').unwrap_or(value);
-    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
-    if whole.is_empty()
-        || fraction.len() > 6
-        || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return Err(NativeManufacturingError::Invalid {
-            reason: "native-angle",
-        });
-    }
-    let scale = 10_i128.pow(fraction.len() as u32);
-    let fraction = if fraction.is_empty() {
-        0
-    } else {
-        fraction
-            .parse::<i128>()
-            .map_err(|_| NativeManufacturingError::Invalid {
-                reason: "native-angle",
-            })?
-    };
-    let mut degrees = whole
-        .parse::<i128>()
-        .ok()
-        .and_then(|whole| whole.checked_mul(scale))
-        .and_then(|whole| fraction.checked_add(whole))
-        .ok_or(NativeManufacturingError::Invalid {
-            reason: "native-angle",
-        })?;
-    if negative {
-        degrees = -degrees;
-    }
-    let microdegrees = degrees
-        .checked_mul(1_000_000)
-        .and_then(|value| value.checked_div(scale))
-        .and_then(|value| i64::try_from(value).ok())
-        .ok_or(NativeManufacturingError::Invalid {
+    let microdegrees =
+        parse_decimal_microdegrees(value).map_err(|_| NativeManufacturingError::Invalid {
             reason: "native-angle",
         })?;
     if microdegrees.unsigned_abs() > 360_000_000_u64 * 1_000 {
@@ -784,6 +747,99 @@ fn ensure_tool(
     Ok(id)
 }
 
+fn native_pad_hole_association(
+    kind: &str,
+    shape: &str,
+    size: Option<Vec<String>>,
+    applicable_layer_ids: &[String],
+    feature: &ManufacturingFeature,
+    tools: &[ManufacturingTool],
+    resolution: Picometres,
+) -> Result<Option<PadHoleAssociation>, NativeManufacturingError> {
+    if kind != "thru_hole" || shape != "circle" {
+        return Ok(None);
+    }
+    let Some(size) = size else {
+        return Ok(None);
+    };
+    let [width, height] = size.as_slice() else {
+        return Ok(None);
+    };
+    let width = parse_length(width, "invalid-native-pad-size")?;
+    let height = parse_length(height, "invalid-native-pad-size")?;
+    let Geometry::Drill(hole) = &feature.geometry else {
+        return Ok(None);
+    };
+    let Some(tool) = tools.iter().find(|tool| tool.id == hole.tool_id) else {
+        return Ok(None);
+    };
+    let Some(span) = tool.span.clone() else {
+        return Ok(None);
+    };
+    if width != height
+        || width.0 <= 0
+        || width.0 % 2 != 0
+        || applicable_layer_ids.is_empty()
+        || tool.kind != ToolKind::Drill
+        || tool.plating != Plating::Plated
+        || span.from_layer_id.as_ref() != applicable_layer_ids.first()
+        || span.to_layer_id.as_ref() != applicable_layer_ids.last()
+    {
+        return Ok(None);
+    }
+    let materialized = feature
+        .transforms
+        .materialize(hole.position)
+        .map_err(NativeManufacturingError::Canonical)?;
+    if !materialized.quantization.is_empty() {
+        return Ok(None);
+    }
+    let radius = width.0 / 2;
+    let Some(right_x) = materialized.point.x.0.checked_add(radius) else {
+        return Ok(None);
+    };
+    let Some(left_x) = materialized.point.x.0.checked_sub(radius) else {
+        return Ok(None);
+    };
+    let right = CanonicalPoint::new(right_x, materialized.point.y.0);
+    let left = CanonicalPoint::new(left_x, materialized.point.y.0);
+    let arc = |start, end| {
+        ContourSegment::Arc(CanonicalArc {
+            start,
+            end,
+            center: materialized.point,
+            direction: ArcDirection::CounterClockwise,
+            quadrant: QuadrantMode::Multi,
+            width: None,
+            source_resolution: resolution,
+        })
+    };
+    let mut association = PadHoleAssociation {
+        id: String::new(),
+        pad_id: pad_id(&feature.document_id, &feature.provenance.location)
+            .map_err(NativeManufacturingError::Canonical)?,
+        hole_id: feature.id.clone(),
+        tool_id: hole.tool_id.clone(),
+        applicable_layer_ids: applicable_layer_ids.to_vec(),
+        plating: tool.plating,
+        span,
+        pad_geometry: Geometry::Contour(CanonicalContour {
+            segments: vec![arc(right, left), arc(left, right)],
+            closed: true,
+        }),
+        hole_geometry: Geometry::Drill(DrillFeature {
+            position: materialized.point,
+            diameter: hole.diameter,
+            tool_id: hole.tool_id.clone(),
+        }),
+        pad_provenance: feature.provenance.clone(),
+        hole_provenance: feature.provenance.clone(),
+    };
+    association.id =
+        pad_hole_association_id(&association).map_err(NativeManufacturingError::Canonical)?;
+    Ok(Some(association))
+}
+
 fn reference(
     syntax: &NativeSyntax<'_>,
     footprint: usize,
@@ -814,6 +870,21 @@ fn reference(
     Ok(reference.flatten())
 }
 
+fn footprint_occurrence_id(
+    syntax: &NativeSyntax<'_>,
+    footprint: usize,
+) -> Result<Option<String>, NativeManufacturingError> {
+    let uuid = syntax
+        .child_tokens(footprint, "uuid")?
+        .and_then(|values| values.into_iter().next())
+        .filter(|value| !value.is_empty());
+    let tstamp = syntax
+        .child_tokens(footprint, "tstamp")?
+        .and_then(|values| values.into_iter().next())
+        .filter(|value| !value.is_empty());
+    Ok(uuid.or(tstamp))
+}
+
 fn copper_layer_names_valid(names: &[String], layer_ids: &BTreeMap<String, String>) -> bool {
     names
         .iter()
@@ -821,11 +892,22 @@ fn copper_layer_names_valid(names: &[String], layer_ids: &BTreeMap<String, Strin
         .all(|name| matches!(name.as_str(), "*.Cu" | "F&B.Cu") || layer_ids.contains_key(name))
 }
 
-fn resolved_copper_layers(names: &[String], layer_ids: &BTreeMap<String, String>) -> Vec<String> {
+fn resolved_copper_layers(
+    names: &[String],
+    layer_ids: &BTreeMap<String, String>,
+    ordered_copper_layer_ids: &[String],
+) -> Vec<String> {
     let mut output = Vec::new();
     for name in names {
         match name.as_str() {
-            "*.Cu" | "F&B.Cu" => {
+            "*.Cu" => {
+                for id in ordered_copper_layer_ids {
+                    if !output.contains(id) {
+                        output.push(id.clone());
+                    }
+                }
+            }
+            "F&B.Cu" => {
                 for name in ["F.Cu", "B.Cu"] {
                     if let Some(id) = layer_ids.get(name)
                         && !output.contains(id)
@@ -1904,6 +1986,124 @@ fn reconciliation_prerequisites_complete(
         .all(|id| derived.state(*id) == CapabilityState::Complete)
 }
 
+pub(super) fn normalize_native_courtyard_report(
+    report: &crate::NativeDrc,
+) -> Result<NativeCourtyardEvidence, FabricationError> {
+    let version = report.version.clone();
+    let metadata_complete = report.tool == "kicad-cli"
+        && version
+            .as_deref()
+            .and_then(crate::schematic::KiCadMajor::parse)
+            .is_some()
+        && report
+            .report_version
+            .as_deref()
+            .and_then(crate::schematic::KiCadMajor::parse)
+            == version
+                .as_deref()
+                .and_then(crate::schematic::KiCadMajor::parse)
+        && report
+            .source
+            .as_deref()
+            .is_some_and(|source| !source.is_empty());
+    let mut included = BTreeSet::new();
+    let included_complete = report.included_severities.iter().all(|value| {
+        value
+            .as_str()
+            .filter(|severity| included.insert(*severity))
+            .is_some()
+    }) && ["error", "warning", "exclusion"]
+        .into_iter()
+        .all(|severity| included.contains(severity));
+    let courtyard_types = [
+        "courtyards_overlap",
+        "malformed_courtyard",
+        "missing_courtyard",
+    ];
+    let mut ignored_courtyard = false;
+    let ignored_shape_complete = report.ignored_checks.iter().all(|value| {
+        value
+            .get("key")
+            .and_then(JsonValue::as_str)
+            .filter(|key| {
+                ignored_courtyard |= courtyard_types.contains(key);
+                !key.is_empty()
+            })
+            .is_some()
+    });
+    let state = match report.status.as_str() {
+        "completed"
+            if metadata_complete
+                && included_complete
+                && ignored_shape_complete
+                && !ignored_courtyard =>
+        {
+            NativeCourtyardRunState::Complete
+        }
+        "completed" => NativeCourtyardRunState::Partial,
+        "not_run" => NativeCourtyardRunState::NotRun,
+        "disabled" => NativeCourtyardRunState::Disabled,
+        _ => NativeCourtyardRunState::Failed,
+    };
+    let mut observations = Vec::new();
+    if matches!(
+        state,
+        NativeCourtyardRunState::Complete | NativeCourtyardRunState::Partial
+    ) {
+        let version_value = version.as_deref().unwrap_or("unknown");
+        for marker in report
+            .violations
+            .iter()
+            .filter(|marker| marker.group == "violations")
+        {
+            let kind = match marker.violation_type.as_str() {
+                "courtyards_overlap" => NativeCourtyardKind::Overlap,
+                "malformed_courtyard" => NativeCourtyardKind::Malformed,
+                "missing_courtyard" => NativeCourtyardKind::Missing,
+                _ => continue,
+            };
+            let exclusion = match marker.excluded {
+                Some(false) => NativeExclusionState::Active,
+                Some(true) => NativeExclusionState::Excluded,
+                None => NativeExclusionState::Unknown,
+            };
+            observations.push(NativeCourtyardObservation {
+                id: native_courtyard_observation_id(
+                    kind,
+                    exclusion,
+                    &report.tool,
+                    version_value,
+                    &marker.structural_location,
+                )?,
+                kind,
+                exclusion,
+                location: marker.structural_location.clone(),
+            });
+        }
+        observations.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.location.cmp(&right.location))
+                .then_with(|| left.exclusion.cmp(&right.exclusion))
+        });
+        if observations
+            .windows(2)
+            .any(|values| values[0].id == values[1].id)
+        {
+            return Err(FabricationError::DuplicateId(
+                "native-courtyard-observation".into(),
+            ));
+        }
+    }
+    Ok(NativeCourtyardEvidence {
+        state,
+        tool: report.tool.clone(),
+        version,
+        source: report.source.clone(),
+        observations,
+    })
+}
+
 pub fn parse_native_kicad_manufacturing(
     virtual_path: &str,
     bytes: &[u8],
@@ -1979,7 +2179,7 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
     let whole_provenance = ManufacturingProvenance {
         document_id: document_id.clone(),
         artifact_digest: artifact_digest.clone(),
-        producer: "ratemypcb-kicad-source".into(),
+        producer: KICAD_MANUFACTURING_ADAPTER.into(),
         producer_version: KICAD_MANUFACTURING_ADAPTER_VERSION.into(),
         location: StructuralLocation {
             record: syntax.root as u64,
@@ -2100,6 +2300,11 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
             reason: "native-copper-layers",
         },
     )?;
+    let ordered_copper_layer_ids = layers
+        .iter()
+        .filter(|layer| layer.role == LayerRole::Copper)
+        .map(|layer| layer.id.clone())
+        .collect::<Vec<_>>();
     let profile_layer_id = layer_ids.get("Edge.Cuts").cloned();
 
     let mut profile_pieces = Vec::new();
@@ -2270,6 +2475,22 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
         }
     }
 
+    let title_block = syntax.unique_child(syntax.root, "title_block")?;
+    let title = title_block
+        .map(|title_block| syntax.child_tokens(title_block, "title"))
+        .transpose()?
+        .flatten()
+        .and_then(|values| values.into_iter().next())
+        .filter(|value| !value.is_empty());
+    let revision = title_block
+        .map(|title_block| syntax.child_tokens(title_block, "rev"))
+        .transpose()?
+        .flatten()
+        .and_then(|values| values.into_iter().next())
+        .filter(|value| !value.is_empty());
+    let product_provenance =
+        title_block.map(|form| provenance(&syntax, &document_id, &artifact_digest, form));
+
     let mut tools = Vec::new();
     let mut tool_identities = BTreeMap::new();
     let mut features = Vec::with_capacity(profile_pieces.len());
@@ -2278,19 +2499,107 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
         features.push(piece.feature);
     }
     let mut connectivity = Vec::new();
+    let mut pad_hole_associations = Vec::new();
     let mut eligible_pads = 0_usize;
     let mut drill_features = 0_usize;
     let mut plating_complete = true;
     let mut spans_complete = true;
     let mut drills_exact = true;
     let mut inexact_drill_provenance = None;
+    let mut placements = Vec::new();
+    let mut assembly_issues = Vec::<(String, ManufacturingProvenance)>::new();
+    let mut placement_references = BTreeSet::new();
+    let mut placement_occurrences = BTreeSet::new();
+    let mut assembly_candidates = 0_usize;
 
     let mut footprints = syntax.children_named_checked(syntax.root, "footprint")?;
     footprints.extend(syntax.children_named_checked(syntax.root, "module")?);
+    if footprints.len() > MANUFACTURING_LIMITS.geometry_features {
+        return Err(NativeManufacturingError::Resource {
+            resource: "native-assembly-placements",
+        });
+    }
     for footprint in footprints {
         deadline(deadline_at)?;
         let (footprint_position, footprint_angle) = pose(&syntax, footprint, "at")?;
         let footprint_reference = reference(&syntax, footprint)?;
+        let attributes = syntax.child_tokens(footprint, "attr")?.unwrap_or_default();
+        assembly_candidates += 1;
+        let placement_provenance = provenance(&syntax, &document_id, &artifact_digest, footprint);
+        let occurrence_id = footprint_occurrence_id(&syntax, footprint)?;
+        let placement_side = match layer_name(&syntax, footprint)?.as_deref() {
+            Some("F.Cu") => Some(LayerSide::Top),
+            Some("B.Cu") => Some(LayerSide::Bottom),
+            _ => None,
+        };
+        let fitted = if attributes.iter().any(|attribute| attribute == "dnp") {
+            AssemblyFittedState::NotFitted
+        } else if attributes
+            .iter()
+            .any(|attribute| attribute == "exclude_from_pos_files")
+        {
+            AssemblyFittedState::Unknown
+        } else {
+            AssemblyFittedState::Fitted
+        };
+        if occurrence_id.is_none() {
+            assembly_issues.push((
+                "missing-native-placement-occurrence".into(),
+                placement_provenance.clone(),
+            ));
+        }
+        if fitted == AssemblyFittedState::Unknown {
+            assembly_issues.push((
+                "unknown-native-placement-fitted-state".into(),
+                placement_provenance.clone(),
+            ));
+        }
+        if footprint_reference.is_none() {
+            assembly_issues.push((
+                "missing-native-placement-reference".into(),
+                placement_provenance.clone(),
+            ));
+        }
+        if placement_side.is_none() {
+            assembly_issues.push((
+                "unknown-native-placement-side".into(),
+                placement_provenance.clone(),
+            ));
+        }
+        if let (Some(reference), Some(side)) = (footprint_reference.as_deref(), placement_side) {
+            if !placement_references.insert(reference.to_owned()) {
+                assembly_issues.push((
+                    "duplicate-native-placement-reference".into(),
+                    placement_provenance.clone(),
+                ));
+            }
+            if let Some(occurrence_id) = occurrence_id.as_deref()
+                && !placement_occurrences.insert(occurrence_id.to_owned())
+            {
+                assembly_issues.push((
+                    "duplicate-native-placement-occurrence".into(),
+                    placement_provenance.clone(),
+                ));
+            }
+            placements.push(AssemblyPlacement {
+                id: assembly_placement_id(
+                    &document_id,
+                    occurrence_id.as_deref(),
+                    reference,
+                    &placement_provenance.location,
+                )
+                .map_err(NativeManufacturingError::Canonical)?,
+                occurrence_id,
+                reference: reference.into(),
+                side,
+                position: footprint_position,
+                rotation_microdegrees: footprint_angle.rem_euclid(360_000_000),
+                fitted,
+                revision: revision.clone(),
+                convention: AssemblyPlacementConvention::native_kicad(),
+                provenance: placement_provenance,
+            });
+        }
         for pad in syntax.children_named_checked(footprint, "pad")? {
             deadline(deadline_at)?;
             let values = syntax.tokens(pad)?;
@@ -2312,7 +2621,8 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
                     reason: "dangling-native-layer",
                 });
             }
-            let copper_layers = resolved_copper_layers(&names, &layer_ids);
+            let copper_layers =
+                resolved_copper_layers(&names, &layer_ids, &ordered_copper_layer_ids);
             if copper_layers.is_empty() {
                 return Err(NativeManufacturingError::Invalid {
                     reason: "missing-native-copper-layer",
@@ -2482,6 +2792,22 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
                 transforms(operations),
                 evidence.clone(),
             );
+            if let Some(association) = native_pad_hole_association(
+                kind,
+                values.get(2).map(String::as_str).unwrap_or_default(),
+                syntax.child_tokens(pad, "size")?,
+                &copper_layers,
+                &native_feature,
+                &tools,
+                numeric_format.resolution,
+            )? {
+                if pad_hole_associations.len() >= MANUFACTURING_LIMITS.geometry_features {
+                    return Err(NativeManufacturingError::Resource {
+                        resource: "native-pad-hole-associations",
+                    });
+                }
+                pad_hole_associations.push(association);
+            }
             let net = syntax.child_tokens(pad, "net")?.and_then(|values| {
                 let id = values.first()?.parse::<u32>().ok()?;
                 let declared = values.get(1)?;
@@ -2499,6 +2825,19 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
             features.push(native_feature);
         }
     }
+    if assembly_candidates > 0 && revision.is_none() {
+        assembly_issues.push((
+            "missing-native-placement-revision".into(),
+            whole_provenance.clone(),
+        ));
+    }
+    let assembly_state = if assembly_candidates == 0 {
+        CapabilityState::NotProvided
+    } else if placements.len() == assembly_candidates && assembly_issues.is_empty() {
+        CapabilityState::Complete
+    } else {
+        CapabilityState::Partial
+    };
 
     for via in syntax.children_named_checked(syntax.root, "via")? {
         deadline(deadline_at)?;
@@ -2521,7 +2860,7 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
                 reason: "dangling-native-layer",
             });
         }
-        let copper_layers = resolved_copper_layers(&names, &layer_ids);
+        let copper_layers = resolved_copper_layers(&names, &layer_ids, &ordered_copper_layer_ids);
         if copper_layers.is_empty() {
             return Err(NativeManufacturingError::Invalid {
                 reason: "missing-native-copper-layer",
@@ -2574,21 +2913,6 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
         });
     }
 
-    let title_block = syntax.unique_child(syntax.root, "title_block")?;
-    let title = title_block
-        .map(|title_block| syntax.child_tokens(title_block, "title"))
-        .transpose()?
-        .flatten()
-        .and_then(|values| values.into_iter().next())
-        .filter(|value| !value.is_empty());
-    let revision = title_block
-        .map(|title_block| syntax.child_tokens(title_block, "rev"))
-        .transpose()?
-        .flatten()
-        .and_then(|values| values.into_iter().next())
-        .filter(|value| !value.is_empty());
-    let product_provenance =
-        title_block.map(|form| provenance(&syntax, &document_id, &artifact_digest, form));
     let product = (title.is_some() || revision.is_some()).then(|| ProductIdentity {
         name: title.clone(),
         revision: revision.clone(),
@@ -2677,12 +3001,15 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
         CapabilityState::Partial
     };
     let parse_complete = unsupported_profile.is_empty();
+    if !parse_complete {
+        pad_hole_associations.clear();
+    }
     let document = ManufacturingDocument {
         id: document_id.clone(),
         virtual_path: virtual_path.into(),
         artifact_digest: artifact_digest.clone(),
         format: DocumentFormat::KicadPcb,
-        adapter: "ratemypcb-kicad-source".into(),
+        adapter: KICAD_MANUFACTURING_ADAPTER.into(),
         adapter_version: KICAD_MANUFACTURING_ADAPTER_VERSION.into(),
         parse_status: if parse_complete {
             ParseStatus::Complete
@@ -2704,6 +3031,14 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
     };
     let documents = vec![&document];
     let evidence = vec![whole_provenance.clone()];
+    let assembly_evidence = if placements.is_empty() {
+        evidence.clone()
+    } else {
+        placements
+            .iter()
+            .map(|placement| placement.provenance.clone())
+            .collect()
+    };
     let mut capabilities = vec![
         aggregate_capability(
             CapabilityId::ProductIdentity,
@@ -2825,9 +3160,32 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
             &evidence,
             "Every eligible native copper pad needs explicit pin identity.",
         ),
+        aggregate_capability(
+            CapabilityId::Assembly,
+            assembly_state,
+            Authority::NativeSource,
+            &documents,
+            &assembly_evidence,
+            "Native footprint objects retain exact source-linked placement, convention, fitted-state, occurrence, and revision facts.",
+        ),
     ];
     capabilities.sort_by_key(|record| record.id);
     let mut omissions = Vec::new();
+    for (issue, provenance) in assembly_issues {
+        omissions.push(Omission {
+            id: stable_id(
+                "omission",
+                &(issue.as_str(), &provenance.location),
+            )
+            .map_err(NativeManufacturingError::Canonical)?,
+            kind: OmissionKind::MissingSemanticRecord,
+            affected_capabilities: vec![CapabilityId::Assembly],
+            provenance,
+            detail: format!(
+                "{issue}; native assembly evidence remains partial and cannot support a clean result."
+            ),
+        });
+    }
     if let Some(form) = unsupported_profile.first().copied() {
         let evidence = provenance(&syntax, &document_id, &artifact_digest, form);
         omissions.push(Omission {
@@ -2885,6 +3243,8 @@ pub(crate) fn parse_native_kicad_manufacturing_with_deadline(
     review.features = features;
     review.profile = profile;
     review.connectivity = connectivity;
+    review.pad_hole_associations = pad_hole_associations;
+    review.assembly.placements = placements;
     review.capabilities = CapabilityLedger {
         records: capabilities,
     };
@@ -3515,6 +3875,51 @@ fn review_provenance(
         .ok_or_else(|| FabricationError::DanglingReference(format!("{format:?}")))
 }
 
+pub(super) fn retain_native_assembly_only(
+    target: &mut FabricationReview,
+    source: &FabricationReview,
+    deadline: ManufacturingDeadline,
+) -> Result<(), FabricationError> {
+    let mut documents = source
+        .documents
+        .iter()
+        .filter(|document| document.format == DocumentFormat::KicadPcb);
+    let document = documents
+        .next()
+        .filter(|_| documents.next().is_none())
+        .ok_or_else(|| FabricationError::DanglingReference("native-assembly-document".into()))?;
+    if target
+        .documents
+        .iter()
+        .any(|existing| existing.id == document.id)
+    {
+        return Err(FabricationError::DuplicateId(document.id.clone()));
+    }
+    deadline.check("native-assembly-retention")?;
+    target.documents.push(document.clone());
+    target
+        .assembly
+        .placements
+        .extend(source.assembly.placements.iter().cloned());
+    for omission in source.omissions.iter().filter(|omission| {
+        omission
+            .affected_capabilities
+            .contains(&CapabilityId::Assembly)
+    }) {
+        deadline.check("native-assembly-retention")?;
+        target.omissions.push(omission.clone());
+    }
+    let capability = source
+        .capabilities
+        .records
+        .iter()
+        .find(|record| record.id == CapabilityId::Assembly)
+        .cloned()
+        .ok_or_else(|| FabricationError::DanglingReference("assembly-capability".into()))?;
+    set_capability(target, capability);
+    Ok(())
+}
+
 fn append_native_facts(
     target: &mut FabricationReview,
     source: &FabricationReview,
@@ -3539,6 +3944,14 @@ fn append_native_facts(
     for item in &source.connectivity {
         budget.check()?;
         target.connectivity.push(item.clone());
+    }
+    for association in &source.pad_hole_associations {
+        budget.check()?;
+        target.pad_hole_associations.push(association.clone());
+    }
+    for placement in &source.assembly.placements {
+        budget.check()?;
+        target.assembly.placements.push(placement.clone());
     }
     for warning in &source.warnings {
         budget.check()?;
@@ -4021,11 +4434,21 @@ pub(super) fn validate_reconciliation_derivation_with_deadline(
             .contains(item.feature_id.as_str())
             .then_some(item)
     })?;
+    let associations = checked_filter_map(review.pad_hole_associations.iter(), budget, |item| {
+        native_feature_ids
+            .contains(item.hole_id.as_str())
+            .then_some(item)
+    })?;
+    let placements = checked_filter_map(review.assembly.placements.iter(), budget, |item| {
+        (item.provenance.document_id == native_id).then_some(item)
+    })?;
     if !checked_refs_equal(&documents, &source.review.documents, budget)?
         || !checked_refs_equal(&layers, &source.review.layers, budget)?
         || !checked_refs_equal(&tools, &source.review.tools, budget)?
         || !checked_refs_equal(&features, &source.review.features, budget)?
         || !checked_refs_equal(&connectivity, &source.review.connectivity, budget)?
+        || !checked_refs_equal(&associations, &source.review.pad_hole_associations, budget)?
+        || !checked_refs_equal(&placements, &source.review.assembly.placements, budget)?
     {
         return Err(FabricationError::InvalidIdentity(
             "native-reconciliation-source".into(),
@@ -4163,21 +4586,26 @@ pub(crate) fn reconcile_native_package_with_deadline(
         budget,
     )?;
     let mut native_capability = None;
+    let mut assembly_capability = None;
     for record in &native.review.capabilities.records {
         budget.check()?;
-        if record.id == CapabilityId::NativeKicadFacts {
-            native_capability = Some(record.clone());
-            break;
+        match record.id {
+            CapabilityId::NativeKicadFacts => native_capability = Some(record.clone()),
+            CapabilityId::Assembly => assembly_capability = Some(record.clone()),
+            _ => {}
         }
     }
     let native_capability = native_capability
         .ok_or_else(|| FabricationError::DanglingReference("native-capability".into()))?;
+    let assembly_capability = assembly_capability
+        .ok_or_else(|| FabricationError::DanglingReference("assembly-capability".into()))?;
     append_native_facts(&mut package, &native.review, budget)?;
     let native_reconciliation_source = NativeReconciliationSource {
         review: Box::new(native.review),
         extents: native.extents,
     };
     set_capability(&mut package, native_capability);
+    set_capability(&mut package, assembly_capability);
     package.source_pair = Some(ManufacturingSourcePair {
         id: source_pair_id_with_deadline(
             &native_document.id,

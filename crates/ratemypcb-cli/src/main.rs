@@ -1,11 +1,11 @@
 use ratemypcb_core::{
-    ASSESSMENT_SCHEMA_VERSION, Assessment, CoverageStatus, GateImpact, NativeMode, Preset,
-    ReviewOptions, ReviewScope, Severity, report_schema, review, validate_assessment,
+    ASSESSMENT_SCHEMA_VERSION, Assessment, CoverageStatus, DfmDeclarations, GateImpact, NativeMode,
+    Preset, ReviewOptions, ReviewScope, Severity, report_schema, review, validate_assessment,
     validate_report, validate_report_supply_retention,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,18 +14,53 @@ mod viewer;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_REPORT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ASSESSMENT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_DFM_DECLARATION_BYTES: u64 = 256 * 1024;
 
 fn read_bounded(path: &Path, label: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
-    let size = fs::metadata(path)
-        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
-        .len();
-    if size > max_bytes {
-        return Err(format!(
-            "{label} exceeds the {} MB limit",
-            max_bytes / 1024 / 1024
-        ));
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if bytes.len() as u64 > max_bytes {
+        let (limit, unit) = if max_bytes >= 1024 * 1024 {
+            (max_bytes / 1024 / 1024, "MiB")
+        } else {
+            (max_bytes / 1024, "KiB")
+        };
+        return Err(format!("{label} exceeds the {limit} {unit} limit"));
     }
-    fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
+    Ok(bytes)
+}
+
+fn dfm_declaration_source_path(path: &Path) -> Result<(PathBuf, String), String> {
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
+    let cwd = std::env::current_dir()
+        .and_then(fs::canonicalize)
+        .map_err(|error| format!("cannot resolve the current directory: {error}"))?;
+    let logical = canonical.strip_prefix(&cwd).unwrap_or(&canonical);
+    let components = logical
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => value.to_str().map(str::to_owned),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if canonical.starts_with(&cwd) && !components.is_empty() {
+        return Ok((canonical, components.join("/")));
+    }
+    let filename = canonical
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("DFM declarations require a UTF-8 file name")?
+        .to_owned();
+    let canonical_text = canonical
+        .to_str()
+        .ok_or("DFM declarations require a UTF-8 source path")?;
+    let digest = format!("{:x}", Sha256::digest(canonical_text.as_bytes()));
+    Ok((canonical, format!("external/{}/{filename}", &digest[..16])))
 }
 
 fn help() {
@@ -36,6 +71,7 @@ USAGE:
   ratemypcb review [PATH] [--board PATH] [--schematic PATH]
                    [--format terminal|json] [--bom PATH]
                    [--placement PATH] [--supply-snapshot PATH]
+                   [--dfm-declarations LOCAL-JSON]
                    [--scope design|fabrication|assembly|full]
                    [--profile eurocircuits|aisler|jlcpcb|pcbway]
                    [--output FILE] [--preset standard|compact|relaxed]
@@ -70,6 +106,7 @@ struct ReviewArgs {
     bom: Option<PathBuf>,
     placement: Option<PathBuf>,
     supply_snapshot: Option<PathBuf>,
+    dfm_declarations: Option<PathBuf>,
     format: OutputFormat,
     output: Option<PathBuf>,
     preset: Preset,
@@ -95,6 +132,7 @@ fn parse_review(args: &[String]) -> Result<ReviewArgs, String> {
         bom: None,
         placement: None,
         supply_snapshot: None,
+        dfm_declarations: None,
         format: OutputFormat::Terminal,
         output: None,
         preset: Preset::named("standard").unwrap(),
@@ -117,6 +155,10 @@ fn parse_review(args: &[String]) -> Result<ReviewArgs, String> {
             "--supply-snapshot" => {
                 parsed.supply_snapshot =
                     Some(PathBuf::from(value(args, &mut i, "--supply-snapshot")?))
+            }
+            "--dfm-declarations" => {
+                parsed.dfm_declarations =
+                    Some(PathBuf::from(value(args, &mut i, "--dfm-declarations")?))
             }
             "--scope" => {
                 let scope = value(args, &mut i, "--scope")?;
@@ -416,6 +458,37 @@ fn run_review(args: &[String]) -> i32 {
             return 2;
         }
     };
+    let dfm_declarations = match parsed.dfm_declarations.as_deref() {
+        Some(path) => {
+            let (source_file, source_path) = match dfm_declaration_source_path(path) {
+                Ok(source) => source,
+                Err(error) => {
+                    eprintln!("ratemypcb: {error}");
+                    return 2;
+                }
+            };
+            let bytes =
+                match read_bounded(&source_file, "DFM declarations", MAX_DFM_DECLARATION_BYTES) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        eprintln!("ratemypcb: {error}");
+                        return 2;
+                    }
+                };
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_secs();
+            match DfmDeclarations::from_json(&source_path, &bytes, now) {
+                Ok(declarations) => Some(declarations),
+                Err(error) => {
+                    eprintln!("ratemypcb: {error}");
+                    return 2;
+                }
+            }
+        }
+        None => None,
+    };
     let report = match review(
         &parsed.path,
         ReviewOptions {
@@ -424,6 +497,7 @@ fn run_review(args: &[String]) -> i32 {
             bom: parsed.bom,
             placement: parsed.placement,
             supply_snapshot: parsed.supply_snapshot,
+            dfm_declarations,
             preset: parsed.preset,
             native: parsed.native,
             tool_version: VERSION.into(),
@@ -764,6 +838,7 @@ mod tests {
                 bom: None,
                 placement: None,
                 supply_snapshot: None,
+                dfm_declarations: None,
                 preset: Preset::named("standard").unwrap(),
                 native: NativeMode::Off,
                 tool_version: "test".into(),
@@ -809,6 +884,27 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(args.bom.as_deref(), Some(Path::new("assembly.csv")));
+    }
+
+    #[test]
+    fn dfm_declaration_source_paths_distinguish_external_namesakes() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ratemypcb-dfm-source-path-{nonce}"));
+        let first = root.join("first/declarations.json");
+        let second = root.join("second/declarations.json");
+        fs::create_dir_all(first.parent().unwrap()).unwrap();
+        fs::create_dir_all(second.parent().unwrap()).unwrap();
+        fs::write(&first, b"{}").unwrap();
+        fs::write(&second, b"{}").unwrap();
+        let first = dfm_declaration_source_path(&first).unwrap().1;
+        let second = dfm_declaration_source_path(&second).unwrap().1;
+        assert_ne!(first, second);
+        assert!(first.starts_with("external/") && first.ends_with("/declarations.json"));
+        assert!(second.starts_with("external/") && second.ends_with("/declarations.json"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

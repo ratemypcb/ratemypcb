@@ -1,0 +1,436 @@
+{
+  "schemaVersion": "1",
+  "producer": "ratemypcb-project-authority",
+  "producerVersion": "2026.08",
+  "issuedAtUnix": 1700000000,
+  "expiresAtUnix": 4102444800,
+  "state": "complete",
+  "rules": [
+    {
+      "record": 1,
+      "id": "minimum_drill",
+      "state": "complete",
+      "value": "0.20",
+      "unit": "mm",
+      "declaredValue": null,
+      "applicability": "board"
+    },
+    {
+      "record": 2,
+      "id": "minimum_clearance",
+      "state": "complete",
+      "value": "0.15",
+      "unit": "mm",
+      "declaredValue": null,
+      "applicability": "board"
+    },
+    {
+      "record": 3,
+      "id": "minimum_annular_ring",
+      "state": "complete",
+      "value": "0.10",
+      "unit": "mm",
+      "declaredValue": null,
+      "applicability": "board"
+    },
+    {
+      "record": 4,
+      "id": "dfm.copper-edge.v1",
+      "state": "complete",
+      "value": "0.25",
+      "unit": "mm",
+      "declaredValue": null,
+      "applicability": "board"
+    },
+    {
+      "record": 5,
+      "id": "dfm.mask-sliver.v1",
+      "state": "complete",
+      "value": "0.08",
+      "unit": "mm",
+      "declaredValue": null,
+      "applicability": "board"
+    },
+    {
+      "record": 6,
+      "id": "dfm.paste-mask-relationship.v1",
+      "state": "complete",
+      "value": "0.05",
+      "unit": "mm",
+      "declaredValue": null,
+      "applicability": "board"
+    }
+  ],
+  "orderAcknowledgements": [
+    {
+      "record": 7,
+      "id": "total_thickness",
+      "state": "complete",
+      "value": "1.60",
+      "unit": "mm",
+      "declaredValue": null,
+      "applicability": "board"
+    },
+    {
+      "record": 8,
+      "id": "finish",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "ENIG",
+      "applicability": "board"
+    },
+    {
+      "record": 9,
+      "id": "impedance",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "50 ohm +/- 10%",
+      "applicability": "board"
+    },
+    {
+      "record": 10,
+      "id": "material",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "FR-4",
+      "applicability": "board"
+    },
+    {
+      "record": 11,
+      "id": "special_process",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "controlled impedance",
+      "applicability": "board"
+    },
+    {
+      "record": 12,
+      "id": "drill_span_plating",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "confirm with fabricator",
+      "applicability": "board"
+    },
+    {
+      "record": 13,
+      "id": "castellation",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "required",
+      "applicability": "board"
+    },
+    {
+      "record": 14,
+      "id": "edge_plating",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "not required",
+      "applicability": "board"
+    },
+    {
+      "record": 15,
+      "id": "stackup_order",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "L1,L2",
+      "applicability": "board"
+    },
+    {
+      "record": 16,
+      "id": "profile",
+      "state": "complete",
+      "value": null,
+      "unit": null,
+      "declaredValue": "standard rectangular profile",
+      "applicability": "board"
+    }
+  ],
+  "inferenceRecords": [
+    {
+      "record": 17,
+      "id": "assembly_process_envelope",
+      "state": "complete",
+      "model": "assembly.component-copper-envelope-2d",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [],
+      "limits": [
+        {"id": "minimum_component_clearance", "value": "0.50", "unit": "mm"},
+        {"id": "minimum_profile_clearance", "value": "0.20", "unit": "mm"},
+        {"id": "tool_diameter", "value": "1.00", "unit": "mm"}
+      ],
+      "parameters": [
+        {"id": "process", "value": "pick_and_place"},
+        {"id": "process_version", "value": "2026.1"},
+        {"id": "tool", "value": "nozzle_n1"},
+        {"id": "tool_version", "value": "1"}
+      ]
+    },
+    {
+      "record": 18,
+      "id": "probe_envelope",
+      "state": "complete",
+      "model": "assembly.testpoint-probe-envelope-2d",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [],
+      "limits": [
+        {"id": "minimum_component_clearance", "value": "0.25", "unit": "mm"},
+        {"id": "minimum_profile_clearance", "value": "0.20", "unit": "mm"},
+        {"id": "probe_diameter", "value": "0.80", "unit": "mm"}
+      ],
+      "parameters": [
+        {"id": "probe", "value": "spring_probe_p80"},
+        {"id": "probe_version", "value": "1"},
+        {"id": "process", "value": "flying_probe"},
+        {"id": "process_version", "value": "2026.1"}
+      ]
+    },
+    {
+      "record": 19,
+      "id": "target_net_authority",
+      "state": "complete",
+      "model": "canonical.connectivity-net-set",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [],
+      "parameters": []
+    },
+    {
+      "record": 20,
+      "id": "signal_intent",
+      "state": "complete",
+      "model": "pcb.signal-intent",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [
+        {"id": "edge_rate", "value": "0.5", "unit": "v_per_ns"},
+        {"id": "frequency", "value": "100", "unit": "mhz"}
+      ],
+      "parameters": [
+        {"id": "signal_class", "value": "clock"}
+      ]
+    },
+    {
+      "record": 21,
+      "id": "reference_plane_intent",
+      "state": "complete",
+      "model": "pcb.return-path-discontinuity-envelope",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "layer-v1-d3dac98f1b858ac2dd333803c3d185336679948e0d51493b333a9186fb7e2e0d",
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [
+        {"id": "maximum_discontinuity", "value": "0.50", "unit": "mm"}
+      ],
+      "parameters": [
+        {"id": "reference_plane_role", "value": "continuous_copper"}
+      ]
+    },
+    {
+      "record": 22,
+      "id": "current_intent",
+      "state": "complete",
+      "model": "pcb.current-intent",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [
+        {"id": "allowed_temperature_rise", "value": "20", "unit": "c"},
+        {"id": "allowed_voltage_drop", "value": "50", "unit": "mv"},
+        {"id": "current", "value": "2.0", "unit": "a"}
+      ],
+      "parameters": [
+        {"id": "current_class", "value": "continuous"}
+      ]
+    },
+    {
+      "record": 23,
+      "id": "process_envelope",
+      "state": "complete",
+      "model": "pcb.minimum-copper-process-envelope",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [
+        {"id": "copper_thickness", "value": "0.035", "unit": "mm"},
+        {"id": "minimum_copper_width", "value": "0.25", "unit": "mm"}
+      ],
+      "parameters": [
+        {"id": "finish", "value": "ENIG"},
+        {"id": "process", "value": "standard_etch"},
+        {"id": "process_version", "value": "2026.1"}
+      ]
+    },
+    {
+      "record": 24,
+      "id": "voltage_domains",
+      "state": "complete",
+      "model": "pcb.voltage-domain-pair",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-0000000000000000000000000000000000000000000000000000000000000001",
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [
+        {"id": "maximum_voltage", "value": "48", "unit": "v"}
+      ],
+      "parameters": [
+        {"id": "domain_pair", "value": "primary_to_secondary"}
+      ]
+    },
+    {
+      "record": 25,
+      "id": "creepage_rule",
+      "state": "complete",
+      "model": "pcb.creepage-distance-rule",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-0000000000000000000000000000000000000000000000000000000000000001",
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [
+        {"id": "minimum_creepage", "value": "1.00", "unit": "mm"}
+      ],
+      "parameters": [
+        {"id": "rule", "value": "project_creepage"},
+        {"id": "rule_version", "value": "1"}
+      ]
+    },
+    {
+      "record": 26,
+      "id": "material_environment",
+      "state": "complete",
+      "model": "pcb.material-environment-coating",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-0000000000000000000000000000000000000000000000000000000000000001",
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [],
+      "parameters": [
+        {"id": "coating", "value": "none"},
+        {"id": "environment", "value": "controlled_indoor"},
+        {"id": "material", "value": "FR-4"}
+      ]
+    },
+    {
+      "record": 27,
+      "id": "differential_pair_intent",
+      "state": "complete",
+      "model": "pcb.differential-pair-intent",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-0000000000000000000000000000000000000000000000000000000000000001",
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [],
+      "parameters": [
+        {"id": "pair", "value": "pair_1"}
+      ]
+    },
+    {
+      "record": 28,
+      "id": "impedance_skew_target",
+      "state": "complete",
+      "model": "pcb.impedance-skew-envelope",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "net-v1-0000000000000000000000000000000000000000000000000000000000000001",
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [
+        {"id": "impedance", "value": "100", "unit": "ohm"},
+        {"id": "impedance_tolerance", "value": "10", "unit": "percent"},
+        {"id": "maximum_skew", "value": "5", "unit": "ps"}
+      ],
+      "parameters": [
+        {"id": "topology", "value": "edge_coupled"}
+      ]
+    },
+    {
+      "record": 29,
+      "id": "power_intent",
+      "state": "complete",
+      "model": "pcb.power-intent",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "assembly-placement-v1-304fed9d6a0a687f816e8739c3ef91b5d18c2a1b5348873d986b5e259a4ad8ef"
+      ],
+      "limits": [
+        {"id": "power", "value": "1.5", "unit": "w"}
+      ],
+      "parameters": [
+        {"id": "dissipation_basis", "value": "steady_state"}
+      ]
+    },
+    {
+      "record": 30,
+      "id": "thermal_boundary_conditions",
+      "state": "complete",
+      "model": "pcb.minimum-thermal-geometry-envelope",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "assembly-placement-v1-304fed9d6a0a687f816e8739c3ef91b5d18c2a1b5348873d986b5e259a4ad8ef"
+      ],
+      "limits": [
+        {"id": "maximum_boundary_distance", "value": "10", "unit": "mm"},
+        {"id": "minimum_copper_area", "value": "25", "unit": "mm2"},
+        {"id": "minimum_via_count", "value": "4", "unit": "count"}
+      ],
+      "parameters": [
+        {"id": "boundary", "value": "still_air"},
+        {"id": "copper_model", "value": "declared_area_only"},
+        {"id": "via_model", "value": "declared_count_only"}
+      ]
+    },
+    {
+      "record": 31,
+      "id": "interface_intent",
+      "state": "complete",
+      "model": "pcb.interface-pin-constraints",
+      "modelVersion": "1",
+      "applicability": "board",
+      "targetIds": [
+        "assembly-placement-v1-304fed9d6a0a687f816e8739c3ef91b5d18c2a1b5348873d986b5e259a4ad8ef",
+        "feature-v1-2938433a78f25fbc2c6e69c1774df1b3db76e2293e2f5d81c1d50a739a423ff6",
+        "feature-v1-8c57983bb4d4a77b55a5f04ea04c1519b9c466785f09842d5d3d0a0acdd1ff33",
+        "net-v1-9018e5501eec463a31322373c643da2cb391204238b0404520c2063fe4ff5211"
+      ],
+      "limits": [],
+      "parameters": [
+        {"id": "connector", "value": "assembly-placement-v1-304fed9d6a0a687f816e8739c3ef91b5d18c2a1b5348873d986b5e259a4ad8ef"},
+        {"id": "pin_constraints", "value": "explicit_feature_and_net_targets"},
+        {"id": "protocol", "value": "fixture_bus"},
+        {"id": "protocol_version", "value": "1"}
+      ]
+    }
+  ]
+}

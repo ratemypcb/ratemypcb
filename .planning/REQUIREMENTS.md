@@ -63,18 +63,18 @@
 
 ### Intelligent Interchange Decision
 
-- [ ] **FMT-01**: ODB++ receives a documented legal/license, representative-corpus, semantic-conformance, virtual-archive security, performance, and maintenance feasibility result.
-- [ ] **FMT-02**: IPC-2581 receives an equivalent standard/XSD-rights, representative-corpus, schema/semantic-conformance, hostile-XML security, performance, crate maturity, and maintenance feasibility result.
-- [ ] **FMT-03**: A checkpoint compares ODB++ and IPC-2581 against identical canonical capabilities and records adopt-one, adopt-both, or no-go without changing Gerber baseline policy.
-- [ ] **FMT-04**: Any adopted intelligent-format adapter reaches the canonical model with explicit capabilities, omissions, provenance, bounds, corpus tests, and no format-badge shortcut to approval.
-- [ ] **FMT-05**: If neither format passes, the product reports both as unsupported/not checked and retains native KiCad plus Gerber/X2+Excellon as the strongest path.
+- [x] **FMT-01**: ODB++ receives a documented legal/license, representative-corpus, semantic-conformance, virtual-archive security, performance, and maintenance feasibility result.
+- [x] **FMT-02**: IPC-2581 receives an equivalent standard/XSD-rights, representative-corpus, schema/semantic-conformance, hostile-XML security, performance, crate maturity, and maintenance feasibility result.
+- [x] **FMT-03**: A checkpoint compares ODB++ and IPC-2581 against identical canonical capabilities and records adopt-one, adopt-both, or no-go without changing Gerber baseline policy. **Disposition: no-go for both formats for this release.**
+- [x] **FMT-04**: Any adopted intelligent-format adapter reaches the canonical model with explicit capabilities, omissions, provenance, bounds, corpus tests, and no format-badge shortcut to approval. **Disposition: Not Applicable under no-go; no adapter was adopted or implemented.**
+- [x] **FMT-05**: If neither format passes, the product reports both as unsupported/not checked and retains native KiCad plus Gerber/X2+Excellon as the strongest path. **Disposition: Complete because current product behavior already satisfies the no-go path; format presence cannot improve approval.**
 
 ### Advanced DFM and Assembly Decisions
 
 - [ ] **DFM-01**: Shared geometry analyzers report measured clearance, annular ring, copper-to-edge, mask sliver, paste/mask relationship, outline, and drill/tool issues only when required capabilities are present.
-- [ ] **DFM-02**: Stackup, thickness/material, drill-span, impedance/special-process, and profile/order requirements show evidence, conflicts, and explicit confirmation gaps without fabricated defaults.
-- [ ] **DFM-03**: Assembly analyzers cover placement/BOM population, side/rotation, paste availability, courtyard/access/test-point risks, and package/footprint consistency with source-linked locations.
-- [ ] **DFM-04**: Net-aware return-path, high-current, creepage, differential, thermal, and interface checks declare assumptions/capabilities and remain inference-labeled unless deterministic evidence is validated.
+- [ ] **DFM-02**: Stackup, thickness/material, drill-span, impedance/special-process, and profile/order requirements show evidence, conflicts, and explicit confirmation gaps without fabricated defaults. **Plan 07-07 is complete after one independent `BLOCK` review and one remediation pass; final Phase 7 closure remains in Plan 07-11.**
+- [ ] **DFM-03**: Assembly analyzers cover placement/BOM population, side/rotation, paste availability, courtyard/access/test-point risks, and package/footprint consistency with source-linked locations. **Implemented through Plan 07-09; Plan 07-09 independent review and final Phase 7 closure remain pending.**
+- [ ] **DFM-04**: Net-aware return-path, high-current, creepage, differential, thermal, and interface checks declare assumptions/capabilities and remain inference-labeled unless deterministic evidence is validated. **Plan 07-09 added the sole bounded named/versioned intent seam used by later inference families; no family has human approval.**
 - [ ] **DFM-05**: Each analyzer family has adjudicated positive/hard-negative/mutation fixtures and reports precision/recall; only families meeting policy can block release.
 - [ ] **DFM-06**: Category/disposition actions prioritize the smallest release-unblocking fix and never let an analyzer score override missing required evidence or the approval gate.
 
@@ -155,15 +155,15 @@
 | FAB-06 | Phase 5 | Complete |
 | FAB-07 | Phase 5 | Complete |
 | FAB-08 | Phase 5 | Complete |
-| FMT-01 | Phase 6 | Pending |
-| FMT-02 | Phase 6 | Pending |
-| FMT-03 | Phase 6 | Pending |
-| FMT-04 | Phase 6 | Pending |
-| FMT-05 | Phase 6 | Pending |
+| FMT-01 | Phase 6 | Complete |
+| FMT-02 | Phase 6 | Complete |
+| FMT-03 | Phase 6 | Complete — no-go for both formats this release |
+| FMT-04 | Phase 6 | Not Applicable — no adapter adopted |
+| FMT-05 | Phase 6 | Complete — unsupported/not-checked path verified |
 | DFM-01 | Phase 7 | Pending |
-| DFM-02 | Phase 7 | Pending |
-| DFM-03 | Phase 7 | Pending |
-| DFM-04 | Phase 7 | Pending |
+| DFM-02 | Phase 7 | Plan 07-07 complete; final Phase 7 closure pending |
+| DFM-03 | Phase 7 | Plan 07-09 implemented; independent review and final closure pending |
+| DFM-04 | Phase 7 | Plan 07-09 declaration seam complete; inference families and final closure pending |
 | DFM-05 | Phase 7 | Pending |
 | DFM-06 | Phase 7 | Pending |
 | REL-01 | Phase 8 | Pending |
@@ -183,4 +183,4 @@
 
 ---
 *Requirements defined: 2026-08-26*
-*Last updated: 2026-08-30 after ordinary test evidence and one bounded independent product review accepted Phase 5 with no product findings; custom packet/freeze/GPG/canonical-review/zero-findings machinery remains withdrawn*
+*Last updated: 2026-09-01 after Plan 07-09 implementation gates passed; the repository lead's independent review and final Phase 7 closure remain pending.*

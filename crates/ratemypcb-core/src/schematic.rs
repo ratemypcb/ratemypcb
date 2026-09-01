@@ -44,6 +44,7 @@ pub struct SchematicReview {
     pub occurrences: Vec<SchematicOccurrence>,
     pub capabilities: Vec<SchematicCapability>,
     pub mismatches: Vec<SchematicMismatch>,
+    pub footprint_comparisons: Vec<SchematicFootprintComparison>,
     pub native_erc: Option<NativeReport>,
     pub native_parity: Option<NativeReport>,
     pub limitations: Vec<String>,
@@ -105,6 +106,32 @@ pub struct SchematicMismatch {
     pub confidence: String,
     pub gate_impact: GateImpact,
     pub location: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum SchematicComparisonSource {
+    Board,
+    Bom,
+    Netlist,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchematicFootprintComparison {
+    pub occurrence_key: String,
+    pub field: String,
+    pub source: SchematicComparisonSource,
+    pub expected: String,
+    pub actual: String,
+    pub join: String,
+    pub confidence: String,
+    pub expected_source_path: String,
+    pub expected_source_digest: String,
+    pub actual_source_path: String,
+    pub actual_source_digest: String,
+    pub location: String,
+    pub matched: bool,
 }
 
 pub(crate) struct ProjectEvidenceInput<'a> {
@@ -1987,13 +2014,101 @@ fn push_mismatch(
     });
 }
 
-fn reconcile(
-    occurrences: &[SchematicOccurrence],
-    board: &[ArtifactComponent],
-    netlist: &[ArtifactComponent],
-    bom: Option<&str>,
-    placement: Option<&str>,
-) -> Result<Vec<SchematicMismatch>, String> {
+#[derive(Clone, Debug)]
+struct ComparisonArtifact {
+    path: String,
+    digest: String,
+}
+
+#[derive(Default)]
+struct ReconciliationOutput {
+    mismatches: Vec<SchematicMismatch>,
+    footprint_comparisons: Vec<SchematicFootprintComparison>,
+}
+
+#[derive(Clone, Copy)]
+struct FootprintComparisonInput<'a> {
+    source: SchematicComparisonSource,
+    expected: &'a str,
+    actual: &'a str,
+    join: &'a str,
+    matched: bool,
+    actual_source: Option<&'a ComparisonArtifact>,
+}
+
+fn push_footprint_comparison(
+    output: &mut Vec<SchematicFootprintComparison>,
+    occurrence: &SchematicOccurrence,
+    input: FootprintComparisonInput<'_>,
+    artifact_digests: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let FootprintComparisonInput {
+        source,
+        expected,
+        actual,
+        join,
+        matched,
+        actual_source,
+    } = input;
+    let Some(actual_source) = actual_source else {
+        return Ok(());
+    };
+    let Some(expected_source_digest) = artifact_digests.get(&occurrence.source_path) else {
+        return Err("schematic footprint source digest is absent".into());
+    };
+    if expected.is_empty() || actual.is_empty() {
+        return Ok(());
+    }
+    output.push(SchematicFootprintComparison {
+        occurrence_key: occurrence.key.clone(),
+        field: "footprint".into(),
+        source,
+        expected: expected.into(),
+        actual: actual.into(),
+        join: join.into(),
+        confidence: if join == "reference-fallback" {
+            "low"
+        } else {
+            "high"
+        }
+        .into(),
+        expected_source_path: occurrence.source_path.clone(),
+        expected_source_digest: expected_source_digest.clone(),
+        actual_source_path: actual_source.path.clone(),
+        actual_source_digest: actual_source.digest.clone(),
+        location: format!(
+            "sheet={};item={};source={}",
+            occurrence.sheet_uuid_path, occurrence.item_uuid, occurrence.source_path
+        ),
+        matched,
+    });
+    Ok(())
+}
+
+struct ReconciliationInput<'a> {
+    occurrences: &'a [SchematicOccurrence],
+    board: &'a [ArtifactComponent],
+    board_source: Option<&'a ComparisonArtifact>,
+    netlist: &'a [ArtifactComponent],
+    netlist_source: Option<&'a ComparisonArtifact>,
+    bom: Option<&'a str>,
+    bom_source: Option<&'a ComparisonArtifact>,
+    placement: Option<&'a str>,
+    artifact_digests: &'a BTreeMap<String, String>,
+}
+
+fn reconcile(input: ReconciliationInput<'_>) -> Result<ReconciliationOutput, String> {
+    let ReconciliationInput {
+        occurrences,
+        board,
+        board_source,
+        netlist,
+        netlist_source,
+        bom,
+        bom_source,
+        placement,
+        artifact_digests,
+    } = input;
     let board_refs = unique_reference_map(board, |item| item.reference.as_deref());
     let mut board_occurrences = BTreeMap::new();
     for (index, item) in board.iter().enumerate() {
@@ -2033,6 +2148,7 @@ fn reconcile(
         .map(|value| value.trim().to_ascii_uppercase())
         .collect::<BTreeSet<_>>();
     let mut output = Vec::new();
+    let mut footprint_comparisons = Vec::new();
     for occurrence in occurrences {
         let occurrence_path = format!("{}/{}", occurrence.sheet_uuid_path, occurrence.item_uuid);
         let exact_board = board_occurrences
@@ -2089,6 +2205,21 @@ fn reconcile(
                     let footprint_matches = field != "footprint"
                         || expected == actual
                         || expected.rsplit(':').next() == actual.rsplit(':').next();
+                    if field == "footprint" {
+                        push_footprint_comparison(
+                            &mut footprint_comparisons,
+                            occurrence,
+                            FootprintComparisonInput {
+                                source: SchematicComparisonSource::Board,
+                                expected,
+                                actual,
+                                join,
+                                matched: footprint_matches,
+                                actual_source: board_source,
+                            },
+                            artifact_digests,
+                        )?;
+                    }
                     if !footprint_matches || (field != "footprint" && expected != actual) {
                         push_mismatch(&mut output, occurrence, field, expected, actual, join);
                     }
@@ -2139,19 +2270,19 @@ fn reconcile(
                 .flatten()
                 .map(|index| &netlist[index])
         });
-        let joined_netlist = netlist
+        let exact_netlist = netlist
             .iter()
-            .find(|item| {
+            .filter(|item| {
                 item.path.as_deref() == Some(occurrence.sheet_uuid_path.as_str())
                     && item.item_uuid.as_deref() == Some(occurrence.item_uuid.as_str())
             })
-            .or(weak_netlist);
+            .collect::<Vec<_>>();
+        let (joined_netlist, netlist_join) = match exact_netlist.as_slice() {
+            [item] => (Some(*item), "occurrence-uuid"),
+            [] => (weak_netlist, "reference-fallback"),
+            _ => (None, "unmatched"),
+        };
         if let Some(netlist) = joined_netlist {
-            let netlist_join = if netlist.path.is_some() {
-                "occurrence-uuid"
-            } else {
-                "reference-fallback"
-            };
             for field in ["value", "footprint"] {
                 if let (Some(expected), Some(actual)) = (
                     occurrence_fact(occurrence, field),
@@ -2161,6 +2292,21 @@ fn reconcile(
                         _ => None,
                     },
                 ) {
+                    if field == "footprint" {
+                        push_footprint_comparison(
+                            &mut footprint_comparisons,
+                            occurrence,
+                            FootprintComparisonInput {
+                                source: SchematicComparisonSource::Netlist,
+                                expected,
+                                actual,
+                                join: netlist_join,
+                                matched: expected == actual,
+                                actual_source: netlist_source,
+                            },
+                            artifact_digests,
+                        )?;
+                    }
                     if expected != actual {
                         push_mismatch(
                             &mut output,
@@ -2201,16 +2347,20 @@ fn reconcile(
             }
         }
         if let Some(reference) = reference {
-            let bom_row = bom_rows.iter().find(|row| {
-                row.get("reference")
-                    .or_else(|| row.get("references"))
-                    .or_else(|| row.get("designator"))
-                    .is_some_and(|value| {
-                        value
-                            .split([',', ';', ' '])
-                            .any(|item| item.eq_ignore_ascii_case(&reference))
-                    })
-            });
+            let bom_matches = bom_rows
+                .iter()
+                .filter(|row| {
+                    row.get("reference")
+                        .or_else(|| row.get("references"))
+                        .or_else(|| row.get("designator"))
+                        .is_some_and(|value| {
+                            value
+                                .split([',', ';', ' '])
+                                .any(|item| item.eq_ignore_ascii_case(&reference))
+                        })
+                })
+                .collect::<Vec<_>>();
+            let bom_row = bom_matches.first().copied();
             if occurrence_fact(occurrence, "in_bom") == Some("true")
                 && bom.is_some()
                 && !bom_refs.contains(&reference)
@@ -2229,6 +2379,24 @@ fn reconcile(
                     if let (Some(expected), Some(actual)) =
                         (occurrence_fact(occurrence, field), row.get(field))
                     {
+                        if field == "footprint"
+                            && bom_matches.len() == 1
+                            && occurrence_refs.get(&reference).copied().flatten().is_some()
+                        {
+                            push_footprint_comparison(
+                                &mut footprint_comparisons,
+                                occurrence,
+                                FootprintComparisonInput {
+                                    source: SchematicComparisonSource::Bom,
+                                    expected,
+                                    actual,
+                                    join: "reference-fallback",
+                                    matched: expected == actual,
+                                    actual_source: bom_source,
+                                },
+                                artifact_digests,
+                            )?;
+                        }
                         if expected != actual {
                             push_mismatch(
                                 &mut output,
@@ -2337,7 +2505,15 @@ fn reconcile(
             );
         }
     }
-    Ok(output)
+    footprint_comparisons.sort_by(|left: &SchematicFootprintComparison, right| {
+        left.occurrence_key
+            .cmp(&right.occurrence_key)
+            .then_with(|| left.source.cmp(&right.source))
+    });
+    Ok(ReconciliationOutput {
+        mismatches: output,
+        footprint_comparisons,
+    })
 }
 
 fn native_coverage(id: &str, label: &str, report: &NativeReport) -> Coverage {
@@ -2559,6 +2735,7 @@ pub(crate) fn review_project(
             });
         }
         let mut authoritative_bom = input.bom.map(|(_, source)| source.to_owned());
+        let mut authoritative_bom_path = input.bom.map(|(name, _)| name.to_owned());
         let mut authoritative_placement = input.placement.map(|(_, source)| source.to_owned());
         let mut native_bom_version = None;
         let mut native_placement_version = None;
@@ -2588,7 +2765,10 @@ pub(crate) fn review_project(
                         );
                         *slot = Some(source);
                         match kind {
-                            ExportKind::Bom => native_bom_version = Some(version.clone()),
+                            ExportKind::Bom => {
+                                native_bom_version = Some(version.clone());
+                                authoritative_bom_path = Some("native:bom.csv".into());
+                            }
                             ExportKind::Netlist => native_netlist_version = Some(version.clone()),
                             ExportKind::Position => unreachable!(),
                         }
@@ -2645,8 +2825,9 @@ pub(crate) fn review_project(
             }
         }
         let mut netlist_components_all = Vec::new();
+        let mut parsed_netlist_paths = Vec::new();
         let netlist_inputs = if let Some(source) = native_netlist.as_ref() {
-            vec![("native-kicadsexpr.net", source.as_str())]
+            vec![("native:netlist.net", source.as_str())]
         } else {
             input
                 .netlists
@@ -2665,6 +2846,7 @@ pub(crate) fn review_project(
                             "explicit-export-facts",
                             format!("{name}: {} component(s), {nets} net(s).", components.len()),
                         ));
+                        parsed_netlist_paths.push(name.to_owned());
                         netlist_components_all.extend(components);
                     }
                     Err(error) => review.capabilities.push(capability(
@@ -2702,14 +2884,42 @@ pub(crate) fn review_project(
                 ));
             }
         }
-        review.mismatches = reconcile(
-            &review.occurrences,
-            &board,
-            &netlist_components_all,
-            authoritative_bom.as_deref(),
-            authoritative_placement.as_deref(),
-        )
+        let comparison_source = |path: Option<&str>| {
+            path.and_then(|path| {
+                review
+                    .artifact_digests
+                    .get(path)
+                    .map(|digest| ComparisonArtifact {
+                        path: path.into(),
+                        digest: digest.clone(),
+                    })
+            })
+        };
+        let board_source = comparison_source(
+            review
+                .source_pair
+                .as_ref()
+                .map(|pair| pair.board_path.as_str()),
+        );
+        let bom_source = comparison_source(authoritative_bom_path.as_deref());
+        let netlist_source = match parsed_netlist_paths.as_slice() {
+            [path] => comparison_source(Some(path)),
+            _ => None,
+        };
+        let reconciliation = reconcile(ReconciliationInput {
+            occurrences: &review.occurrences,
+            board: &board,
+            board_source: board_source.as_ref(),
+            netlist: &netlist_components_all,
+            netlist_source: netlist_source.as_ref(),
+            bom: authoritative_bom.as_deref(),
+            bom_source: bom_source.as_ref(),
+            placement: authoritative_placement.as_deref(),
+            artifact_digests: &review.artifact_digests,
+        })
         .map_err(|error| Error::Invalid(format!("Schematic reconciliation input: {error}.")))?;
+        review.mismatches = reconciliation.mismatches;
+        review.footprint_comparisons = reconciliation.footprint_comparisons;
         if let (Some(source), Some(version)) =
             (native_netlist.as_deref(), native_netlist_version.as_deref())
         {
