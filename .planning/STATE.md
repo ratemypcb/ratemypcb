@@ -1,19 +1,19 @@
 ---
 gsd_state_version: 1.0
-current_phase: 5
-current_phase_name: Manufacturing Evidence Model and Gerber Baseline
+current_phase: 6
+current_phase_name: Intelligent Interchange Decision Gate
 status: complete
-stopped_at: Phase 5 accepted by one ordinary bounded independent product review; no product findings
-last_updated: "2026-08-30T08:34:23Z"
+stopped_at: Phase 6 complete; human selected no-go for ODB++ and IPC-2581 for this release; Phase 7 Plan 07-02 unblocked
+last_updated: "2026-08-30T18:26:58.000Z"
 last_activity: 2026-08-30
-last_activity_desc: Phase 5 ordinary gates and bounded independent product review passed; withdrawn custom review ceremony remains removed
-state_head: 9a3aaed386996fea8338fb2422ea7aadc66396aa
+last_activity_desc: Completed Phase 6 at 8/8 plans; existing unsupported/not-checked behavior satisfies FMT-05 without product changes
+state_head: 5e0fa62a5865cdea1a7755c6bedcedab3a64ba07
 progress:
   total_phases: 8
-  completed_phases: 4
-  total_plans: 18
-  completed_plans: 18
-  percent: 50
+  completed_phases: 5
+  total_plans: 26
+  completed_plans: 26
+  percent: 63
 ---
 
 # Project State
@@ -23,23 +23,23 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-08-26)
 
 **Core value:** A release decision must be honest, actionable, and traceable; missing evidence blocks approval and never becomes low risk or a pass.  
-**Current focus:** Phase 5 complete; Phase 6 not started
+**Current focus:** Phase 6 complete; Phase 7 Plan 07-02 is unblocked
 
 ## Current Position
 
-Phase: 5 — Manufacturing Evidence Model and Gerber Baseline
-Plan: 05-06 complete
-Status: Phase 5 complete; FAB-04/FAB-05/FAB-06/FAB-08 accepted
-Last activity: 2026-08-30 — 226 locked Rust tests, 31 Node tests, Clippy, fmt, schema comparison, official local Gerber/XNC corpus coverage, both round-8 regressions, summary verification, and Plan 05-06 structure validation exited 0; one ordinary bounded independent product review returned ACCEPT with no product findings.
+Phase: 6 (Intelligent Interchange Decision Gate) — COMPLETE
+Plan: 8/8 complete
+Status: Human selected no-go for both ODB++ and IPC-2581 for this release. FMT-03 and FMT-05 are Complete; FMT-04 is Not Applicable because no adapter was adopted.
+Last activity: 2026-08-30 — The unchanged focused CLI regression proved both formats remain unsupported/not checked, native KiCad plus Gerber/X2+Excellon remains strongest, and format presence cannot improve approval.
 
-Official totals were identical across all four accepted runs: 32 files, 102,909 parser results, 102,908 successes, one parser error, one resolved Route, zero unaccounted errors, 32 warnings, 83,570 features, 54,578 lines, 78 arcs, 23 regions, 28,891 flashes, and 6 macros.
+PRIVATE SHA `a4216f6909754155555e9290c2ec84e0eb16d267` is quarantined research only. A later ODB++ reply, lawful representative corpus, and conformance evidence may support a separately authorized reopening; none blocks Phase 6 completion.
 
-Progress: [█████░░░░░] 50%
+Progress: [██████░░░░] 63%
 
 ## Performance Metrics
 
-- Total plans completed: 18 of 18 written plans.
-- Requirements completed: 39 of 60 v1 requirements.
+- Total plans completed: 26 of 26 written plans.
+- Requirements completed: 43 complete and 1 not applicable of 60 v1 requirements.
 - Phase 3 through Phase 5 Plan 03 execution durations were not measured.
 
 **Per-Plan Metrics:**
@@ -64,6 +64,13 @@ Progress: [█████░░░░░] 50%
 | Phase 05 P04 | not-measured | 1 task | X2/Job/XNC/package foundations and fixtures |
 | Phase 05 P05 | not-measured | 1 task | native/package reconciliation and product surfaces |
 | Phase 05 P06 | not-measured | 1 task | hostile/resource/corpus/full product gates and review |
+| Phase 06 P02 | not-measured | 3 tasks | 4 private source/docs plus Phase 6 planning evidence files |
+| Phase 06 P03 | not-measured | 3 tasks | 2 private source/docs plus Phase 6 planning evidence files |
+| Phase 06 P04 | not-measured | 3 tasks | 3 private source/docs plus Phase 6 planning evidence files |
+| Phase 06 P05 | not-measured | 3 tasks | 5 private source/tests/docs plus Phase 6 planning evidence files |
+| Phase 06 P06 | not-measured | 3 tasks | secure archive source/tests/dependencies plus Phase 6 planning evidence files |
+| Phase 06 P07 | 50min | 3 tasks | private exact-precision degradation evidence |
+| Phase 06 P08 | not-measured | 2 tasks | verification-only no-go closure; planning files only |
 
 ## Accumulated Context
 
@@ -75,6 +82,12 @@ Progress: [█████░░░░░] 50%
 - Use native `kicad-cli` ERC/DRC/parity before custom source semantics.
 - Exact manufacturer+MPN identity; no provider suggestion is an approved alternate.
 - [Phase 03]: Ship provider-neutral offline supply v2; keep Nexar, Mouser, DigiKey, and LCSC live adapters disabled until written use-specific approval. — Provider terms/account evidence does not authorize RateMyPCB query, retention, embedding, sharing, fixtures, or payload storage.
+- [Phase 06]: Private ODB++ parser work remains quarantined research only. The later FMT-03 no-go decision completes this release gate without resolving third-party rights or authorizing public integration, distribution, publication, release, or support claims.
+- [Phase 06]: Accept bounded Plan 06-04 general line-only surface topology after one review/remediation pass. — Only nonempty exact associations are Complete; arc/work/compressed/unsupported/malformed subsets stay Partial and do not imply adoption.
+- [Phase 06]: Accept bounded Plan 06-05 execution control/accounting at parser SHA `07a42c937cf550eeb7c9d5d5c233b474cb386a0d`. — One absolute deadline/cancellation boundary and project-authored local scaling evidence improve private technical proof only; timing/RSS is non-representative and no adoption/product/right threshold changes.
+- [Phase 06]: Retain the official ODB++Design v8.1 rigid-flex archive byte-for-byte only in PRIVATE `ratemypcb/ratemypcb-odbpp` at receipt SHA `83e15f1e07eedb62c9f2fc017a08c0c5138766b8`. — Explicit human storage direction is not Siemens clearance; rights, representative breadth, independent conformance, public CI, redistribution, integration, and adoption remain unresolved.
+- [Phase 06]: Preserve PRIVATE SHA `a4216f6909754155555e9290c2ec84e0eb16d267` as quarantined research only; it grants no adoption, integration, distribution, publication, release, or support claim.
+- [Phase 06]: The human selected no-go for both ODB++ and IPC-2581 for this release. FMT-03 and FMT-05 are Complete; FMT-04 is Not Applicable because no adapter was adopted.
 
 ### Pending Todos
 
@@ -82,22 +95,23 @@ None outside the roadmap.
 
 ### Blockers/Concerns
 
-- Dirty uncommitted 0.2 baseline cannot be inherited by implementation worktrees from HEAD; a reviewed baseline commit requires explicit authorization.
 - `ratemypcb-core` publication remains blocked by the Git-only production dependency lacking a publishable version requirement.
 - KiCad 8/9 remain documentation-attested; Phase 2 human accessibility, browser-matrix, and representative-comprehension gates remain deferred.
 - Supply adapters await per-provider terms/account-schema decisions.
-- ODB++ and IPC-2581 await legal/corpus/conformance/security/maintenance gates.
 - Human-needed provider gate: obtain RateMyPCB-specific Nexar, Mouser, DigiKey, and LCSC approval for query, logging/cache, fixtures, embedding, sharing/export, backup, retention, and expiry before any live adapter.
+- Future intelligent-format reopening requires explicit authorization and new evidence. The ODB++ reply, rights-cleared representative corpus, independent conformance oracle, representative performance/security evidence, audited release candidate, and maintenance owner are reopening conditions, not current Phase 6 blockers.
 
 ## Deferred Items
 
 | Category | Item | Status | Deferred At | Milestone |
-|----------|------|--------|-------------|-----------|
+| -------- | ---- | ------ | ----------- | --------- |
 | EDA | Source-aware Altium automation | v2 | Initial planning | Decision-grade release review |
 | Operations | Hosted service and organization attestations | v2 | Initial planning | Decision-grade release review |
 
 ## Session Continuity
 
-Last session: 2026-08-28T07:49:09Z
-Stopped candidate: exact crates.io 0.5.0 rejected historically; immutable fork head 54004bc completed human-PASS Plan 05-03 and remains otherwise immutable
-Resume file: .planning/phases/05-manufacturing-evidence-model-and-gerber-baseline/05-VERIFICATION.md
+**Stopped at:** Phase 6 complete at 8/8 plans; Phase 7 Plan 07-02 unblocked
+
+Last session: 2026-08-30T18:26:58.000Z
+Stopped candidate: none; no intelligent-format adapter was adopted
+Resume file: .planning/phases/06-intelligent-interchange-decision-gate/06-08-SUMMARY.md

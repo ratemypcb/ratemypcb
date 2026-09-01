@@ -63,11 +63,11 @@
 
 ### Intelligent Interchange Decision
 
-- [ ] **FMT-01**: ODB++ receives a documented legal/license, representative-corpus, semantic-conformance, virtual-archive security, performance, and maintenance feasibility result.
-- [ ] **FMT-02**: IPC-2581 receives an equivalent standard/XSD-rights, representative-corpus, schema/semantic-conformance, hostile-XML security, performance, crate maturity, and maintenance feasibility result.
-- [ ] **FMT-03**: A checkpoint compares ODB++ and IPC-2581 against identical canonical capabilities and records adopt-one, adopt-both, or no-go without changing Gerber baseline policy.
-- [ ] **FMT-04**: Any adopted intelligent-format adapter reaches the canonical model with explicit capabilities, omissions, provenance, bounds, corpus tests, and no format-badge shortcut to approval.
-- [ ] **FMT-05**: If neither format passes, the product reports both as unsupported/not checked and retains native KiCad plus Gerber/X2+Excellon as the strongest path.
+- [x] **FMT-01**: ODB++ receives a documented legal/license, representative-corpus, semantic-conformance, virtual-archive security, performance, and maintenance feasibility result.
+- [x] **FMT-02**: IPC-2581 receives an equivalent standard/XSD-rights, representative-corpus, schema/semantic-conformance, hostile-XML security, performance, crate maturity, and maintenance feasibility result.
+- [x] **FMT-03**: A checkpoint compares ODB++ and IPC-2581 against identical canonical capabilities and records adopt-one, adopt-both, or no-go without changing Gerber baseline policy. **Disposition: no-go for both formats for this release.**
+- [x] **FMT-04**: Any adopted intelligent-format adapter reaches the canonical model with explicit capabilities, omissions, provenance, bounds, corpus tests, and no format-badge shortcut to approval. **Disposition: Not Applicable under no-go; no adapter was adopted or implemented.**
+- [x] **FMT-05**: If neither format passes, the product reports both as unsupported/not checked and retains native KiCad plus Gerber/X2+Excellon as the strongest path. **Disposition: Complete because the current product already provides this behavior; format presence cannot improve approval.**
 
 ### Advanced DFM and Assembly Decisions
 
@@ -155,11 +155,11 @@
 | FAB-06 | Phase 5 | Complete |
 | FAB-07 | Phase 5 | Complete |
 | FAB-08 | Phase 5 | Complete |
-| FMT-01 | Phase 6 | Pending |
-| FMT-02 | Phase 6 | Pending |
-| FMT-03 | Phase 6 | Pending |
-| FMT-04 | Phase 6 | Pending |
-| FMT-05 | Phase 6 | Pending |
+| FMT-01 | Phase 6 | Complete |
+| FMT-02 | Phase 6 | Complete |
+| FMT-03 | Phase 6 | Complete — no-go for this release |
+| FMT-04 | Phase 6 | Not Applicable — no format adopted |
+| FMT-05 | Phase 6 | Complete — existing unsupported/not-checked path verified |
 | DFM-01 | Phase 7 | Pending |
 | DFM-02 | Phase 7 | Pending |
 | DFM-03 | Phase 7 | Pending |
@@ -183,4 +183,4 @@
 
 ---
 *Requirements defined: 2026-08-26*
-*Last updated: 2026-08-30 after ordinary test evidence and one bounded independent product review accepted Phase 5 with no product findings; custom packet/freeze/GPG/canonical-review/zero-findings machinery remains withdrawn*
+*Last updated: 2026-08-30 after the human selected FMT-03 no-go for ODB++ and IPC-2581; FMT-05 passed on existing unsupported/not-checked behavior with no product change, while FMT-04 is not applicable.*
