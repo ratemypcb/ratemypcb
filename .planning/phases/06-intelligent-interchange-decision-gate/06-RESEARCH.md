@@ -1,7 +1,7 @@
 # Phase 6 Research: Intelligent Interchange Decision Gate
 
-**Researched:** 2026-08-30  
-**Baseline:** `5e0fa62a5865cdea1a7755c6bedcedab3a64ba07` (clean before Phase 6 planning)  
+**Researched:** 2026-08-30
+**Baseline:** `5e0fa62a5865cdea1a7755c6bedcedab3a64ba07` (clean before Phase 6 planning)
 **Checkpoint status:** **COMPLETE — HUMAN SELECTED NO-GO FOR BOTH ODB++ AND IPC-2581 FOR THIS RELEASE; PRIVATE SHA `a4216f6909754155555e9290c2ec84e0eb16d267` REMAINS QUARANTINED RESEARCH ONLY**
 
 ## Outcome
