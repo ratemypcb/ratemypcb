@@ -151,9 +151,28 @@ Plans:
 3. Any adopted adapter passes representative corpus and hostile-input tests and reports omissions; format presence alone never raises approval.
 4. If no adapter passes, reports honestly say unsupported/not checked while native KiCad plus Gerber/X2+Excellon remains fully supported.
 
-**Research**: Symmetric evidence found neither ODB++ nor IPC-2581 adoption-ready. Private parser SHA `a4216f6909754155555e9290c2ec84e0eb16d267` remains quarantined research only.
+**Research**: Symmetric evidence found neither ODB++ nor IPC-2581 adoption-ready for this release.
 **Checkpoint**: Complete — the human selected no-go for both formats for this release. FMT-03 and FMT-05 are complete; FMT-04 is not applicable because no adapter was adopted.
-**Plans**: 8/8 complete. Exact decision receipts: external Phase 6 `06-01-SUMMARY.md` and `06-08-SUMMARY.md`. Future reopening requires separate authorization and new rights/corpus/conformance evidence.
+**Plans**: 8/8 complete. Exact decision receipts: external Phase 6 `06-01-SUMMARY.md` and `06-08-SUMMARY.md`. The later private-use evidence does not reopen Phase 6.
+
+#### Deferred private ODB++ integration lane
+
+Private development and internal processing of customer-supplied files may continue after this release. This lane does not change Plans 07-10 or 07-11, Phase 8 release criteria, the public support statement, or FMT-04.
+
+The lane must pass these gates before private product integration:
+
+1. Resolve publication rights.
+2. Assemble a rights-cleared representative corpus.
+3. Prove semantic conformance for the supported subset.
+4. Prove hostile-input security.
+5. Set and pass performance and resource limits.
+6. Assign maintenance ownership.
+7. Approve the private deployment boundary.
+8. Approve customer-data handling.
+9. Approve the product disclaimer.
+10. Approve each exact product claim.
+
+The sanitized decision record is `.planning/decisions/2026-09-02-odbpp-private-internal-use.md`.
 
 ### Phase 7: Decision-Grade DFM and Assembly Analysis
 

@@ -27,7 +27,7 @@ created: 2026-08-30
 - After each private parser change: run formatting, all private tests, strict Clippy, and primary LSP diagnostics.
 - After canonical-shaped evidence changes: run repeated-parse/result equality checks and the existing public unsupported-format regression.
 - Before handoff: validate all eight plan structures/references, both new summary schemas, requirement/state/roadmap consistency, planning-only changes, exact public HEAD, and zero staged files.
-- A later ODB++ response/corpus/conformance packet is evidence for a separately authorized reopening, not a Phase 6 blocker.
+- Later evidence permits private ODB++ development and internal processing of customer-supplied files in a separate post-release lane. It does not reopen Phase 6 or change this release.
 - No watch mode and no network-dependent test gate.
 
 ## Per-Task Verification Map
@@ -81,7 +81,7 @@ The existing Rust test harness covers this slice. Four narrowly scoped maintaine
 - [x] Existing unsupported-format regression passes (1 passed; 6 filtered).
 - [x] Phase 5 planning truth is reconciled to 6/6 complete.
 - [x] `06-CONTEXT.md`, `06-RESEARCH.md`, and Plans 06-01 through 06-08 exist; all eight plan structures/references and both new summary schemas pass the explicit GSD checks.
-- [x] Human authorization for local private parser implementation is recorded separately from FMT-03 adoption and public rights.
+- [x] Private development and internal processing permission is recorded separately from public adoption. Publication rights remain unresolved.
 - [x] The private crate remains `publish = false`. One official archive is retained/read under explicit human direction only in the authorized PRIVATE repository; four locked maintained dependencies implement gzip/TAR/temp/no-follow boundaries. No specification/schema, persistent extracted tree, other sample, or generated corpus artifact was added.
 - [x] Matrix plus exact units/profile/line/pad/arc/surface parsing and deterministic AdapterResult-shaped evidence pass 23 focused tests, formatting, strict Clippy, and primary LSP diagnostics.
 - [x] The independent review's valid P1/P2/P3 roots were remediated with focused regressions: physical lines, compressed ancestor symlinks/classification, profile identity/polarity/cutouts, canonical row range, matrix capability provenance, conservative generic roles, bounded virtual paths, and path-neutral diagnostics.
@@ -111,4 +111,4 @@ The existing Rust test harness covers this slice. Four narrowly scoped maintaine
 - [x] FMT-04 Not Applicable: no adapter was adopted.
 - [x] FMT-05 Complete: unchanged product behavior reports unsupported/not checked, preserves native KiCad plus Gerber/X2+Excellon, and gives format presence no approval effect.
 
-**Approval:** Phase 6 is Complete at 8/8 plans. PRIVATE SHA `a4216f6909754155555e9290c2ec84e0eb16d267` remains quarantined research only. Future ODB++ reply/corpus/conformance evidence may support reopening but is not a current blocker.
+**Approval:** Phase 6 is Complete at 8/8 plans and remains no-go for both formats in this public release. FMT-04 remains not applicable. The deferred private ODB++ lane is governed by `.planning/decisions/2026-09-02-odbpp-private-internal-use.md` and is not a Phase 6 or Phase 7 blocker.
