@@ -4,9 +4,9 @@ current_phase: 7
 current_phase_name: Decision-Grade DFM and Assembly Analysis
 status: in_progress
 stopped_at: Plan 07-09 implementation gates green; repository-lead independent review pending; Plan 07-10 not started
-last_updated: "2026-09-01T14:15:26Z"
-last_activity: 2026-09-01
-last_activity_desc: Implemented bounded assembly access and explicit-target testpoint access; both inference families remain EvidenceOnly and review is pending
+last_updated: "2026-09-03T00:30:44Z"
+last_activity: 2026-09-03
+last_activity_desc: Reconciled the closed Phase 6 public no-go with a separate deferred private ODB++ lane; Phase 7 remains unchanged
 state_head: 5e0fa62a5865cdea1a7755c6bedcedab3a64ba07
 progress:
   total_phases: 8
@@ -89,6 +89,7 @@ Progress: [███████░░░] 67%
 - [Phase 03]: Ship provider-neutral offline supply v2; keep Nexar, Mouser, DigiKey, and LCSC live adapters disabled until written use-specific approval. — Provider terms/account evidence does not authorize RateMyPCB query, retention, embedding, sharing, fixtures, or payload storage.
 - [Phase 06]: Human no-go for both ODB++ and IPC-2581 this release completes FMT-03/FMT-05; FMT-04 is not applicable because no adapter was adopted. Native KiCad plus Gerber/X2+Excellon remains the strongest supported path.
 - [Phase 06]: PRIVATE SHA `a4216f6909754155555e9290c2ec84e0eb16d267` remains quarantined research only; it grants no adoption, integration, distribution, publication, release, or support claim.
+- [Phase 06]: Later evidence removes only the permission blocker for private ODB++ development and internal processing of customer-supplied files. Phase 6 remains complete and no-go for this public release; FMT-04 remains not applicable.
 - [Phase 07]: Production DFM/order authority enters only through one bounded source/version/digest/location/applicability declaration seam and normalizes into existing fixed-point constraints/construction; unrepresented facts remain confirmation gaps.
 - [Phase 07]: Exact static family/version policy and report recomputation keep every current family EvidenceOnly; non-approve assessment P1 must intersect the score-independent core-ranked release unblock.
 - [Phase 07]: Minimum-finished-drill accepts only the Plan 07-03 declaration document plus complete round-hit/tool/plating/span facts; routes, slots, presets, and direct constraints cannot supply threshold authority.
@@ -110,7 +111,7 @@ Progress: [███████░░░] 67%
 - KiCad 8/9 remain documentation-attested; Phase 2 human accessibility, browser-matrix, and representative-comprehension gates remain deferred.
 - Supply adapters await per-provider terms/account-schema decisions.
 - Human-needed provider gate: obtain RateMyPCB-specific Nexar, Mouser, DigiKey, and LCSC approval for query, logging/cache, fixtures, embedding, sharing/export, backup, retention, and expiry before any live adapter.
-- Future intelligent-format reopening requires separate human authorization plus new rights-cleared corpus, conformance, security/performance, and maintenance evidence; it is not a Phase 7 blocker.
+- Public intelligent-format adoption remains closed. The deferred private ODB++ lane still requires publication, rights-cleared representative corpus, semantic conformance, hostile-input security, performance and resource limits, maintenance ownership, private deployment, customer-data handling, product disclaimer, and exact-claim approval gates. It is not a Phase 7 blocker.
 
 ## Deferred Items
 
@@ -118,6 +119,7 @@ Progress: [███████░░░] 67%
 |----------|------|--------|-------------|-----------|
 | EDA | Source-aware Altium automation | v2 | Initial planning | Decision-grade release review |
 | Operations | Hosted service and organization attestations | v2 | Initial planning | Decision-grade release review |
+| EDA | Private ODB++ integration | Post-release private lane; gates pending | Phase 6 follow-up | Separate from the public release |
 
 ## Session Continuity
 

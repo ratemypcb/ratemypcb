@@ -25,7 +25,7 @@ A release decision must be honest, actionable, and traceable: missing evidence b
 - [ ] Deliver demand-aware exact manufacturer+MPN supply risk with official-provider provenance, legal/retention controls, conflicts, freshness, and explicit `not checked`.
 - [ ] Add KiCad-native schematic ERC, hierarchy evidence, and schematic↔PCB↔BOM↔placement consistency while bounding Altium/netlist claims.
 - [ ] Deepen fabrication evidence through one canonical manufacturing model and real Gerber/X2+Excellon parsing.
-- [ ] Evaluate ODB++ and IPC-2581 through legal, corpus, conformance, security, and maintenance gates before adopting either.
+- [x] Keep ODB++ and IPC-2581 out of this public release after neither format passed the Phase 6 adoption gate. A separate post-release private ODB++ lane may continue without changing public support.
 - [ ] Add high-value DFM/assembly analyzers, adversarial validation, performance bounds, and skill/release adoption evidence.
 
 ### Uncommitted 0.2 candidate — present but not validated or shipped
@@ -71,7 +71,7 @@ The implementation is intentionally monolithic today (`crates/ratemypcb-core/src
 | Treat manufacturer+MPN as supply identity and provider alternates as unapproved candidates | MPN-only joins and suggestion promotion are unsafe | ✓ Locked |
 | Use official provider APIs only under reviewed terms; otherwise `not checked` | Terms and retention are product requirements | ✓ Locked |
 | Keep Gerber/X2+Excellon baseline and build one canonical manufacturing model | Interoperability without analyzer duplication | ✓ Locked |
-| Gate ODB++ and IPC-2581 equally on legal/corpus/conformance/security/maintenance evidence | Format presence and marketing do not prove safe, complete evidence | — Open checkpoint |
+| Keep the Phase 6 ODB++ and IPC-2581 no-go closed for this release | Neither format passed the public adoption gate; private ODB++ work is a separate post-release decision | ✓ Locked |
 | Use native KiCad ERC/DRC/parity first | Native tooling has the strongest supported semantics | ✓ Locked |
 | Keep Altium/exported-netlist claims bounded to observed exports | Avoid false source-aware conclusions | ✓ Locked |
 
@@ -82,7 +82,7 @@ The implementation is intentionally monolithic today (`crates/ratemypcb-core/src
 - A typed supply snapshot can expose Mouser, DigiKey, and LCSC observations without violating provider-specific retention/display terms; each adapter remains gated until proven.
 - Real Gerber/X2+Excellon parsing plus native KiCad reconciliation can provide strong fabrication evidence without requiring ODB++.
 - IPC-2581 may be the lower-cost intelligent adapter, but legal/XSD redistribution, crate maturity, hostile XML behavior, and corpus coverage remain unproven.
-- ODB++ may provide richer evidence, but partner licensing, corpus scarcity, parser/security complexity, and maintenance may make adoption a no-go.
+- Private ODB++ development may continue after the public no-go, but public adoption remains closed until a separate decision clears publication and engineering gates.
 
 ---
-*Last updated: 2026-08-26 after initial brownfield milestone planning*
+*Last updated: 2026-09-03 after the public ODB++ decision was reconciled with a separate private lane*

@@ -69,6 +69,8 @@
 - [x] **FMT-04**: Any adopted intelligent-format adapter reaches the canonical model with explicit capabilities, omissions, provenance, bounds, corpus tests, and no format-badge shortcut to approval. **Disposition: Not Applicable under no-go; no adapter was adopted or implemented.**
 - [x] **FMT-05**: If neither format passes, the product reports both as unsupported/not checked and retains native KiCad plus Gerber/X2+Excellon as the strongest path. **Disposition: Complete because current product behavior already satisfies the no-go path; format presence cannot improve approval.**
 
+Phase 6 remains complete and no-go for this public release. Later evidence permits only a separate post-release private ODB++ lane. It does not change FMT-03, FMT-04, FMT-05, public behavior, or public dependencies.
+
 ### Advanced DFM and Assembly Decisions
 
 - [ ] **DFM-01**: Shared geometry analyzers report measured clearance, annular ring, copper-to-edge, mask sliver, paste/mask relationship, outline, and drill/tool issues only when required capabilities are present.
@@ -98,6 +100,10 @@
 - **OPS2-01**: Organization policy packs and signed review attestations after the local evidence contract is stable.
 - **SUP2-01**: Historical supply trends and manufacturer PCN/PDN verification from separately licensed authoritative data.
 - **DFM2-01**: Device-datasheet-aware electrical rule packs after provenance and qualification workflows exist.
+
+### Private intelligent-format integration
+
+- **INT2-01**: Private ODB++ development and internal processing of customer-supplied files may continue outside the public release. Integration requires publication, rights-cleared representative corpus, semantic conformance, hostile-input security, performance and resource limits, maintenance ownership, private deployment, customer-data handling, product disclaimer, and exact-claim approval gates. Publication rights remain unresolved.
 
 ## Out of Scope
 
