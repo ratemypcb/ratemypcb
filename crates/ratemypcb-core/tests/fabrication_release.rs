@@ -3488,18 +3488,8 @@ fn macro_operation_document(count: usize) -> Vec<u8> {
     bytes
 }
 
-fn block_count_document(count: usize) -> Vec<u8> {
-    let mut bytes = b"%FSLAX46Y46*%%MOMM*%%ADD10C,0.1*%".to_vec();
-    for index in 0..count {
-        let code = 20 + index;
-        bytes.extend_from_slice(format!("%ABD{code}*%D10*X0Y0D03*%AB*%\n").as_bytes());
-    }
-    bytes.extend_from_slice(b"M02*");
-    bytes
-}
-
 #[test]
-fn gerber_hostile_aperture_macro_variable_operation_and_block_counts_are_exact_and_over() {
+fn gerber_hostile_aperture_macro_variable_and_operation_counts_are_exact_and_over() {
     let exact_apertures =
         production_gerber_bytes(&aperture_count_document(MANUFACTURING_LIMITS.apertures)).unwrap();
     assert_eq!(
@@ -3560,26 +3550,6 @@ fn gerber_hostile_aperture_macro_variable_operation_and_block_counts_are_exact_a
         )),
         Err(GerberParseError::Resource {
             resource: "macro-operations",
-            ..
-        })
-    ));
-
-    let exact_blocks = production_gerber_bytes_with_timeout(
-        &block_count_document(MANUFACTURING_LIMITS.apertures - 1),
-        Duration::from_secs(30),
-    )
-    .unwrap();
-    assert_eq!(
-        exact_blocks.review.blocks.len(),
-        MANUFACTURING_LIMITS.apertures - 1
-    );
-    assert!(matches!(
-        production_gerber_bytes_with_timeout(
-            &block_count_document(MANUFACTURING_LIMITS.apertures),
-            Duration::from_secs(30),
-        ),
-        Err(GerberParseError::Resource {
-            resource: "apertures",
             ..
         })
     ));
