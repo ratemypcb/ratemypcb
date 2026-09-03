@@ -573,7 +573,8 @@ struct Target {
     case_class: String,
     canonical_target_ids: Vec<String>,
     expected_label: String,
-    actual_label: String,
+    #[serde(default)]
+    actual_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -831,7 +832,10 @@ fn target_key(family_id: &str, family_version: &str, digest: &str, ids: &[String
     serde_json::to_string(&(family_id, family_version, digest, ids)).unwrap()
 }
 
-fn validate_family_targets(targets: &PopulationTargets) -> Result<Metrics, String> {
+fn validate_family_targets(
+    targets: &PopulationTargets,
+    measured_labels: Option<&BTreeMap<String, String>>,
+) -> Result<Metrics, String> {
     if targets.schema_version != 1
         || targets.origin != "project-authored"
         || !is_sha256(&targets.fixture_digest)
@@ -865,11 +869,16 @@ fn validate_family_targets(targets: &PopulationTargets) -> Result<Metrics, Strin
                 ));
             }
         }
-        if !matches!(target.actual_label.as_str(), "finding" | "no_finding") {
+        let actual_label = match measured_labels {
+            Some(labels) => labels.get(&target.case_id).map(String::as_str),
+            None => target.actual_label.as_deref(),
+        }
+        .ok_or_else(|| format!("{} has no measured actual label", target.case_id))?;
+        if !matches!(actual_label, "finding" | "no_finding") {
             return Err(format!("{} has unknown actual label", target.case_id));
         }
         classes.insert(target.case_class.as_str());
-        match (target.expected_label.as_str(), target.actual_label.as_str()) {
+        match (target.expected_label.as_str(), actual_label) {
             ("violation", "finding") => metrics.tp += 1,
             ("clean", "finding") => metrics.fp += 1,
             ("violation", "no_finding") => metrics.fn_count += 1,
@@ -918,22 +927,31 @@ fn validate_targets(targets: &PopulationTargets) -> Result<Metrics, String> {
     {
         return Err("population target metadata or digest changed".into());
     }
-    validate_family_targets(targets)
+    validate_family_targets(targets, None)
 }
 
-fn validate_mutation_rows(mutations: &[Mutation]) -> Result<usize, String> {
+fn validate_mutation_rows(
+    mutations: &[Mutation],
+    measured_statuses: Option<&BTreeMap<String, String>>,
+) -> Result<usize, String> {
     let mut ids = BTreeSet::new();
     let mut kinds = BTreeSet::new();
     for mutation in mutations {
+        let actual_status = match measured_statuses {
+            Some(statuses) => statuses.get(&mutation.id).map(String::as_str),
+            None => Some("not_checked"),
+        };
+        let expected_status = "not_checked";
         if mutation.id.trim().is_empty()
             || !ids.insert(mutation.id.as_str())
             || !kinds.insert(mutation.kind.as_str())
-            || mutation.expected_status != "not_checked"
+            || mutation.expected_status != expected_status
+            || actual_status != Some(expected_status)
             || mutation.contributes_to_confusion_matrix
             || mutation.detail.trim().is_empty()
         {
             return Err(format!(
-                "mutation {} is duplicated or not fail-closed",
+                "mutation {} is duplicated, unmeasured, or not fail-closed: expected={expected_status} actual={actual_status:?}",
                 mutation.id
             ));
         }
@@ -954,7 +972,7 @@ fn validate_mutations(mutations: &MutationCorpus) -> Result<usize, String> {
     {
         return Err("mutation metadata or digest changed".into());
     }
-    validate_mutation_rows(&mutations.mutations)
+    validate_mutation_rows(&mutations.mutations, None)
 }
 
 fn validate_geometry_corpus(corpus: &GeometryCorpus) -> Result<BTreeMap<String, Metrics>, String> {
@@ -1018,8 +1036,8 @@ fn validate_geometry_corpus(corpus: &GeometryCorpus) -> Result<BTreeMap<String, 
             targets: family.targets.clone(),
             unsupported_targets: family.unsupported_targets.clone(),
         };
-        let mut metrics = validate_family_targets(&targets)?;
-        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations)?;
+        let mut metrics = validate_family_targets(&targets, None)?;
+        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations, None)?;
         if !meets_metric_policy(metrics, 9500) {
             return Err(format!("geometry family {key} does not meet metric policy"));
         }
@@ -1069,10 +1087,12 @@ fn validate_confirmation_gap_targets(targets: &PopulationTargets) -> Result<Metr
         match (
             target.case_class.as_str(),
             target.expected_label.as_str(),
-            target.actual_label.as_str(),
+            target.actual_label.as_deref(),
         ) {
-            ("positive", "confirmation_gap", "confirmation_gap") => metrics.tp += 1,
-            ("hard_negative", "no_match_or_conflict", "no_match_or_conflict") => metrics.tn += 1,
+            ("positive", "confirmation_gap", Some("confirmation_gap")) => metrics.tp += 1,
+            ("hard_negative", "no_match_or_conflict", Some("no_match_or_conflict")) => {
+                metrics.tn += 1
+            }
             _ => {
                 return Err(format!(
                     "{} overclaims a represented result",
@@ -1166,9 +1186,9 @@ fn validate_construction_corpus(
         let mut metrics = if key == "dfm.drill-span-plating.v1" {
             validate_confirmation_gap_targets(&targets)?
         } else {
-            validate_family_targets(&targets)?
+            validate_family_targets(&targets, None)?
         };
-        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations)?;
+        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations, None)?;
         if !meets_metric_policy(metrics, 9500) {
             return Err(format!(
                 "construction family {key} does not meet metric policy"
@@ -1187,7 +1207,11 @@ fn validate_construction_corpus(
     Ok(metrics_by_family)
 }
 
-fn validate_assembly_corpus(corpus: &GeometryCorpus) -> Result<BTreeMap<String, Metrics>, String> {
+fn validate_assembly_corpus(
+    corpus: &GeometryCorpus,
+    measured_labels: &BTreeMap<String, BTreeMap<String, String>>,
+    measured_mutations: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, Metrics>, String> {
     if corpus.schema_version != 1
         || corpus.origin != "project-authored"
         || corpus.license != "MIT OR Apache-2.0"
@@ -1240,8 +1264,18 @@ fn validate_assembly_corpus(corpus: &GeometryCorpus) -> Result<BTreeMap<String, 
             targets: family.targets.clone(),
             unsupported_targets: family.unsupported_targets.clone(),
         };
-        let mut metrics = validate_family_targets(&targets)?;
-        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations)?;
+        let labels = measured_labels.get(&key);
+        let mutation_statuses = measured_mutations.get(&key);
+        if INFERENCE_FAMILIES.contains(&key.as_str())
+            && (labels.is_none() || mutation_statuses.is_none())
+        {
+            return Err(format!(
+                "assembly family {key} has no production analyzer measurements"
+            ));
+        }
+        let mut metrics = validate_family_targets(&targets, labels)?;
+        metrics.not_checked_mutations =
+            validate_mutation_rows(&family.mutations, mutation_statuses)?;
         if !meets_metric_policy(metrics, 9500) {
             return Err(format!("assembly family {key} does not meet metric policy"));
         }
@@ -2952,6 +2986,102 @@ fn access_project(second_x_mm: &str) -> PathBuf {
     root
 }
 
+fn opposite_side_access_project(target_side: &str) -> PathBuf {
+    let root = access_project("2");
+    let (target_role, blocker_role, target_layer, blocker_layer) = match target_side {
+        "top" => ("Copper,L1,Top", "Copper,L2,Bot", "F.Cu", "B.Cu"),
+        "bottom" => ("Copper,L2,Bot", "Copper,L1,Top", "B.Cu", "F.Cu"),
+        _ => unreachable!(),
+    };
+    let target = format!(
+        "G04 RateMyPCB Plan 07-09 project-authored access fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,{target_role}*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n%TO.N,TP_TEST*%\n%TO.C,TP1*%\n%TO.P,TP1,1*%\nX2000000Y5000000D03*\n%TD.P*%\n%TD.C*%\n%TD.N*%\nM02*\n"
+    );
+    let blocker = format!(
+        "G04 RateMyPCB Plan 07-09 project-authored access fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,{blocker_role}*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n%TO.N,OTHER*%\n%TO.C,U2*%\n%TO.P,U2,1*%\nX2000000Y5000000D03*\n%TD.P*%\n%TD.C*%\n%TD.N*%\nM02*\n"
+    );
+    fs::write(root.join("copper.gbr"), target).unwrap();
+    fs::write(root.join("bottom.gbr"), blocker).unwrap();
+    fs::write(
+        root.join("complete.gbrjob"),
+        serde_json::to_vec(&serde_json::json!({
+            "Header": {"GenerationSoftware": {"Vendor": "RateMyPCB", "Application": "fixture", "Version": "1"}},
+            "GeneralSpecs": {"ProjectId": {"Name": "phase7-access", "Revision": "r1", "PartNumber": "P7-009"}},
+            "FilesAttributes": [
+                {"Path": "copper.gbr", "FileFunction": target_role},
+                {"Path": "bottom.gbr", "FileFunction": blocker_role},
+                {"Path": "profile.gbr", "FileFunction": "Profile,NP"}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    if target_layer != "F.Cu" {
+        replace_once(
+            &root.join("board.kicad_pcb"),
+            "(footprint \"Fixture:TP\" (layer \"F.Cu\")",
+            &format!("(footprint \"Fixture:TP\" (layer \"{target_layer}\")"),
+        );
+        replace_once(
+            &root.join("board.kicad_pcb"),
+            "(layers \"F.Cu\") (net 1 \"TP_TEST\")",
+            &format!("(layers \"{target_layer}\") (net 1 \"TP_TEST\")"),
+        );
+    }
+    if blocker_layer != "F.Cu" {
+        replace_once(
+            &root.join("board.kicad_pcb"),
+            "(footprint \"Fixture:U\" (layer \"F.Cu\")",
+            &format!("(footprint \"Fixture:U\" (layer \"{blocker_layer}\")"),
+        );
+        replace_once(
+            &root.join("board.kicad_pcb"),
+            "(layers \"F.Cu\") (net 2 \"OTHER\")",
+            &format!("(layers \"{blocker_layer}\") (net 2 \"OTHER\")"),
+        );
+    }
+    root
+}
+
+fn many_component_access_project(count: usize) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "ratemypcb-dfm-access-many-{}-{}",
+        std::process::id(),
+        NEXT_POPULATION_FIXTURE.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&root).unwrap();
+    let mut copper = "G04 bounded access fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Copper,L1,Top*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n".to_owned();
+    let mut board = "(kicad_pcb (version 20240108)\n  (generator ratemypcb-plan07-09)\n  (title_block (title \"phase7-access\") (rev \"r1\"))\n  (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal) (44 \"Edge.Cuts\" user \"Edge.Cuts\"))\n  (net 0 \"\")\n".to_owned();
+    for index in 0..count {
+        copper.push_str(&format!(
+            "%TO.N,N{index}*%\n%TO.C,U{index}*%\n%TO.P,U{index},1*%\nX5000000Y5000000D03*\n%TD.P*%\n%TD.C*%\n%TD.N*%\n"
+        ));
+        board.push_str(&format!(
+            "  (net {} \"N{index}\")\n  (footprint \"Fixture:U\" (layer \"F.Cu\") (at 5 5 0)\n    (uuid \"00000000-0000-4000-8000-{index:012x}\")\n    (property \"Reference\" \"U{index}\")\n    (attr smd)\n    (pad \"1\" smd circle (at 0 0) (size 1 1) (layers \"F.Cu\") (net {} \"N{index}\")))\n",
+            index + 1,
+            index + 1,
+        ));
+    }
+    copper.push_str("M02*\n");
+    board.push_str("  (gr_rect (start 0 0) (end 10 10) (layer \"Edge.Cuts\")))\n");
+    fs::write(root.join("copper.gbr"), copper).unwrap();
+    fs::write(root.join("profile.gbr"), access_profile_layer()).unwrap();
+    fs::write(root.join("board.kicad_pcb"), board).unwrap();
+    fs::write(
+        root.join("complete.gbrjob"),
+        serde_json::to_vec(&serde_json::json!({
+            "Header": {"GenerationSoftware": {"Vendor": "RateMyPCB", "Application": "fixture", "Version": "1"}},
+            "GeneralSpecs": {"ProjectId": {"Name": "phase7-access", "Revision": "r1", "PartNumber": "P7-009"}},
+            "FilesAttributes": [
+                {"Path": "copper.gbr", "FileFunction": "Copper,L1,Top"},
+                {"Path": "profile.gbr", "FileFunction": "Profile,NP"}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    root
+}
+
 fn inference_declarations(records: Vec<Value>) -> DfmDeclarations {
     let mut records = records;
     for (index, record) in records.iter_mut().enumerate() {
@@ -3135,6 +3265,141 @@ fn assembly_access_compares_complete_geometry_to_named_process_tool_envelopes_on
         .gate_impact = GateImpact::Blocking;
     assert!(validate_report(&forged).is_err());
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn assembly_access_and_testpoint_access_ignore_opposite_side_coincident_geometry() {
+    for target_side in ["top", "bottom"] {
+        let root = opposite_side_access_project(target_side);
+        let baseline = review(&root, authority_options(None)).unwrap();
+        let target = canonical_net_id(&baseline, "TP_TEST");
+        let report = review(
+            &root,
+            authority_options(Some(inference_declarations(vec![
+                process_envelope("1.00", "0.10", "0.10"),
+                probe_envelope("0.40", "0.10", "0.10"),
+                target_net_authority(vec![target]),
+            ]))),
+        )
+        .unwrap();
+        for family in ["assembly.access.v1", "assembly.testpoint-access.v1"] {
+            assert_eq!(
+                coverage_for(&report, family).status,
+                CoverageStatus::Passed,
+                "{target_side} {family}: {}",
+                coverage_for(&report, family).evidence
+            );
+            assert!(findings_for(&report, family).is_empty());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn assembly_access_profile_membership_fails_closed_for_concave_exterior_cutout_and_outside() {
+    let cases = [
+        (
+            "concave",
+            "G04 concave profile*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Profile,NP*%\n%TA.AperFunction,Conductor*%\n%ADD10C,0.100*%\nD10*\n%TO.N,PROFILE*%\n%TO.C,BOARD_PROFILE*%\n%TO.P,BOARD_PROFILE,1*%\nG36*\nX000000Y000000D02*\nX10000000Y000000D01*\nX10000000Y4000000D01*\nX4000000Y4000000D01*\nX4000000Y10000000D01*\nX000000Y10000000D01*\nX000000Y000000D01*\nG37*\nM02*\n",
+        ),
+        (
+            "cutout",
+            "G04 cutout profile*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Profile,NP*%\n%TA.AperFunction,Conductor*%\n%ADD10C,0.100*%\nD10*\n%TO.N,PROFILE*%\n%TO.C,BOARD_PROFILE*%\n%TO.P,BOARD_PROFILE,1*%\nG36*\nX000000Y000000D02*\nX10000000Y000000D01*\nX10000000Y10000000D01*\nX000000Y10000000D01*\nX000000Y000000D01*\nG37*\n%LPC*%\nG36*\nX4500000Y4500000D02*\nX5500000Y4500000D01*\nX5500000Y5500000D01*\nX4500000Y5500000D01*\nX4500000Y4500000D01*\nG37*\nM02*\n",
+        ),
+    ];
+    for (case, profile) in cases {
+        let root = access_project("5");
+        let baseline = review(&root, authority_options(None)).unwrap();
+        let target = canonical_net_id(&baseline, "TP_TEST");
+        fs::write(root.join("profile.gbr"), profile).unwrap();
+        let report = review(
+            &root,
+            authority_options(Some(inference_declarations(vec![
+                process_envelope("1.00", "0.10", "0.10"),
+                probe_envelope("0.40", "0.10", "0.10"),
+                target_net_authority(vec![target]),
+            ]))),
+        )
+        .unwrap();
+        for family in ["assembly.access.v1", "assembly.testpoint-access.v1"] {
+            assert_eq!(
+                coverage_for(&report, family).status,
+                CoverageStatus::NotRun,
+                "{case} {family}: {}",
+                coverage_for(&report, family).evidence
+            );
+            assert!(findings_for(&report, family).is_empty());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    let root = access_project("11");
+    let baseline = review(&root, authority_options(None)).unwrap();
+    let target = canonical_net_id(&baseline, "TP_TEST");
+    let report = review(
+        &root,
+        authority_options(Some(inference_declarations(vec![
+            process_envelope("1.00", "0.10", "0.10"),
+            probe_envelope("0.40", "0.10", "0.10"),
+            target_net_authority(vec![target]),
+        ]))),
+    )
+    .unwrap();
+    for family in ["assembly.access.v1", "assembly.testpoint-access.v1"] {
+        assert_eq!(
+            coverage_for(&report, family).status,
+            CoverageStatus::NotRun,
+            "outside {family}: {}",
+            coverage_for(&report, family).evidence
+        );
+        assert!(findings_for(&report, family).is_empty());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn assembly_access_generated_output_limits_are_atomic_and_near_limit() {
+    let near_root = many_component_access_project(15);
+    let near = review(
+        &near_root,
+        authority_options(Some(inference_declarations(vec![process_envelope(
+            "1.00", "0.10", "0.10",
+        )]))),
+    )
+    .unwrap();
+    assert_eq!(
+        coverage_for(&near, "assembly.access.v1").status,
+        CoverageStatus::Attention,
+        "{}",
+        coverage_for(&near, "assembly.access.v1").evidence
+    );
+    assert_eq!(findings_for(&near, "assembly.access.v1").len(), 105);
+    assert!(
+        coverage_for(&near, "assembly.access.v1")
+            .evidence
+            .contains("observations=120")
+    );
+
+    let over_root = many_component_access_project(16);
+    let over = review(
+        &over_root,
+        authority_options(Some(inference_declarations(vec![process_envelope(
+            "1.00", "0.10", "0.10",
+        )]))),
+    )
+    .unwrap();
+    assert_eq!(
+        coverage_for(&over, "assembly.access.v1").status,
+        CoverageStatus::NotRun
+    );
+    assert!(
+        coverage_for(&over, "assembly.access.v1")
+            .evidence
+            .contains("inference observation limit 128 exceeded")
+    );
+    assert!(findings_for(&over, "assembly.access.v1").is_empty());
+    fs::remove_dir_all(near_root).unwrap();
+    fs::remove_dir_all(over_root).unwrap();
 }
 
 #[test]
@@ -3383,10 +3648,204 @@ fn findings_for<'a>(report: &'a Report, family: &str) -> Vec<&'a Finding> {
         .collect()
 }
 
+struct InferenceMeasurements {
+    labels: BTreeMap<String, BTreeMap<String, String>>,
+    mutations: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+fn measured_inference_corpus(corpus: &GeometryCorpus) -> InferenceMeasurements {
+    fn label(report: &Report, family: &str, kind: Option<&str>) -> String {
+        let finding = findings_for(report, family).iter().any(|finding| {
+            kind.is_none_or(|kind| {
+                occurrence_check_id(report, &finding.id)
+                    .is_some_and(|check_id| check_id.contains(kind))
+            })
+        });
+        if finding { "finding" } else { "no_finding" }.into()
+    }
+
+    fn report(
+        second_x_mm: &str,
+        process: Option<Value>,
+        probe: Option<Value>,
+    ) -> (PathBuf, Report) {
+        let root = access_project(second_x_mm);
+        let baseline = review(&root, authority_options(None)).unwrap();
+        let target = canonical_net_id(&baseline, "TP_TEST");
+        let mut records = Vec::new();
+        if let Some(process) = process {
+            records.push(process);
+        }
+        if let Some(probe) = probe {
+            records.push(probe);
+            records.push(target_net_authority(vec![target]));
+        }
+        let report = review(
+            &root,
+            authority_options(Some(inference_declarations(records))),
+        )
+        .unwrap();
+        validate_report(&report).unwrap();
+        (root, report)
+    }
+
+    let mut labels = BTreeMap::new();
+    let mut access = BTreeMap::new();
+    for (case, second_x, component, profile, kind) in [
+        (
+            "component-envelope-obstruction",
+            "3",
+            "0.60",
+            "0.10",
+            Some("/component/"),
+        ),
+        (
+            "profile-envelope-obstruction",
+            "5",
+            "0.10",
+            "1.10",
+            Some("/profile/"),
+        ),
+        ("exact-component-envelope", "4", "0.50", "0.10", None),
+        ("safe-profile-envelope", "5", "0.10", "1.00", None),
+    ] {
+        let (root, measured) = report(
+            second_x,
+            Some(process_envelope("1.00", component, profile)),
+            None,
+        );
+        access.insert(case.into(), label(&measured, "assembly.access.v1", kind));
+        fs::remove_dir_all(root).unwrap();
+    }
+    labels.insert("assembly.access.v1".into(), access);
+
+    let mut testpoint = BTreeMap::new();
+    for (case, second_x, component, profile) in [
+        ("component-obstructed-target", "3", "0.30", "0.10"),
+        ("profile-obstructed-target", "5", "0.10", "1.40"),
+        ("explicit-accessible-target", "5", "0.10", "0.10"),
+        ("tp-like-names-do-not-add-targets", "5", "0.10", "0.10"),
+    ] {
+        let (root, measured) = report(
+            second_x,
+            None,
+            Some(probe_envelope("0.40", component, profile)),
+        );
+        testpoint.insert(
+            case.into(),
+            label(&measured, "assembly.testpoint-access.v1", None),
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+    labels.insert("assembly.testpoint-access.v1".into(), testpoint);
+
+    let mut mutations = BTreeMap::new();
+    for family in corpus.families.iter().filter(|family| {
+        INFERENCE_FAMILIES.contains(&family_key(&family.family_id, &family.family_version).as_str())
+    }) {
+        let key = family_key(&family.family_id, &family.family_version);
+        let root = access_project("5");
+        let baseline = review(&root, authority_options(None)).unwrap();
+        let target = canonical_net_id(&baseline, "TP_TEST");
+        let mut statuses = BTreeMap::new();
+        for mutation in &family.mutations {
+            if mutation.kind == "reordered_facts" {
+                let mut records = vec![
+                    process_envelope("1.00", "0.10", "0.10"),
+                    probe_envelope("0.40", "0.10", "0.10"),
+                    target_net_authority(vec![target.clone()]),
+                ];
+                let first = review(
+                    &root,
+                    authority_options(Some(inference_declarations(records.clone()))),
+                )
+                .unwrap();
+                records.reverse();
+                let reordered = review(
+                    &root,
+                    authority_options(Some(inference_declarations(records))),
+                )
+                .unwrap();
+                let snapshot = |report: &Report| {
+                    let coverage = coverage_for(report, &key);
+                    let findings = findings_for(report, &key)
+                        .into_iter()
+                        .map(|finding| {
+                            (
+                                occurrence_check_id(report, &finding.id).unwrap().to_owned(),
+                                finding.severity,
+                                finding.title.clone(),
+                                finding.location.clone(),
+                                finding.gate_impact.clone(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    (coverage.status.clone(), findings)
+                };
+                statuses.insert(
+                    mutation.id.clone(),
+                    if snapshot(&first) == snapshot(&reordered) {
+                        "not_checked"
+                    } else {
+                        "changed"
+                    }
+                    .into(),
+                );
+            } else {
+                let measured = review(&root, authority_options(None)).unwrap();
+                let status = if coverage_for(&measured, &key).status == CoverageStatus::NotRun
+                    && findings_for(&measured, &key).is_empty()
+                {
+                    "not_checked"
+                } else {
+                    "partial_pass"
+                };
+                statuses.insert(mutation.id.clone(), status.into());
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+        mutations.insert(key, statuses);
+    }
+    InferenceMeasurements { labels, mutations }
+}
+
+#[test]
+fn assembly_corpus_metrics_use_production_measurements() {
+    let mut corpus: GeometryCorpus = serde_json::from_str(ASSEMBLY_TARGETS_JSON).unwrap();
+    for family in &mut corpus.families {
+        let key = family_key(&family.family_id, &family.family_version);
+        if INFERENCE_FAMILIES.contains(&key.as_str()) {
+            for target in &mut family.targets {
+                target.actual_label = Some("forged".into());
+            }
+        }
+    }
+    let mut measured = measured_inference_corpus(&corpus);
+    let metrics = validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).unwrap();
+    assert_eq!(metrics["assembly.access.v1"].tp, 2);
+
+    measured
+        .labels
+        .get_mut("assembly.access.v1")
+        .unwrap()
+        .insert("component-envelope-obstruction".into(), "no_finding".into());
+    let regressed =
+        validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).unwrap();
+    assert_eq!(regressed["assembly.access.v1"].fn_count, 1);
+
+    measured
+        .mutations
+        .get_mut("assembly.access.v1")
+        .unwrap()
+        .insert("assembly-access-reordered-facts".into(), "changed".into());
+    assert!(validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).is_err());
+}
+
 #[test]
 fn native_assembly_corpus_and_mutations_are_qualified_but_evidence_only() {
     let corpus: GeometryCorpus = serde_json::from_str(ASSEMBLY_TARGETS_JSON).unwrap();
-    let metrics = validate_assembly_corpus(&corpus).unwrap();
+    let measured = measured_inference_corpus(&corpus);
+    let metrics = validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).unwrap();
     assert_eq!(metrics.len(), 6);
     for (family, expected) in [
         ("assembly.side-rotation.v1", (2, 2)),

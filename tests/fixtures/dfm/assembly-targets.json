@@ -710,29 +710,25 @@
           "caseId": "component-envelope-obstruction",
           "caseClass": "positive",
           "canonicalTargetIds": ["component-clearance", "r1", "r2"],
-          "expectedLabel": "violation",
-          "actualLabel": "finding"
+          "expectedLabel": "violation"
         },
         {
           "caseId": "profile-envelope-obstruction",
           "caseClass": "positive",
           "canonicalTargetIds": ["profile-clearance", "r1"],
-          "expectedLabel": "violation",
-          "actualLabel": "finding"
+          "expectedLabel": "violation"
         },
         {
           "caseId": "exact-component-envelope",
           "caseClass": "hard_negative",
           "canonicalTargetIds": ["component-clearance-exact", "r1", "r2"],
-          "expectedLabel": "clean",
-          "actualLabel": "no_finding"
+          "expectedLabel": "clean"
         },
         {
           "caseId": "safe-profile-envelope",
           "caseClass": "hard_negative",
           "canonicalTargetIds": ["profile-clearance-safe", "r1"],
-          "expectedLabel": "clean",
-          "actualLabel": "no_finding"
+          "expectedLabel": "clean"
         }
       ],
       "unsupportedTargets": [
@@ -784,29 +780,25 @@
           "caseId": "component-obstructed-target",
           "caseClass": "positive",
           "canonicalTargetIds": ["component-obstruction", "net-v1-target", "pad-r1-1"],
-          "expectedLabel": "violation",
-          "actualLabel": "finding"
+          "expectedLabel": "violation"
         },
         {
           "caseId": "profile-obstructed-target",
           "caseClass": "positive",
           "canonicalTargetIds": ["edge-obstruction", "net-v1-target", "pad-r1-1"],
-          "expectedLabel": "violation",
-          "actualLabel": "finding"
+          "expectedLabel": "violation"
         },
         {
           "caseId": "explicit-accessible-target",
           "caseClass": "hard_negative",
           "canonicalTargetIds": ["explicit-target", "net-v1-target", "pad-r1-1"],
-          "expectedLabel": "clean",
-          "actualLabel": "no_finding"
+          "expectedLabel": "clean"
         },
         {
           "caseId": "tp-like-names-do-not-add-targets",
           "caseClass": "hard_negative",
           "canonicalTargetIds": ["net-v1-target", "tp-like-names-ignored"],
-          "expectedLabel": "clean",
-          "actualLabel": "no_finding"
+          "expectedLabel": "clean"
         }
       ],
       "unsupportedTargets": [
