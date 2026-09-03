@@ -108,6 +108,10 @@ const MAX_INFERENCE_TARGETS: usize = 16;
 const MAX_INFERENCE_FIELDS: usize = 8;
 const MAX_INFERENCE_COMPONENTS: usize = 512;
 const MAX_INFERENCE_DISTANCE_PM: i64 = 1_000_000_000_000;
+const MAX_INFERENCE_OBSERVATIONS: usize = 128;
+const MAX_INFERENCE_FINDINGS: usize = 128;
+const MAX_INFERENCE_OUTPUT_BYTES: usize = 512 * 1024;
+const MAX_INFERENCE_COVERAGE_BYTES: usize = 128 * 1024;
 const OUTLINE_TOPOLOGY_FAMILY: &str = "dfm.outline-topology.v1";
 const MINIMUM_FINISHED_DRILL_FAMILY: &str = "dfm.minimum-finished-drill.v1";
 const DRILL_TOOL_INTEGRITY_FAMILY: &str = "dfm.drill-tool-integrity.v1";
@@ -7421,6 +7425,7 @@ struct ComponentPrimitive<'a> {
     component: &'a str,
     pin: Option<&'a str>,
     net: Option<&'a str>,
+    side: LayerSide,
     semantic_provenance: &'a ManufacturingProvenance,
 }
 
@@ -7428,6 +7433,40 @@ struct CompleteAssemblyGeometry<'a> {
     components: BTreeMap<&'a str, Vec<ComponentPrimitive<'a>>>,
     placements: BTreeMap<&'a str, &'a crate::fabrication::AssemblyPlacement>,
     profile: Vec<LocatedPrimitive<'a>>,
+}
+
+fn profile_area_contains(
+    review: &FabricationReview,
+    point: CanonicalPoint,
+) -> Result<bool, String> {
+    let profile = review
+        .profile
+        .as_ref()
+        .ok_or("canonical profile is missing")?;
+    if profile.contour_feature_ids.len() != 1 {
+        return Err("exterior profile identity is ambiguous".into());
+    }
+    let contour = |id: &str| -> Result<&CanonicalContour, String> {
+        let mut features = review.features.iter().filter(|feature| feature.id == id);
+        let feature = features
+            .next()
+            .filter(|_| features.next().is_none())
+            .ok_or_else(|| format!("profile feature {id} is missing or ambiguous"))?;
+        match &feature.geometry {
+            Geometry::Contour(contour) => Ok(contour),
+            Geometry::Region(region) if region.contours.len() == 1 => Ok(&region.contours[0]),
+            _ => Err(format!("profile feature {id} is not one exact contour")),
+        }
+    };
+    if !line_contour_contains(contour(&profile.contour_feature_ids[0])?, point)? {
+        return Ok(false);
+    }
+    for id in &profile.cutout_feature_ids {
+        if line_contour_contains(contour(id)?, point)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn complete_assembly_geometry<'a>(
@@ -7550,6 +7589,7 @@ fn complete_assembly_geometry<'a>(
                 component,
                 pin,
                 net,
+                side: layer.side,
                 semantic_provenance: &semantic.provenance,
             });
     }
@@ -7588,9 +7628,10 @@ fn complete_assembly_geometry<'a>(
             || placement.position.x > extents.max.x
             || placement.position.y < extents.min.y
             || placement.position.y > extents.max.y
+            || !profile_area_contains(review, placement.position)?
         {
             return Err(format!(
-                "component {reference} placement convention, side, fitted state, or profile location is incomplete"
+                "component {reference} placement convention, side, fitted state, or profile area is incomplete"
             ));
         }
         source_link(review, &placement.provenance)?;
@@ -7646,6 +7687,55 @@ fn bounded_inference_product(left: usize, right: usize, label: &str) -> Result<(
         return Err(format!("{label} comparison count is unbounded"));
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct InferenceOutput {
+    findings: Vec<Finding>,
+    observations: Vec<String>,
+    bytes: usize,
+}
+
+impl InferenceOutput {
+    fn add_bytes(&mut self, bytes: usize) -> Result<(), String> {
+        let total = self
+            .bytes
+            .checked_add(bytes)
+            .ok_or("inference output byte count overflow")?;
+        if total > MAX_INFERENCE_OUTPUT_BYTES {
+            return Err(format!(
+                "inference output byte limit {MAX_INFERENCE_OUTPUT_BYTES} exceeded"
+            ));
+        }
+        self.bytes = total;
+        Ok(())
+    }
+
+    fn push_observation(&mut self, observation: String) -> Result<(), String> {
+        if self.observations.len() >= MAX_INFERENCE_OBSERVATIONS {
+            return Err(format!(
+                "inference observation limit {MAX_INFERENCE_OBSERVATIONS} exceeded"
+            ));
+        }
+        self.add_bytes(observation.len())?;
+        self.observations.push(observation);
+        Ok(())
+    }
+
+    fn push_finding(&mut self, finding: Finding) -> Result<(), String> {
+        if self.findings.len() >= MAX_INFERENCE_FINDINGS {
+            return Err(format!(
+                "inference finding limit {MAX_INFERENCE_FINDINGS} exceeded"
+            ));
+        }
+        self.add_bytes(
+            serde_json::to_vec(&finding)
+                .map_err(|error| error.to_string())?
+                .len(),
+        )?;
+        self.findings.push(finding);
+        Ok(())
+    }
 }
 
 fn inference_comparison(
@@ -7723,14 +7813,18 @@ fn assembly_access(
             "component/profile access",
         )?;
 
-        let mut findings = Vec::new();
-        let mut observations = Vec::new();
+        let mut output = InferenceOutput::default();
         let components = geometry.components.keys().copied().collect::<Vec<_>>();
         for (left_index, left_component) in components.iter().enumerate() {
             for right_component in components.iter().skip(left_index + 1) {
                 deadline
                     .check("assembly-access-components")
                     .map_err(|error| error.to_string())?;
+                if geometry.placements[left_component].side
+                    != geometry.placements[right_component].side
+                {
+                    continue;
+                }
                 let left = geometry.components[left_component]
                     .iter()
                     .map(|primitive| primitive.located)
@@ -7761,9 +7855,9 @@ fn assembly_access(
                     nearest.right.provenance.document_id,
                     nearest.right.provenance.location.record,
                 );
-                observations.push(detail.clone());
+                output.push_observation(detail.clone())?;
                 if margin < 0 {
-                    findings.push(Finding {
+                    output.push_finding(Finding {
                         id: format!(
                             "{ASSEMBLY_ACCESS_FAMILY}/component/{}/{}",
                             left_placement.id, right_placement.id
@@ -7782,7 +7876,7 @@ fn assembly_access(
                         ),
                         source: "bounded-assembly-inference".into(),
                         gate_impact: family_gate_impact(ASSEMBLY_ACCESS_FAMILY),
-                    });
+                    })?;
                 }
             }
         }
@@ -7815,9 +7909,9 @@ fn assembly_access(
                 nearest.right.provenance.document_id,
                 nearest.right.provenance.location.record,
             );
-            observations.push(detail.clone());
+            output.push_observation(detail.clone())?;
             if margin < 0 {
-                findings.push(Finding {
+                output.push_finding(Finding {
                     id: format!("{ASSEMBLY_ACCESS_FAMILY}/profile/{}", placement.id),
                     severity: Severity::Medium,
                     category: "Assembly inference".into(),
@@ -7833,14 +7927,29 @@ fn assembly_access(
                     ),
                     source: "bounded-assembly-inference".into(),
                     gate_impact: family_gate_impact(ASSEMBLY_ACCESS_FAMILY),
-                });
+                })?;
             }
         }
-        findings.sort_by(|left, right| left.id.cmp(&right.id));
-        observations.sort();
-        let has_findings = !findings.is_empty();
+        output
+            .findings
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        output.observations.sort();
+        let has_findings = !output.findings.is_empty();
+        let evidence = format!(
+            "inference=true model={}@{} process={process}@{process_version} tool={tool}@{tool_version} tool_diameter={}pm assumptions=complete_placement+profile_area+component_copper_union_2d observations={} {assumptions}; {}",
+            authority.record.model,
+            authority.record.model_version,
+            tool_diameter.0,
+            output.observations.len(),
+            output.observations.join(" | "),
+        );
+        if evidence.len() > MAX_INFERENCE_COVERAGE_BYTES {
+            return Err(format!(
+                "inference coverage evidence byte limit {MAX_INFERENCE_COVERAGE_BYTES} exceeded"
+            ));
+        }
         Ok((
-            findings,
+            output.findings,
             Coverage {
                 id: ASSEMBLY_ACCESS_FAMILY.into(),
                 label: LABEL.into(),
@@ -7849,14 +7958,7 @@ fn assembly_access(
                 } else {
                     CoverageStatus::Passed
                 },
-                evidence: format!(
-                    "inference=true model={}@{} process={process}@{process_version} tool={tool}@{tool_version} tool_diameter={}pm assumptions=complete_placement+profile+component_copper_union_2d observations={} {assumptions}; {}",
-                    authority.record.model,
-                    authority.record.model_version,
-                    tool_diameter.0,
-                    observations.len(),
-                    observations.join(" | "),
-                ),
+                evidence,
             },
         ))
     })();
@@ -7987,8 +8089,7 @@ fn testpoint_access(
             return Err("explicit canonical target-net authority is empty".into());
         }
 
-        let mut findings = Vec::new();
-        let mut observations = Vec::new();
+        let mut output = InferenceOutput::default();
         for target_id in &targets.record.target_ids {
             deadline
                 .check("assembly-testpoint-targets")
@@ -8012,7 +8113,9 @@ fn testpoint_access(
                     inference_comparison(profile_pair, profile_required)?;
                 let blockers = all_primitives
                     .iter()
-                    .filter(|other| other.component != candidate.component)
+                    .filter(|other| {
+                        other.component != candidate.component && other.side == candidate.side
+                    })
                     .map(|other| other.located)
                     .collect::<Vec<_>>();
                 let (component_observed, component_resolution, component_margin, blocker) =
@@ -8076,9 +8179,9 @@ fn testpoint_access(
             }
             let (margin, feature_id, detail) =
                 best.ok_or("declared target net has no fitted probe candidate")?;
-            observations.push(detail.clone());
+            output.push_observation(detail.clone())?;
             if margin < 0 {
-                findings.push(Finding {
+                output.push_finding(Finding {
                     id: format!("{TESTPOINT_ACCESS_FAMILY}/{target_id}/{feature_id}"),
                     severity: Severity::Medium,
                     category: "Assembly inference".into(),
@@ -8094,14 +8197,30 @@ fn testpoint_access(
                     location: format!("target_net_id={target_id};feature={feature_id}"),
                     source: "bounded-assembly-inference".into(),
                     gate_impact: family_gate_impact(TESTPOINT_ACCESS_FAMILY),
-                });
+                })?;
             }
         }
-        findings.sort_by(|left, right| left.id.cmp(&right.id));
-        observations.sort();
-        let has_findings = !findings.is_empty();
+        output
+            .findings
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        output.observations.sort();
+        let has_findings = !output.findings.is_empty();
+        let evidence = format!(
+            "inference=true model={}@{} probe={probe_name}@{probe_version} process={process}@{process_version} probe_diameter={}pm explicit_target_net_ids={} assumptions=complete_connectivity+component+pin+placement+profile_area+component_copper_union_2d observations={} {probe_assumptions}; {target_assumptions}; {}",
+            probe.record.model,
+            probe.record.model_version,
+            probe_diameter.0,
+            targets.record.target_ids.join(","),
+            output.observations.len(),
+            output.observations.join(" | "),
+        );
+        if evidence.len() > MAX_INFERENCE_COVERAGE_BYTES {
+            return Err(format!(
+                "inference coverage evidence byte limit {MAX_INFERENCE_COVERAGE_BYTES} exceeded"
+            ));
+        }
         Ok((
-            findings,
+            output.findings,
             Coverage {
                 id: TESTPOINT_ACCESS_FAMILY.into(),
                 label: LABEL.into(),
@@ -8110,15 +8229,7 @@ fn testpoint_access(
                 } else {
                     CoverageStatus::Passed
                 },
-                evidence: format!(
-                    "inference=true model={}@{} probe={probe_name}@{probe_version} process={process}@{process_version} probe_diameter={}pm explicit_target_net_ids={} assumptions=complete_connectivity+component+pin+placement+profile+component_copper_union_2d observations={} {probe_assumptions}; {target_assumptions}; {}",
-                    probe.record.model,
-                    probe.record.model_version,
-                    probe_diameter.0,
-                    targets.record.target_ids.join(","),
-                    observations.len(),
-                    observations.join(" | "),
-                ),
+                evidence,
             },
         ))
     })();
@@ -9423,6 +9534,19 @@ pub(crate) fn validate_population_parity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inference_output_byte_limit_accepts_boundary_and_rejects_growth_atomically() {
+        let mut output = InferenceOutput::default();
+        output
+            .push_observation("x".repeat(MAX_INFERENCE_OUTPUT_BYTES))
+            .unwrap();
+        assert_eq!(output.bytes, MAX_INFERENCE_OUTPUT_BYTES);
+        assert_eq!(output.observations.len(), 1);
+        assert!(output.push_observation("x".into()).is_err());
+        assert_eq!(output.bytes, MAX_INFERENCE_OUTPUT_BYTES);
+        assert_eq!(output.observations.len(), 1);
+    }
 
     fn eligible_policy(inference: bool) -> FamilyPolicy {
         let key = if inference {
