@@ -3970,6 +3970,22 @@ fn inference_mutation_qualification_rejects_reordered_unique_rows() {
 }
 
 #[test]
+fn inference_mutation_qualification_rejects_coordinated_case_id_rename() {
+    let mut corpus: GeometryCorpus = serde_json::from_str(ASSEMBLY_TARGETS_JSON).unwrap();
+    let mut measured = measured_inference_corpus(&corpus, None);
+    let family = corpus
+        .families
+        .iter_mut()
+        .find(|family| family.family_id == "assembly.access")
+        .unwrap();
+    family.mutations[0].id = "renamed-but-unique".into();
+    measured.mutations.get_mut("assembly.access.v1").unwrap()[0].case_id =
+        "renamed-but-unique".into();
+
+    assert!(validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).is_err());
+}
+
+#[test]
 fn inference_mutation_measurements_are_sensitive_to_non_reordering_transformations() {
     let corpus: GeometryCorpus = serde_json::from_str(ASSEMBLY_TARGETS_JSON).unwrap();
     let mut measured = measured_inference_corpus(&corpus, None);
