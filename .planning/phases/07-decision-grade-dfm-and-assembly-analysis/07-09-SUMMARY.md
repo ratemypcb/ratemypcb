@@ -73,8 +73,8 @@ The DFM-03 matrix covers population, side/rotation, paste availability, native c
 
 - Exact Plan 07-09 CLI declaration filter passed at `5d26a8a47003bb83f7faf139e0358b990833b582`.
 - Exact declaration, access, testpoint, corpus, metrics, mutation, profile, limit, DFM-03 matrix, and forged-impact filters passed.
-- Full DFM release passed 48/48.
-- Full workspace passed 307 Rust tests with `CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_OPT_LEVEL=1`.
+- Full DFM release passed 49/49.
+- Full workspace passed 308 Rust tests with `CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_OPT_LEVEL=1`.
 - Node report/viewer tests passed 31/31.
 - `cargo fmt --all -- --check` passed.
 - `CARGO_BUILD_JOBS=1 cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
@@ -87,7 +87,7 @@ The plan references `~/.codex/gsd-core/workflows/execute-plan.md` and `templates
 
 - The access model is an explicit 2D component-copper union envelope. It is not body-height, collision, field, ampacity, impedance, or thermal simulation. Unsupported geometry stays `not_checked`.
 - The later electrical, differential, thermal, and interface families only received bounded declaration records. Plan 07-10 and Plan 07-11 analysis was not started.
-- ODB++ and IPC-2581 remain no-go. No private parser, private corpus, intelligent-format support claim, install, dependency, viewer, ODB, stage, commit, or push action occurred.
+- ODB++ and IPC-2581 remain no-go. No private parser, private corpus, intelligent-format support claim, install, dependency, viewer, publication, or redistribution action occurred.
 - `07-PROMOTION-CHECKPOINT.md` still approves no inference family.
 - Independent review is pending, so this implementation is not review-accepted or merge-ready.
 
