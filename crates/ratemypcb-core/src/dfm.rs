@@ -15,7 +15,7 @@ use crate::fabrication::{
 };
 use crate::{
     Coverage, CoverageStatus, Error, EvidenceExecution, EvidenceFreshness, EvidenceRecord,
-    EvidenceResult, Finding, GateImpact, RequiredEvidence, SchematicComparisonSource,
+    EvidenceResult, Finding, GateImpact, NativeDrc, RequiredEvidence, SchematicComparisonSource,
     SchematicFact, SchematicMismatch, SchematicOccurrence, SchematicReview, Severity,
 };
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,9 @@ const COURTYARD_NATIVE_FAMILY: &str = "assembly.courtyard-native.v1";
 const FOOTPRINT_STRING_FAMILY: &str = "assembly.footprint-string-parity.v1";
 const ASSEMBLY_ACCESS_FAMILY: &str = "assembly.access.v1";
 const TESTPOINT_ACCESS_FAMILY: &str = "assembly.testpoint-access.v1";
+const RETURN_PATH_FAMILY: &str = "inference.return-path.v1";
+const HIGH_CURRENT_FAMILY: &str = "inference.high-current.v1";
+const CREEPAGE_FAMILY: &str = "inference.creepage.v1";
 const SIDE_ROTATION_REQUIREMENTS: AnalyzerRequirements = AnalyzerRequirements {
     check_family: SIDE_ROTATION_FAMILY,
     prerequisites: &[CapabilityId::Assembly, CapabilityId::NativeKicadFacts],
@@ -93,6 +96,47 @@ const TESTPOINT_ACCESS_REQUIREMENTS: AnalyzerRequirements = AnalyzerRequirements
         CapabilityId::LayerRoles,
         CapabilityId::Apertures,
         CapabilityId::GeometryFlashes,
+        CapabilityId::GeometryRegions,
+        CapabilityId::GeometryExpanded,
+        CapabilityId::Transforms,
+        CapabilityId::Polarity,
+    ],
+};
+const RETURN_PATH_REQUIREMENTS: AnalyzerRequirements = AnalyzerRequirements {
+    check_family: RETURN_PATH_FAMILY,
+    prerequisites: &[
+        CapabilityId::Connectivity,
+        CapabilityId::LayerRoles,
+        CapabilityId::LayerOrder,
+        CapabilityId::Apertures,
+        CapabilityId::GeometryLines,
+        CapabilityId::GeometryExpanded,
+        CapabilityId::Transforms,
+        CapabilityId::Polarity,
+    ],
+};
+const HIGH_CURRENT_REQUIREMENTS: AnalyzerRequirements = AnalyzerRequirements {
+    check_family: HIGH_CURRENT_FAMILY,
+    prerequisites: &[
+        CapabilityId::Connectivity,
+        CapabilityId::LayerRoles,
+        CapabilityId::Apertures,
+        CapabilityId::GeometryLines,
+        CapabilityId::GeometryFlashes,
+        CapabilityId::GeometryExpanded,
+        CapabilityId::Transforms,
+        CapabilityId::Polarity,
+    ],
+};
+const CREEPAGE_REQUIREMENTS: AnalyzerRequirements = AnalyzerRequirements {
+    check_family: CREEPAGE_FAMILY,
+    prerequisites: &[
+        CapabilityId::Connectivity,
+        CapabilityId::Profile,
+        CapabilityId::LayerRoles,
+        CapabilityId::Apertures,
+        CapabilityId::GeometryLines,
+        CapabilityId::GeometryArcs,
         CapabilityId::GeometryRegions,
         CapabilityId::GeometryExpanded,
         CapabilityId::Transforms,
@@ -4337,13 +4381,17 @@ struct InferenceAuthority<'a> {
 }
 
 impl InferenceAuthority<'_> {
-    fn distance(&self, id: &str) -> Result<Picometres, String> {
+    fn value(&self, id: &str) -> Result<i128, String> {
         let mut limits = self.record.limits.iter().filter(|limit| limit.id == id);
         let limit = limits
             .next()
             .filter(|_| limits.next().is_none())
             .ok_or_else(|| format!("inference limit {id} is missing or duplicated"))?;
-        let value = inference_limit_value(limit).map_err(|error| error.to_string())?;
+        inference_limit_value(limit).map_err(|error| error.to_string())
+    }
+
+    fn distance(&self, id: &str) -> Result<Picometres, String> {
+        let value = self.value(id)?;
         i64::try_from(value)
             .map(Picometres)
             .map_err(|_| format!("inference limit {id} exceeds exact distance range"))
@@ -7977,6 +8025,642 @@ fn canonical_net_id(mut feature_ids: Vec<&str>) -> Result<String, String> {
     Ok(format!("net-v1-{}", crate::sha256(&bytes)))
 }
 
+fn return_path(
+    review: &FabricationReview,
+    deadline: ManufacturingDeadline,
+) -> (Vec<Finding>, Coverage) {
+    const LABEL: &str = "Declared-envelope return-path inference";
+    let result = (|| -> Result<(Vec<Finding>, Coverage), String> {
+        dispatch_complete(review, RETURN_PATH_REQUIREMENTS)?;
+        if affected_capability_evidence(review, RETURN_PATH_REQUIREMENTS.prerequisites) {
+            return Err("affected connectivity, layer-order, or copper geometry evidence".into());
+        }
+        let signal = source_bound_inference_record(review, "signal_intent")?;
+        let reference = source_bound_inference_record(review, "reference_plane_intent")?;
+        if signal.record.target_ids.len() != 1 {
+            return Err("signal intent must identify one canonical net".into());
+        }
+        let target_net = &signal.record.target_ids[0];
+        let mut reference_nets = reference
+            .record
+            .target_ids
+            .iter()
+            .filter(|target| canonical_target_kind(target) == Some("net"));
+        let reference_net = reference_nets
+            .next()
+            .filter(|_| reference_nets.next().is_none())
+            .ok_or("reference-plane intent must identify one canonical net")?;
+        if reference_net != target_net {
+            return Err("signal and reference-plane intent target different nets".into());
+        }
+        let mut reference_layers = reference
+            .record
+            .target_ids
+            .iter()
+            .filter(|target| canonical_target_kind(target) == Some("layer"));
+        let reference_layer_id = reference_layers
+            .next()
+            .filter(|_| reference_layers.next().is_none())
+            .ok_or("reference-plane intent must identify one canonical layer")?;
+        let mut reference_layers = review
+            .layers
+            .iter()
+            .filter(|layer| layer.id == *reference_layer_id);
+        let reference_layer = reference_layers
+            .next()
+            .filter(|_| reference_layers.next().is_none())
+            .filter(|layer| {
+                layer.role == LayerRole::Copper
+                    && !matches!(
+                        layer.authority,
+                        Authority::FilenameInference | Authority::Unknown
+                    )
+            })
+            .ok_or("reference-plane layer identity, role, or authority is incomplete")?;
+
+        let feature_ids = review
+            .features
+            .iter()
+            .map(|feature| feature.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut canonical_features = BTreeMap::<&str, Vec<&str>>::new();
+        let mut connected_features = BTreeSet::new();
+        for semantic in &review.connectivity {
+            deadline
+                .check("return-path-connectivity")
+                .map_err(|error| error.to_string())?;
+            let net = semantic
+                .net
+                .as_deref()
+                .filter(|net| !net.is_empty() && net.trim() == *net)
+                .ok_or("complete connectivity contains an unnamed net")?;
+            if !feature_ids.contains(semantic.feature_id.as_str())
+                || !connected_features.insert(semantic.feature_id.as_str())
+            {
+                return Err(
+                    "canonical connectivity feature identity is dangling or duplicated".into(),
+                );
+            }
+            source_link(review, &semantic.provenance)?;
+            canonical_features
+                .entry(net)
+                .or_default()
+                .push(semantic.feature_id.as_str());
+        }
+        let mut target_features = None;
+        for features in canonical_features.into_values() {
+            if canonical_net_id(features.clone())? == *target_net
+                && target_features.replace(features).is_some()
+            {
+                return Err("canonical signal-net identity is duplicated".into());
+            }
+        }
+        let target_features = target_features.ok_or("canonical signal-net ID is dangling")?;
+        let target_features = target_features.into_iter().collect::<BTreeSet<_>>();
+        let copper = copper_primitives(review, deadline)?;
+        let signal_geometry = copper
+            .iter()
+            .copied()
+            .filter(|primitive| {
+                primitive.layer_id != reference_layer.id
+                    && target_features.contains(primitive.owner_id)
+            })
+            .collect::<Vec<_>>();
+        let reference_geometry = copper
+            .iter()
+            .copied()
+            .filter(|primitive| primitive.layer_id == reference_layer.id)
+            .collect::<Vec<_>>();
+        bounded_inference_product(
+            signal_geometry.len(),
+            reference_geometry.len(),
+            "return-path geometry",
+        )?;
+        let nearest = nearest_axis_pair(
+            signal_geometry,
+            reference_geometry,
+            deadline,
+            "return-path-geometry",
+        )?;
+        let maximum = reference.distance("maximum_discontinuity")?;
+        let (resolution, margin) = inference_comparison(nearest, maximum)?;
+        let signal_class = signal.parameter("signal_class")?;
+        let reference_plane_role = reference.parameter("reference_plane_role")?;
+        let signal_assumptions = inference_assumptions(review, &signal)?;
+        let reference_assumptions = inference_assumptions(review, &reference)?;
+        let detail = format!(
+            "target_net_id={target_net} reference_layer_id={reference_layer_id} signal_class={signal_class} reference_plane_role={reference_plane_role} observed={}pm maximum_discontinuity={}pm margin={}pm resolution={}pm geometry_source={}:{} reference_geometry_source={}:{}",
+            nearest.observed.0,
+            maximum.0,
+            margin,
+            resolution.0,
+            nearest.left.provenance.document_id,
+            nearest.left.provenance.location.record,
+            nearest.right.provenance.document_id,
+            nearest.right.provenance.location.record,
+        );
+        let mut findings = Vec::new();
+        if margin > 0 {
+            findings.push(Finding {
+                id: format!(
+                    "{RETURN_PATH_FAMILY}/{target_net}/{reference_layer_id}/{}-{}",
+                    nearest.left.owner_id, nearest.right.owner_id
+                ),
+                severity: Severity::Medium,
+                category: "Electrical inference".into(),
+                title: "Declared return-path discontinuity envelope is exceeded".into(),
+                evidence: format!(
+                    "inference=true {signal_assumptions}; {reference_assumptions}; {detail} declaration_source={}",
+                    reference.document.virtual_path,
+                ),
+                recommendation: "Review the exact signal and reference-plane geometry against the declared return-path envelope; do not infer electrical intent from names.".into(),
+                location: format!(
+                    "net={target_net};layer={reference_layer_id};signal={};reference={}",
+                    nearest.left.owner_id, nearest.right.owner_id
+                ),
+                source: "bounded-electrical-inference".into(),
+                gate_impact: family_gate_impact(RETURN_PATH_FAMILY),
+            });
+        }
+        let evidence = format!(
+            "inference=true model={}@{} assumptions=explicit_signal_intent+explicit_reference_plane_intent+complete_connectivity+layer_order+exact_copper_geometry observations=1 {signal_assumptions}; {reference_assumptions}; {detail}",
+            reference.record.model, reference.record.model_version,
+        );
+        if evidence.len() > MAX_INFERENCE_COVERAGE_BYTES {
+            return Err(format!(
+                "inference coverage evidence byte limit {MAX_INFERENCE_COVERAGE_BYTES} exceeded"
+            ));
+        }
+        Ok((
+            findings,
+            Coverage {
+                id: RETURN_PATH_FAMILY.into(),
+                label: LABEL.into(),
+                status: if margin > 0 {
+                    CoverageStatus::Attention
+                } else {
+                    CoverageStatus::Passed
+                },
+                evidence,
+            },
+        ))
+    })();
+    result.unwrap_or_else(|reason| (vec![], not_checked(RETURN_PATH_FAMILY, LABEL, reason)))
+}
+
+fn high_current(
+    review: &FabricationReview,
+    deadline: ManufacturingDeadline,
+) -> (Vec<Finding>, Coverage) {
+    const LABEL: &str = "Declared-envelope high-current inference";
+    let result = (|| -> Result<(Vec<Finding>, Coverage), String> {
+        dispatch_complete(review, HIGH_CURRENT_REQUIREMENTS)?;
+        if affected_capability_evidence(review, HIGH_CURRENT_REQUIREMENTS.prerequisites) {
+            return Err("affected connectivity or copper geometry evidence".into());
+        }
+        let current = source_bound_inference_record(review, "current_intent")?;
+        let process = source_bound_inference_record(review, "process_envelope")?;
+        if current.record.target_ids.is_empty()
+            || current.record.target_ids != process.record.target_ids
+        {
+            return Err(
+                "current and process declarations must identify the same canonical nets".into(),
+            );
+        }
+        let current_ma = current.value("current")?;
+        let rise_mc = current.value("allowed_temperature_rise")?;
+        let drop_mv = current.value("allowed_voltage_drop")?;
+        let copper_thickness = process.distance("copper_thickness")?;
+        let minimum_width = process.distance("minimum_copper_width")?;
+        let current_class = current.parameter("current_class")?;
+        let finish = process.parameter("finish")?;
+        let process_name = process.parameter("process")?;
+        let process_version = process.parameter("process_version")?;
+        let current_assumptions = inference_assumptions(review, &current)?;
+        let process_assumptions = inference_assumptions(review, &process)?;
+
+        let feature_ids = review
+            .features
+            .iter()
+            .map(|feature| feature.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut canonical_features = BTreeMap::<String, Vec<&str>>::new();
+        let mut connected_features = BTreeSet::new();
+        for semantic in &review.connectivity {
+            deadline
+                .check("high-current-connectivity")
+                .map_err(|error| error.to_string())?;
+            let net = semantic
+                .net
+                .as_deref()
+                .filter(|net| !net.is_empty() && net.trim() == *net)
+                .ok_or("complete connectivity contains an unnamed net")?;
+            if !feature_ids.contains(semantic.feature_id.as_str())
+                || !connected_features.insert(semantic.feature_id.as_str())
+            {
+                return Err(
+                    "canonical connectivity feature identity is dangling or duplicated".into(),
+                );
+            }
+            source_link(review, &semantic.provenance)?;
+            canonical_features
+                .entry(net.to_owned())
+                .or_default()
+                .push(semantic.feature_id.as_str());
+        }
+        let mut features_by_id = BTreeMap::new();
+        for features in canonical_features.into_values() {
+            let id = canonical_net_id(features.clone())?;
+            if features_by_id.insert(id, features).is_some() {
+                return Err("canonical connectivity net identity is duplicated".into());
+            }
+        }
+        let target_ids = current
+            .record
+            .target_ids
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if target_ids.len() != current.record.target_ids.len()
+            || target_ids
+                .iter()
+                .any(|target| !features_by_id.contains_key(target))
+        {
+            return Err("declared current target identity is duplicated or dangling".into());
+        }
+        let target_features = target_ids
+            .iter()
+            .flat_map(|target| features_by_id[target].iter().copied())
+            .collect::<BTreeSet<_>>();
+        let mut primitives = copper_primitives(review, deadline)?
+            .into_iter()
+            .filter(|primitive| target_features.contains(primitive.owner_id))
+            .collect::<Vec<_>>();
+        primitives.sort_by_key(|primitive| (primitive.layer_id, primitive.owner_id));
+        if primitives.is_empty() {
+            return Err("declared current nets have no exact represented copper geometry".into());
+        }
+
+        let mut output = InferenceOutput::default();
+        for primitive in primitives {
+            deadline
+                .check("high-current-geometry")
+                .map_err(|error| error.to_string())?;
+            let width = primitive
+                .primitive
+                .radius
+                .0
+                .checked_mul(2)
+                .ok_or("copper width overflow")?;
+            if width <= 0
+                || width % primitive.resolution.0 != 0
+                || minimum_width.0 % primitive.resolution.0 != 0
+            {
+                return Err("declared envelope or copper width is off the source grid".into());
+            }
+            let margin = width
+                .checked_sub(minimum_width.0)
+                .ok_or("high-current width margin overflow")?;
+            let detail = format!(
+                "target_feature={} target_layer={} observed_width={}pm minimum_copper_width={}pm margin={}pm resolution={}pm geometry_source={}:{}",
+                primitive.owner_id,
+                primitive.layer_id,
+                width,
+                minimum_width.0,
+                margin,
+                primitive.resolution.0,
+                primitive.provenance.document_id,
+                primitive.provenance.location.record,
+            );
+            output.push_observation(detail.clone())?;
+            if margin < 0 {
+                output.push_finding(Finding {
+                    id: format!("{HIGH_CURRENT_FAMILY}/{}/{}", primitive.layer_id, primitive.owner_id),
+                    severity: Severity::Medium,
+                    category: "Electrical inference".into(),
+                    title: "Exact copper width is below the declared high-current process envelope".into(),
+                    evidence: format!(
+                        "inference=true current={current_ma}ma allowed_temperature_rise={rise_mc}mc allowed_voltage_drop={drop_mv}mv current_class={current_class} copper_thickness={}pm minimum_copper_width={}pm finish={finish} process={process_name}@{process_version} ampacity_calculated=false {current_assumptions}; {process_assumptions}; {detail} declaration_source={}",
+                        copper_thickness.0,
+                        minimum_width.0,
+                        process.document.virtual_path,
+                    ),
+                    recommendation: "Review the exact copper width against the source-declared current and process envelope; Phase 7 does not calculate ampacity.".into(),
+                    location: format!("layer={};feature={}", primitive.layer_id, primitive.owner_id),
+                    source: "bounded-electrical-inference".into(),
+                    gate_impact: family_gate_impact(HIGH_CURRENT_FAMILY),
+                })?;
+            }
+        }
+        output
+            .findings
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        output.observations.sort();
+        let has_findings = !output.findings.is_empty();
+        let evidence = format!(
+            "inference=true model={}@{} current={current_ma}ma allowed_temperature_rise={rise_mc}mc allowed_voltage_drop={drop_mv}mv current_class={current_class} copper_thickness={}pm minimum_copper_width={}pm finish={finish} process={process_name}@{process_version} ampacity_calculated=false assumptions=explicit_current+explicit_process+complete_connectivity+exact_copper_geometry observations={} {current_assumptions}; {process_assumptions}; {}",
+            process.record.model,
+            process.record.model_version,
+            copper_thickness.0,
+            minimum_width.0,
+            output.observations.len(),
+            output.observations.join(" | "),
+        );
+        if evidence.len() > MAX_INFERENCE_COVERAGE_BYTES {
+            return Err(format!(
+                "inference coverage evidence byte limit {MAX_INFERENCE_COVERAGE_BYTES} exceeded"
+            ));
+        }
+        Ok((
+            output.findings,
+            Coverage {
+                id: HIGH_CURRENT_FAMILY.into(),
+                label: LABEL.into(),
+                status: if has_findings {
+                    CoverageStatus::Attention
+                } else {
+                    CoverageStatus::Passed
+                },
+                evidence,
+            },
+        ))
+    })();
+    result.unwrap_or_else(|reason| (vec![], not_checked(HIGH_CURRENT_FAMILY, LABEL, reason)))
+}
+
+fn creepage(
+    review: &FabricationReview,
+    deadline: ManufacturingDeadline,
+) -> (Vec<Finding>, Coverage) {
+    const LABEL: &str = "Declared-rule creepage inference";
+    let result = (|| -> Result<(Vec<Finding>, Coverage), String> {
+        dispatch_complete(review, CREEPAGE_REQUIREMENTS)?;
+        if affected_capability_evidence(review, CREEPAGE_REQUIREMENTS.prerequisites) {
+            return Err("affected connectivity, profile, or copper geometry evidence".into());
+        }
+        let domains = source_bound_inference_record(review, "voltage_domains")?;
+        let rule = source_bound_inference_record(review, "creepage_rule")?;
+        let material = source_bound_inference_record(review, "material_environment")?;
+        if domains.record.target_ids != rule.record.target_ids
+            || domains.record.target_ids != material.record.target_ids
+        {
+            return Err("creepage declarations must identify the same voltage-domain pair".into());
+        }
+        let maximum_voltage = domains.value("maximum_voltage")?;
+        let minimum = rule.distance("minimum_creepage")?;
+        let domain_pair = domains.parameter("domain_pair")?;
+        let rule_name = rule.parameter("rule")?;
+        let rule_version = rule.parameter("rule_version")?;
+        let coating = material.parameter("coating")?;
+        let environment = material.parameter("environment")?;
+        let material_name = material.parameter("material")?;
+        let domain_assumptions = inference_assumptions(review, &domains)?;
+        let rule_assumptions = inference_assumptions(review, &rule)?;
+        let material_assumptions = inference_assumptions(review, &material)?;
+
+        let profile = review
+            .profile
+            .as_ref()
+            .ok_or("canonical profile is missing")?;
+        if !profile.cutout_feature_ids.is_empty() {
+            return Err("creepage inference does not model a profile cutout path".into());
+        }
+        let profile_geometry = profile_boundary_primitives(review, deadline)?;
+        let profile_source = profile_geometry
+            .first()
+            .ok_or("canonical profile geometry is empty")?
+            .provenance;
+        source_link(review, profile_source)?;
+
+        let feature_ids = review
+            .features
+            .iter()
+            .map(|feature| feature.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut canonical_features = BTreeMap::<String, Vec<&str>>::new();
+        let mut connected_features = BTreeSet::new();
+        for semantic in &review.connectivity {
+            deadline
+                .check("creepage-connectivity")
+                .map_err(|error| error.to_string())?;
+            let net = semantic
+                .net
+                .as_deref()
+                .filter(|net| !net.is_empty() && net.trim() == *net)
+                .ok_or("complete connectivity contains an unnamed net")?;
+            if !feature_ids.contains(semantic.feature_id.as_str())
+                || !connected_features.insert(semantic.feature_id.as_str())
+            {
+                return Err(
+                    "canonical connectivity feature identity is dangling or duplicated".into(),
+                );
+            }
+            source_link(review, &semantic.provenance)?;
+            canonical_features
+                .entry(net.to_owned())
+                .or_default()
+                .push(semantic.feature_id.as_str());
+        }
+        let mut features_by_id = BTreeMap::new();
+        for features in canonical_features.into_values() {
+            let id = canonical_net_id(features.clone())?;
+            if features_by_id.insert(id, features).is_some() {
+                return Err("canonical connectivity net identity is duplicated".into());
+            }
+        }
+        if domains
+            .record
+            .target_ids
+            .iter()
+            .any(|target| !features_by_id.contains_key(target))
+        {
+            return Err("declared voltage-domain identity is dangling".into());
+        }
+        let left_features = features_by_id[&domains.record.target_ids[0]]
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let right_features = features_by_id[&domains.record.target_ids[1]]
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let layers = review
+            .layers
+            .iter()
+            .map(|layer| (layer.id.as_str(), layer))
+            .collect::<BTreeMap<_, _>>();
+        let copper = copper_primitives(review, deadline)?;
+        let by_side = |features: &BTreeSet<&str>| -> Result<BTreeMap<LayerSide, Vec<LocatedPrimitive<'_>>>, String> {
+            let mut result = BTreeMap::new();
+            for primitive in copper
+                .iter()
+                .copied()
+                .filter(|primitive| features.contains(primitive.owner_id))
+            {
+                let layer = layers
+                    .get(primitive.layer_id)
+                    .copied()
+                    .filter(|layer| matches!(layer.side, LayerSide::Top | LayerSide::Bottom))
+                    .ok_or("creepage copper side is incomplete")?;
+                if !profile_area_contains(review, primitive.primitive.start)?
+                    || !profile_area_contains(review, primitive.primitive.end)?
+                {
+                    return Err("creepage copper geometry is outside the exact profile area".into());
+                }
+                result.entry(layer.side).or_insert_with(Vec::new).push(primitive);
+            }
+            Ok(result)
+        };
+        let left = by_side(&left_features)?;
+        let right = by_side(&right_features)?;
+        let mut nearest = None;
+        for side in [LayerSide::Top, LayerSide::Bottom] {
+            let (Some(left), Some(right)) = (left.get(&side), right.get(&side)) else {
+                continue;
+            };
+            bounded_inference_product(left.len(), right.len(), "creepage geometry")?;
+            let candidate =
+                nearest_axis_pair(left.clone(), right.clone(), deadline, "creepage-geometry")?;
+            if nearest.is_none_or(|current: NearestPair<'_>| {
+                (
+                    candidate.observed,
+                    candidate.left.owner_id,
+                    candidate.right.owner_id,
+                ) < (
+                    current.observed,
+                    current.left.owner_id,
+                    current.right.owner_id,
+                )
+            }) {
+                nearest = Some(candidate);
+            }
+        }
+        let nearest = nearest.ok_or("voltage domains lack exact copper geometry on one surface")?;
+        let (resolution, margin) = inference_comparison(nearest, minimum)?;
+        let detail = format!(
+            "domain_left={} domain_right={} observed={}pm minimum_creepage={}pm margin={}pm resolution={}pm geometry_source={}:{} geometry_peer_source={}:{} profile_source={}:{}",
+            domains.record.target_ids[0],
+            domains.record.target_ids[1],
+            nearest.observed.0,
+            minimum.0,
+            margin,
+            resolution.0,
+            nearest.left.provenance.document_id,
+            nearest.left.provenance.location.record,
+            nearest.right.provenance.document_id,
+            nearest.right.provenance.location.record,
+            profile_source.document_id,
+            profile_source.location.record,
+        );
+        let mut findings = Vec::new();
+        if margin < 0 {
+            findings.push(Finding {
+                id: format!(
+                    "{CREEPAGE_FAMILY}/{}/{}-{}",
+                    domains.record.target_ids.join("-"),
+                    nearest.left.owner_id,
+                    nearest.right.owner_id
+                ),
+                severity: Severity::High,
+                category: "Electrical inference".into(),
+                title: "Exact surface copper spacing is below the declared creepage rule".into(),
+                evidence: format!(
+                    "inference=true maximum_voltage={maximum_voltage}mv minimum_creepage={}pm domain_pair={domain_pair} material={material_name} environment={environment} coating={coating} rule={rule_name}@{rule_version} native_creepage_authority=unavailable {domain_assumptions}; {rule_assumptions}; {material_assumptions}; {detail} declaration_source={}",
+                    minimum.0,
+                    rule.document.virtual_path,
+                ),
+                recommendation: "Review the exact surface geometry against the declared creepage rule. Use completed configured native DRC when available.".into(),
+                location: format!(
+                    "left={};right={}",
+                    nearest.left.owner_id, nearest.right.owner_id
+                ),
+                source: "bounded-electrical-inference".into(),
+                gate_impact: family_gate_impact(CREEPAGE_FAMILY),
+            });
+        }
+        let evidence = format!(
+            "inference=true model={}@{} maximum_voltage={maximum_voltage}mv minimum_creepage={}pm domain_pair={domain_pair} material={material_name} environment={environment} coating={coating} rule={rule_name}@{rule_version} native_creepage_authority=unavailable assumptions=explicit_voltage_domains+explicit_rule+explicit_material_environment_coating+complete_connectivity+exact_profile_without_cutouts+exact_surface_copper_geometry observations=1 {domain_assumptions}; {rule_assumptions}; {material_assumptions}; {detail}",
+            rule.record.model, rule.record.model_version, minimum.0,
+        );
+        if evidence.len() > MAX_INFERENCE_COVERAGE_BYTES {
+            return Err(format!(
+                "inference coverage evidence byte limit {MAX_INFERENCE_COVERAGE_BYTES} exceeded"
+            ));
+        }
+        Ok((
+            findings,
+            Coverage {
+                id: CREEPAGE_FAMILY.into(),
+                label: LABEL.into(),
+                status: if margin < 0 {
+                    CoverageStatus::Attention
+                } else {
+                    CoverageStatus::Passed
+                },
+                evidence,
+            },
+        ))
+    })();
+    result.unwrap_or_else(|reason| (vec![], not_checked(CREEPAGE_FAMILY, LABEL, reason)))
+}
+
+pub(crate) fn reconcile_native_creepage(
+    findings: &mut Vec<Finding>,
+    coverage: &mut [Coverage],
+    native: &NativeDrc,
+) {
+    let Some(creepage_coverage) = coverage.iter_mut().find(|item| item.id == CREEPAGE_FAMILY)
+    else {
+        return;
+    };
+    if native.status == "completed" {
+        let native_findings = native
+            .violations
+            .iter()
+            .filter(|violation| {
+                [
+                    &violation.group,
+                    &violation.violation_type,
+                    &violation.description,
+                ]
+                .into_iter()
+                .any(|value| value.to_ascii_lowercase().contains("creepage"))
+            })
+            .count();
+        findings.retain(|finding| !finding.id.starts_with(CREEPAGE_FAMILY));
+        creepage_coverage.status = if native_findings > 0 || native.unknown_exclusion_count > 0 {
+            CoverageStatus::Attention
+        } else {
+            CoverageStatus::Passed
+        };
+        creepage_coverage.evidence = format!(
+            "authority=completed_native_drc tool={} version={} report_version={} creepage_findings={} unknown_exclusions={} note={}",
+            native.tool,
+            native.version.as_deref().unwrap_or("unknown"),
+            native.report_version.as_deref().unwrap_or("unknown"),
+            native_findings,
+            native.unknown_exclusion_count,
+            native.note,
+        );
+        return;
+    }
+
+    let authority = format!("native_creepage_authority={}", native.status);
+    creepage_coverage.evidence =
+        creepage_coverage
+            .evidence
+            .replacen("native_creepage_authority=unavailable", &authority, 1);
+    for finding in findings
+        .iter_mut()
+        .filter(|finding| finding.id.starts_with(CREEPAGE_FAMILY))
+    {
+        finding.evidence =
+            finding
+                .evidence
+                .replacen("native_creepage_authority=unavailable", &authority, 1);
+    }
+}
+
 fn testpoint_access(
     review: &FabricationReview,
     deadline: ManufacturingDeadline,
@@ -8912,6 +9596,7 @@ pub(crate) fn fabrication_families_with_gaps(
     let (drill_span_findings, drill_span) = drill_span_plating(review, declaration_gaps, deadline);
     let (finish_findings, finish) = finish_profile(review, declaration_gaps, deadline);
     let (process_findings, process) = impedance_special_process(review, deadline);
+
     findings.extend(integrity_findings);
     findings.extend(outline_findings);
     findings.extend(edge_findings);
@@ -8924,6 +9609,7 @@ pub(crate) fn fabrication_families_with_gaps(
     findings.extend(drill_span_findings);
     findings.extend(finish_findings);
     findings.extend(process_findings);
+
     findings.sort_by(|left, right| left.id.cmp(&right.id));
     (
         findings,
@@ -9056,11 +9742,17 @@ pub(crate) fn assembly_families(
     let (footprint_findings, footprint) = footprint_string_parity(review, schematic, deadline);
     let (access_findings, access) = assembly_access(review, deadline);
     let (testpoint_findings, testpoint) = testpoint_access(review, deadline);
+    let (return_path_findings, return_path) = return_path(review, deadline);
+    let (high_current_findings, high_current) = high_current(review, deadline);
+    let (creepage_findings, creepage) = creepage(review, deadline);
     findings.extend(paste_findings);
     findings.extend(courtyard_findings);
     findings.extend(footprint_findings);
     findings.extend(access_findings);
     findings.extend(testpoint_findings);
+    findings.extend(return_path_findings);
+    findings.extend(high_current_findings);
+    findings.extend(creepage_findings);
     findings.sort_by(|left, right| {
         left.id
             .cmp(&right.id)
@@ -9075,6 +9767,9 @@ pub(crate) fn assembly_families(
             footprint,
             access,
             testpoint,
+            return_path,
+            high_current,
+            creepage,
         ],
     )
 }
@@ -9086,6 +9781,9 @@ pub(crate) fn is_assembly_model_family_check(check_id: &str) -> bool {
         COURTYARD_NATIVE_FAMILY,
         ASSEMBLY_ACCESS_FAMILY,
         TESTPOINT_ACCESS_FAMILY,
+        RETURN_PATH_FAMILY,
+        HIGH_CURRENT_FAMILY,
+        CREEPAGE_FAMILY,
     ]
     .iter()
     .any(|family| {
@@ -9116,6 +9814,7 @@ pub(crate) fn is_footprint_reconciliation_check(check_id: &str) -> bool {
 pub(crate) fn validate_assembly_families(
     review: &FabricationReview,
     schematic: &SchematicReview,
+    native: &NativeDrc,
     findings: &[Finding],
     coverage: &[Coverage],
     evidence: &[EvidenceRecord],
@@ -9123,7 +9822,9 @@ pub(crate) fn validate_assembly_families(
 ) -> Result<(), String> {
     let deadline =
         deadline.unwrap_or_else(|| ManufacturingDeadline::from_timeout(Duration::from_secs(30)));
-    let (expected_findings, expected_coverage) = assembly_families(review, schematic, deadline);
+    let (mut expected_findings, mut expected_coverage) =
+        assembly_families(review, schematic, deadline);
+    reconcile_native_creepage(&mut expected_findings, &mut expected_coverage, native);
     let check_ids = evidence
         .iter()
         .map(|record| (record.id.as_str(), record.check_id.as_str()))
@@ -9534,6 +10235,71 @@ pub(crate) fn validate_population_parity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn native_drc(status: &str) -> NativeDrc {
+        NativeDrc {
+            status: status.into(),
+            tool: "kicad-cli".into(),
+            version: Some("10.0.5".into()),
+            report_version: Some("10.0".into()),
+            finding_count: 0,
+            excluded_count: 0,
+            unknown_exclusion_count: 0,
+            note: format!("native {status}"),
+            source: Some("board.kicad_pcb".into()),
+            date: None,
+            included_severities: vec![],
+            ignored_checks: vec![],
+            violations: vec![],
+        }
+    }
+
+    #[test]
+    fn creepage_native_completion_replaces_inference_and_failure_stays_honest() {
+        let inferred = Finding {
+            id: format!("{CREEPAGE_FAMILY}/finding"),
+            severity: Severity::High,
+            category: "Electrical inference".into(),
+            title: "inferred".into(),
+            evidence: "native_creepage_authority=unavailable".into(),
+            recommendation: "review".into(),
+            location: "board".into(),
+            source: "bounded-electrical-inference".into(),
+            gate_impact: GateImpact::EvidenceOnly,
+        };
+        let inferred_coverage = Coverage {
+            id: CREEPAGE_FAMILY.into(),
+            label: "Declared-rule creepage inference".into(),
+            status: CoverageStatus::Attention,
+            evidence: "native_creepage_authority=unavailable".into(),
+        };
+
+        let mut findings = vec![inferred.clone()];
+        let mut coverage = vec![inferred_coverage.clone()];
+        reconcile_native_creepage(&mut findings, &mut coverage, &native_drc("completed"));
+        assert!(findings.is_empty());
+        assert_eq!(coverage[0].status, CoverageStatus::Passed);
+        assert!(
+            coverage[0]
+                .evidence
+                .contains("authority=completed_native_drc")
+        );
+
+        let mut findings = vec![inferred];
+        let mut coverage = vec![inferred_coverage];
+        reconcile_native_creepage(&mut findings, &mut coverage, &native_drc("failed"));
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0]
+                .evidence
+                .contains("native_creepage_authority=failed")
+        );
+        assert!(
+            coverage[0]
+                .evidence
+                .contains("native_creepage_authority=failed")
+        );
+    }
 
     #[test]
     fn inference_output_byte_limit_accepts_boundary_and_rejects_growth_atomically() {
