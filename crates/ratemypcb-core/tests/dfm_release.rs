@@ -3842,6 +3842,26 @@ fn assembly_corpus_metrics_use_production_measurements() {
 }
 
 #[test]
+fn inference_mutation_measurements_are_sensitive_to_non_reordering_transformations() {
+    let corpus: GeometryCorpus = serde_json::from_str(ASSEMBLY_TARGETS_JSON).unwrap();
+    let mut measured = measured_inference_corpus(&corpus);
+    let access = measured.mutations.get_mut("assembly.access.v1").unwrap();
+    let state_failed = access
+        .iter_mut()
+        .find(|measurement| measurement.kind == "state_failed")
+        .unwrap();
+    assert!(state_failed.input_changed);
+    assert_eq!(state_failed.status, "not_checked");
+
+    state_failed.input_changed = false;
+    assert!(validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).is_err());
+
+    state_failed.input_changed = true;
+    state_failed.kind = "state_partial".into();
+    assert!(validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).is_err());
+}
+
+#[test]
 fn native_assembly_corpus_and_mutations_are_qualified_but_evidence_only() {
     let corpus: GeometryCorpus = serde_json::from_str(ASSEMBLY_TARGETS_JSON).unwrap();
     let measured = measured_inference_corpus(&corpus);
