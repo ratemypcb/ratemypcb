@@ -942,6 +942,7 @@ fn validate_targets(targets: &PopulationTargets) -> Result<Metrics, String> {
 fn validate_mutation_rows(
     mutations: &[Mutation],
     measurements: Option<&[MutationMeasurement]>,
+    stable_case_id_prefix: Option<&str>,
 ) -> Result<usize, String> {
     let mut ids = BTreeSet::new();
     let mut kinds = BTreeSet::new();
@@ -951,8 +952,13 @@ fn validate_mutation_rows(
     if measurements.is_some_and(|measurements| measurements.len() != mutations.len()) {
         return Err("mutation measurements changed row count".into());
     }
+    if measurements.is_some() && stable_case_id_prefix.is_none() {
+        return Err("measured mutations require stable case IDs".into());
+    }
     for (index, mutation) in mutations.iter().enumerate() {
         let expected_kind = REQUIRED_MUTATIONS[index];
+        let expected_case_id = stable_case_id_prefix
+            .map(|prefix| format!("{prefix}-{}", expected_kind.replace('_', "-")));
         let measurement = measurements.map(|measurements| &measurements[index]);
         let actual_status = match measurement {
             Some(measurement) => Some(measurement.status.as_str()),
@@ -961,6 +967,9 @@ fn validate_mutation_rows(
         let expected_status = "not_checked";
         if mutation.id.trim().is_empty()
             || (measurements.is_some() && mutation.kind != expected_kind)
+            || expected_case_id
+                .as_deref()
+                .is_some_and(|expected_case_id| mutation.id != expected_case_id)
             || !ids.insert(mutation.id.as_str())
             || !kinds.insert(mutation.kind.as_str())
             || measurement.is_some_and(|measurement| {
@@ -995,7 +1004,7 @@ fn validate_mutations(mutations: &MutationCorpus) -> Result<usize, String> {
     {
         return Err("mutation metadata or digest changed".into());
     }
-    validate_mutation_rows(&mutations.mutations, None)
+    validate_mutation_rows(&mutations.mutations, None, None)
 }
 
 fn validate_geometry_corpus(corpus: &GeometryCorpus) -> Result<BTreeMap<String, Metrics>, String> {
@@ -1060,7 +1069,7 @@ fn validate_geometry_corpus(corpus: &GeometryCorpus) -> Result<BTreeMap<String, 
             unsupported_targets: family.unsupported_targets.clone(),
         };
         let mut metrics = validate_family_targets(&targets, None)?;
-        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations, None)?;
+        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations, None, None)?;
         if !meets_metric_policy(metrics, 9500) {
             return Err(format!("geometry family {key} does not meet metric policy"));
         }
@@ -1211,7 +1220,7 @@ fn validate_construction_corpus(
         } else {
             validate_family_targets(&targets, None)?
         };
-        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations, None)?;
+        metrics.not_checked_mutations = validate_mutation_rows(&family.mutations, None, None)?;
         if !meets_metric_policy(metrics, 9500) {
             return Err(format!(
                 "construction family {key} does not meet metric policy"
@@ -1278,6 +1287,11 @@ fn validate_assembly_corpus(
                 "unknown, duplicate, or malformed assembly family {key}"
             ));
         }
+        let stable_case_id_prefix = match key.as_str() {
+            "assembly.access.v1" => Some("assembly-access"),
+            "assembly.testpoint-access.v1" => Some("assembly-testpoint-access"),
+            _ => None,
+        };
         let targets = PopulationTargets {
             schema_version: 1,
             origin: "project-authored".into(),
@@ -1298,7 +1312,7 @@ fn validate_assembly_corpus(
         }
         let mut metrics = validate_family_targets(&targets, labels)?;
         metrics.not_checked_mutations =
-            validate_mutation_rows(&family.mutations, mutation_statuses)?;
+            validate_mutation_rows(&family.mutations, mutation_statuses, stable_case_id_prefix)?;
         if !meets_metric_policy(metrics, 9500) {
             return Err(format!("assembly family {key} does not meet metric policy"));
         }
@@ -3017,10 +3031,10 @@ fn opposite_side_access_project(target_side: &str) -> PathBuf {
         _ => unreachable!(),
     };
     let target = format!(
-        "G04 RateMyPCB Plan 07-09 project-authored access fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,{target_role}*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n%TO.N,TP_TEST*%\n%TO.C,TP1*%\n%TO.P,TP1,1*%\nX2000000Y5000000D03*\n%TD.P*%\n%TD.C*%\n%TD.N*%\nM02*\n"
+        "%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,{target_role}*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n%TO.N,TP_TEST*%\n%TO.C,TP1*%\n%TO.P,TP1,1*%\nX2000000Y5000000D03*\n%TD.P*%\n%TD.C*%\n%TD.N*%\nM02*\n"
     );
     let blocker = format!(
-        "G04 RateMyPCB Plan 07-09 project-authored access fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,{blocker_role}*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n%TO.N,OTHER*%\n%TO.C,U2*%\n%TO.P,U2,1*%\nX2000000Y5000000D03*\n%TD.P*%\n%TD.C*%\n%TD.N*%\nM02*\n"
+        "%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,{blocker_role}*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n%TO.N,OTHER*%\n%TO.C,U2*%\n%TO.P,U2,1*%\nX2000000Y5000000D03*\n%TD.P*%\n%TD.C*%\n%TD.N*%\nM02*\n"
     );
     fs::write(root.join("copper.gbr"), target).unwrap();
     fs::write(root.join("bottom.gbr"), blocker).unwrap();
@@ -3072,7 +3086,7 @@ fn many_component_access_project(count: usize) -> PathBuf {
         NEXT_POPULATION_FIXTURE.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir(&root).unwrap();
-    let mut copper = "G04 bounded access fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Copper,L1,Top*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n".to_owned();
+    let mut copper = "%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Copper,L1,Top*%\n%TA.AperFunction,SMDPad,CuDef*%\n%ADD10C,1.000*%\nD10*\n".to_owned();
     let mut board = "(kicad_pcb (version 20240108)\n  (generator ratemypcb-plan07-09)\n  (title_block (title \"phase7-access\") (rev \"r1\"))\n  (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal) (44 \"Edge.Cuts\" user \"Edge.Cuts\"))\n  (net 0 \"\")\n".to_owned();
     for index in 0..count {
         copper.push_str(&format!(
@@ -3325,11 +3339,11 @@ fn assembly_access_profile_membership_fails_closed_for_concave_exterior_cutout_a
     let cases = [
         (
             "concave",
-            "G04 concave profile*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Profile,NP*%\n%TA.AperFunction,Conductor*%\n%ADD10C,0.100*%\nD10*\n%TO.N,PROFILE*%\n%TO.C,BOARD_PROFILE*%\n%TO.P,BOARD_PROFILE,1*%\nG36*\nX000000Y000000D02*\nX10000000Y000000D01*\nX10000000Y4000000D01*\nX4000000Y4000000D01*\nX4000000Y10000000D01*\nX000000Y10000000D01*\nX000000Y000000D01*\nG37*\nM02*\n",
+            "%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Profile,NP*%\n%TA.AperFunction,Conductor*%\n%ADD10C,0.100*%\nD10*\n%TO.N,PROFILE*%\n%TO.C,BOARD_PROFILE*%\n%TO.P,BOARD_PROFILE,1*%\nG36*\nX000000Y000000D02*\nX10000000Y000000D01*\nX10000000Y4000000D01*\nX4000000Y4000000D01*\nX4000000Y10000000D01*\nX000000Y10000000D01*\nX000000Y000000D01*\nG37*\nM02*\n",
         ),
         (
             "cutout",
-            "G04 cutout profile*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Profile,NP*%\n%TA.AperFunction,Conductor*%\n%ADD10C,0.100*%\nD10*\n%TO.N,PROFILE*%\n%TO.C,BOARD_PROFILE*%\n%TO.P,BOARD_PROFILE,1*%\nG36*\nX000000Y000000D02*\nX10000000Y000000D01*\nX10000000Y10000000D01*\nX000000Y10000000D01*\nX000000Y000000D01*\nG37*\n%LPC*%\nG36*\nX4500000Y4500000D02*\nX5500000Y4500000D01*\nX5500000Y5500000D01*\nX4500000Y5500000D01*\nX4500000Y4500000D01*\nG37*\nM02*\n",
+            "%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Profile,NP*%\n%TA.AperFunction,Conductor*%\n%ADD10C,0.100*%\nD10*\n%TO.N,PROFILE*%\n%TO.C,BOARD_PROFILE*%\n%TO.P,BOARD_PROFILE,1*%\nG36*\nX000000Y000000D02*\nX10000000Y000000D01*\nX10000000Y10000000D01*\nX000000Y10000000D01*\nX000000Y000000D01*\nG37*\n%LPC*%\nG36*\nX4500000Y4500000D02*\nX5500000Y4500000D01*\nX5500000Y5500000D01*\nX4500000Y5500000D01*\nX4500000Y4500000D01*\nG37*\nM02*\n",
         ),
     ];
     for (case, profile) in cases {
