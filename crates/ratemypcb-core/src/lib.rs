@@ -4498,6 +4498,7 @@ fn validate_report_with_fabrication_deadline(
     dfm::validate_assembly_families(
         &report.fabrication,
         &report.schematic,
+        &report.native_drc,
         &report.findings,
         &report.coverage,
         &report.evidence,
@@ -5343,6 +5344,7 @@ pub fn review(path: &Path, options: ReviewOptions) -> Result<Report, Error> {
     );
     findings.extend(assembly_findings);
     coverage.extend(assembly_coverage);
+    dfm::reconcile_native_creepage(&mut findings, &mut coverage, &native);
     let profile_drc = if let Some((preset, profile)) = requested_profile.as_ref() {
         if let Some(board) = &native_board {
             let project_root = native_project_root.expect("native board has a project root");

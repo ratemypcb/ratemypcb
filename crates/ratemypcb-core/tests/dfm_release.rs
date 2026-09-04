@@ -1,4 +1,4 @@
-use ratemypcb_core::fabrication::{Authority, ConstraintKind, Picometres};
+use ratemypcb_core::fabrication::{Authority, ConstraintKind, LayerSide, Picometres};
 use ratemypcb_core::{
     Assessment, AssessmentAction, Coverage, CoverageStatus, DfmDeclarations, EvidenceConfidence,
     EvidenceExecution, EvidenceFreshness, EvidenceResult, Finding, GateImpact, NativeMode, Preset,
@@ -3217,6 +3217,445 @@ fn target_net_authority(targets: Vec<String>) -> Value {
         "limits": [],
         "parameters": []
     })
+}
+
+fn return_path_project(plane_y_mm: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "ratemypcb-dfm-return-path-{}-{}",
+        std::process::id(),
+        NEXT_POPULATION_FIXTURE.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&root).unwrap();
+    fs::write(
+        root.join("signal.gbr"),
+        "G04 RateMyPCB Plan 07-10 project-authored return-path fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Copper,L1,Top*%\n%TA.AperFunction,Conductor*%\n%ADD10C,0.200*%\nD10*\n%TO.N,CLK_100M*%\nX2000000Y5000000D02*\nX8000000Y5000000D01*\nM02*\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("plane.gbr"),
+        format!(
+            "G04 RateMyPCB Plan 07-10 project-authored reference-plane fixture*\n%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Copper,L2,Bot*%\n%TA.AperFunction,Conductor*%\n%ADD10C,1.000*%\nD10*\n%TO.N,GND*%\nX2000000Y{plane_y_mm}000000D02*\nX8000000Y{plane_y_mm}000000D01*\nM02*\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        root.join("profile.gbr"),
+        "%FSLAX46Y46*%\n%MOMM*%\n%TF.FileFunction,Profile,NP*%\n%ADD10C,0.100*%\nD10*\n%TO.N,PROFILE*%\nG36*\nX0000000Y0000000D02*\nX10000000Y0000000D01*\nX10000000Y10000000D01*\nX0000000Y10000000D01*\nX0000000Y0000000D01*\nG37*\nM02*\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("complete.gbrjob"),
+        serde_json::to_vec(&serde_json::json!({
+            "Header": {"GenerationSoftware": {"Vendor": "RateMyPCB", "Application": "fixture", "Version": "1"}},
+            "GeneralSpecs": {"ProjectId": {"Name": "phase7-return-path", "Revision": "r1", "PartNumber": "P7-010"}},
+            "FilesAttributes": [
+                {"Path": "signal.gbr", "FileFunction": "Copper,L1,Top"},
+                {"Path": "plane.gbr", "FileFunction": "Copper,L2,Bot"},
+                {"Path": "profile.gbr", "FileFunction": "Profile,NP"}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    root
+}
+
+fn signal_intent(target: String) -> Value {
+    serde_json::json!({
+        "record": 1,
+        "id": "signal_intent",
+        "state": "complete",
+        "model": "pcb.signal-intent",
+        "modelVersion": "1",
+        "applicability": "board",
+        "targetIds": [target],
+        "limits": [inference_limit("frequency", "100", "mhz")],
+        "parameters": [{"id": "signal_class", "value": "clock"}]
+    })
+}
+
+fn reference_plane_intent(signal: String, layer: String, maximum: &str) -> Value {
+    let mut targets = vec![signal, layer];
+    targets.sort();
+    serde_json::json!({
+        "record": 1,
+        "id": "reference_plane_intent",
+        "state": "complete",
+        "model": "pcb.return-path-discontinuity-envelope",
+        "modelVersion": "1",
+        "applicability": "board",
+        "targetIds": targets,
+        "limits": [inference_limit("maximum_discontinuity", maximum, "mm")],
+        "parameters": [{"id": "reference_plane_role", "value": "continuous_copper"}]
+    })
+}
+
+#[test]
+fn return_path_requires_explicit_signal_plane_connectivity_and_layer_intent() {
+    let root = return_path_project("7");
+    let baseline = review(&root, authority_options(None)).unwrap();
+    let signal = canonical_net_id(&baseline, "CLK_100M");
+    let plane = baseline
+        .fabrication
+        .layers
+        .iter()
+        .find(|layer| layer.side == LayerSide::Bottom)
+        .unwrap()
+        .id
+        .clone();
+
+    assert_eq!(
+        coverage_for(&baseline, "inference.return-path.v1").status,
+        CoverageStatus::NotRun
+    );
+    let report = review(
+        &root,
+        authority_options(Some(inference_declarations(vec![
+            signal_intent(signal.clone()),
+            reference_plane_intent(signal, plane, "0.50"),
+        ]))),
+    )
+    .unwrap();
+    validate_report(&report).unwrap();
+    let coverage = coverage_for(&report, "inference.return-path.v1");
+    assert_eq!(
+        coverage.status,
+        CoverageStatus::Attention,
+        "{}",
+        coverage.evidence
+    );
+    let findings = findings_for(&report, "inference.return-path.v1");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].gate_impact, GateImpact::EvidenceOnly);
+    assert!(findings[0].evidence.contains("signal_class=clock"));
+    assert!(
+        findings[0]
+            .evidence
+            .contains("reference_plane_role=continuous_copper")
+    );
+    assert!(findings[0].evidence.contains("declaration_source="));
+    assert!(findings[0].evidence.contains("geometry_source="));
+
+    let repeated = review(
+        &root,
+        authority_options(Some(inference_declarations(vec![
+            signal_intent(canonical_net_id(&baseline, "CLK_100M")),
+            reference_plane_intent(
+                canonical_net_id(&baseline, "CLK_100M"),
+                baseline
+                    .fabrication
+                    .layers
+                    .iter()
+                    .find(|layer| layer.side == LayerSide::Bottom)
+                    .unwrap()
+                    .id
+                    .clone(),
+                "0.50",
+            ),
+        ]))),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(coverage_for(&report, "inference.return-path.v1")).unwrap(),
+        serde_json::to_value(coverage_for(&repeated, "inference.return-path.v1")).unwrap()
+    );
+
+    let missing = review(
+        &root,
+        authority_options(Some(inference_declarations(vec![signal_intent(
+            canonical_net_id(&baseline, "CLK_100M"),
+        )]))),
+    )
+    .unwrap();
+    assert_eq!(
+        coverage_for(&missing, "inference.return-path.v1").status,
+        CoverageStatus::NotRun
+    );
+    assert!(findings_for(&missing, "inference.return-path.v1").is_empty());
+
+    let mut forged = report.clone();
+    findings_for(&forged, "inference.return-path.v1");
+    forged
+        .findings
+        .iter_mut()
+        .find(|finding| {
+            occurrence_check_id(&report, &finding.id)
+                .is_some_and(|check_id| check_id.starts_with("inference.return-path.v1/"))
+        })
+        .unwrap()
+        .gate_impact = GateImpact::Blocking;
+    assert!(validate_report(&forged).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn current_intent(net: String) -> Value {
+    serde_json::json!({
+        "record": 1,
+        "id": "current_intent",
+        "state": "complete",
+        "model": "pcb.current-intent",
+        "modelVersion": "1",
+        "applicability": "board",
+        "targetIds": [net],
+        "limits": [
+            inference_limit("allowed_temperature_rise", "20", "c"),
+            inference_limit("allowed_voltage_drop", "100", "mv"),
+            inference_limit("current", "2", "a")
+        ],
+        "parameters": [{"id": "current_class", "value": "continuous"}]
+    })
+}
+
+fn copper_process_envelope(net: String, minimum_width: &str) -> Value {
+    serde_json::json!({
+        "record": 2,
+        "id": "process_envelope",
+        "state": "complete",
+        "model": "pcb.minimum-copper-process-envelope",
+        "modelVersion": "1",
+        "applicability": "board",
+        "targetIds": [net],
+        "limits": [
+            inference_limit("copper_thickness", "0.035", "mm"),
+            inference_limit("minimum_copper_width", minimum_width, "mm")
+        ],
+        "parameters": [
+            {"id": "finish", "value": "enig"},
+            {"id": "process", "value": "subtractive_etch"},
+            {"id": "process_version", "value": "2026.1"}
+        ]
+    })
+}
+
+#[test]
+fn high_current_compares_exact_width_to_the_declared_process_envelope_only() {
+    let root = return_path_project("5");
+    let baseline = review(&root, authority_options(None)).unwrap();
+    let net = canonical_net_id(&baseline, "CLK_100M");
+    assert_eq!(
+        coverage_for(&baseline, "inference.high-current.v1").status,
+        CoverageStatus::NotRun
+    );
+
+    let report = review(
+        &root,
+        authority_options(Some(inference_declarations(vec![
+            current_intent(net.clone()),
+            copper_process_envelope(net.clone(), "0.30"),
+        ]))),
+    )
+    .unwrap();
+    validate_report(&report).unwrap();
+    let coverage = coverage_for(&report, "inference.high-current.v1");
+    assert_eq!(
+        coverage.status,
+        CoverageStatus::Attention,
+        "{}",
+        coverage.evidence
+    );
+    let findings = findings_for(&report, "inference.high-current.v1");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].gate_impact, GateImpact::EvidenceOnly);
+    for assumption in [
+        "current=2000ma",
+        "allowed_temperature_rise=20000mc",
+        "allowed_voltage_drop=100mv",
+        "copper_thickness=35000000pm",
+        "minimum_copper_width=300000000pm",
+        "finish=enig",
+        "process=subtractive_etch@2026.1",
+        "ampacity_calculated=false",
+        "declaration_source=",
+        "geometry_source=",
+    ] {
+        assert!(findings[0].evidence.contains(assumption), "{assumption}");
+    }
+    let repeated = review(
+        &root,
+        authority_options(Some(inference_declarations(vec![
+            current_intent(net.clone()),
+            copper_process_envelope(net.clone(), "0.30"),
+        ]))),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(coverage).unwrap(),
+        serde_json::to_value(coverage_for(&repeated, "inference.high-current.v1")).unwrap()
+    );
+
+    let missing = review(
+        &root,
+        authority_options(Some(inference_declarations(vec![current_intent(net)]))),
+    )
+    .unwrap();
+    assert_eq!(
+        coverage_for(&missing, "inference.high-current.v1").status,
+        CoverageStatus::NotRun
+    );
+    assert!(findings_for(&missing, "inference.high-current.v1").is_empty());
+
+    let mut forged = report.clone();
+    forged
+        .findings
+        .iter_mut()
+        .find(|finding| {
+            occurrence_check_id(&report, &finding.id)
+                .is_some_and(|check_id| check_id.starts_with("inference.high-current.v1/"))
+        })
+        .unwrap()
+        .gate_impact = GateImpact::Blocking;
+    assert!(validate_report(&forged).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn voltage_domains(mut nets: Vec<String>) -> Value {
+    nets.sort();
+    serde_json::json!({
+        "record": 1,
+        "id": "voltage_domains",
+        "state": "complete",
+        "model": "pcb.voltage-domain-pair",
+        "modelVersion": "1",
+        "applicability": "board",
+        "targetIds": nets,
+        "limits": [inference_limit("maximum_voltage", "400", "v")],
+        "parameters": [{"id": "domain_pair", "value": "primary_to_secondary"}]
+    })
+}
+
+fn creepage_rule(mut nets: Vec<String>, minimum: &str) -> Value {
+    nets.sort();
+    serde_json::json!({
+        "record": 2,
+        "id": "creepage_rule",
+        "state": "complete",
+        "model": "pcb.creepage-distance-rule",
+        "modelVersion": "1",
+        "applicability": "board",
+        "targetIds": nets,
+        "limits": [inference_limit("minimum_creepage", minimum, "mm")],
+        "parameters": [
+            {"id": "rule", "value": "project_creepage_rule"},
+            {"id": "rule_version", "value": "2026.1"}
+        ]
+    })
+}
+
+fn material_environment(mut nets: Vec<String>) -> Value {
+    nets.sort();
+    serde_json::json!({
+        "record": 3,
+        "id": "material_environment",
+        "state": "complete",
+        "model": "pcb.material-environment-coating",
+        "modelVersion": "1",
+        "applicability": "board",
+        "targetIds": nets,
+        "limits": [],
+        "parameters": [
+            {"id": "coating", "value": "none"},
+            {"id": "environment", "value": "pollution_degree_2"},
+            {"id": "material", "value": "fr4_group_iii"}
+        ]
+    })
+}
+
+fn creepage_project() -> PathBuf {
+    let root = return_path_project("6");
+    replace_once(
+        &root.join("signal.gbr"),
+        "M02*\n",
+        "%TO.N,GND*%\nX2000000Y6000000D02*\nX8000000Y6000000D01*\nM02*\n",
+    );
+    fs::remove_file(root.join("plane.gbr")).unwrap();
+    let job_path = root.join("complete.gbrjob");
+    let mut job: Value = serde_json::from_slice(&fs::read(&job_path).unwrap()).unwrap();
+    job["FilesAttributes"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|entry| entry["Path"] != "plane.gbr");
+    fs::write(job_path, serde_json::to_vec(&job).unwrap()).unwrap();
+    root
+}
+
+#[test]
+fn creepage_requires_explicit_domains_rule_material_environment_and_exact_geometry() {
+    let root = creepage_project();
+    let baseline = review(&root, authority_options(None)).unwrap();
+    let nets = vec![
+        canonical_net_id(&baseline, "CLK_100M"),
+        canonical_net_id(&baseline, "GND"),
+    ];
+    assert_eq!(
+        coverage_for(&baseline, "inference.creepage.v1").status,
+        CoverageStatus::NotRun
+    );
+
+    let declarations = || {
+        inference_declarations(vec![
+            voltage_domains(nets.clone()),
+            creepage_rule(nets.clone(), "0.90"),
+            material_environment(nets.clone()),
+        ])
+    };
+    let report = review(&root, authority_options(Some(declarations()))).unwrap();
+    validate_report(&report).unwrap();
+    let coverage = coverage_for(&report, "inference.creepage.v1");
+    assert_eq!(
+        coverage.status,
+        CoverageStatus::Attention,
+        "{}",
+        coverage.evidence
+    );
+    let findings = findings_for(&report, "inference.creepage.v1");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].gate_impact, GateImpact::EvidenceOnly);
+    for assumption in [
+        "maximum_voltage=400000mv",
+        "minimum_creepage=900000000pm",
+        "domain_pair=primary_to_secondary",
+        "material=fr4_group_iii",
+        "environment=pollution_degree_2",
+        "coating=none",
+        "rule=project_creepage_rule@2026.1",
+        "declaration_source=",
+        "geometry_source=",
+        "profile_source=",
+    ] {
+        assert!(findings[0].evidence.contains(assumption), "{assumption}");
+    }
+    let repeated = review(&root, authority_options(Some(declarations()))).unwrap();
+    assert_eq!(
+        serde_json::to_value(coverage).unwrap(),
+        serde_json::to_value(coverage_for(&repeated, "inference.creepage.v1")).unwrap()
+    );
+
+    let missing = review(
+        &root,
+        authority_options(Some(inference_declarations(vec![
+            voltage_domains(nets.clone()),
+            creepage_rule(nets, "0.50"),
+        ]))),
+    )
+    .unwrap();
+    assert_eq!(
+        coverage_for(&missing, "inference.creepage.v1").status,
+        CoverageStatus::NotRun
+    );
+    assert!(findings_for(&missing, "inference.creepage.v1").is_empty());
+
+    let mut forged = report.clone();
+    forged
+        .findings
+        .iter_mut()
+        .find(|finding| {
+            occurrence_check_id(&report, &finding.id)
+                .is_some_and(|check_id| check_id.starts_with("inference.creepage.v1/"))
+        })
+        .unwrap()
+        .gate_impact = GateImpact::Blocking;
+    assert!(validate_report(&forged).is_err());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
