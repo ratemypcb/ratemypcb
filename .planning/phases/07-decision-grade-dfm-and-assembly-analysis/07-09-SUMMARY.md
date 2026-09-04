@@ -35,6 +35,9 @@ The repository lead owns the one independent Plan 07-09 review. This feature lea
 - The parser rejects unknown fields, record/model versions, IDs, units, ranges, non-finite values, partial state, duplicate authority, stale metadata, missing limits, and over-limit records, targets, limits, or parameters before comparison.
 - `assembly.access.v1` compares exact fixed-point 2D component-copper geometry to other fitted components and the exact profile. It runs only with complete placement/profile/component facts and one named process/tool diameter and clearance envelope. Evidence names the 2D model and every source assumption.
 - `assembly.testpoint-access.v1` adds complete connectivity and pin facts, one named probe/process envelope, and explicit `net-v1-<sha256>` target authority derived from canonical connectivity feature IDs. TP-like references and net names have no target authority.
+- Both access families compare obstructions only on the authoritative placement side. Coincident geometry on the opposite side does not block a tool or probe approach.
+- Profile qualification uses one exact exterior contour and exact cutout membership. Concave exteriors, cutouts, outside placements, or unavailable exact membership return `not_checked` with no partial finding.
+- Generated observations and findings have fixed count and serialized-byte limits. Coverage evidence has a separate fixed byte limit. Any limit failure returns `not_checked` with no partial findings.
 - Exact-threshold and safe cases are clean observations. Missing, partial, dangling, unsupported, off-grid, names-only, or unbounded facts are `not_checked` and create no finding.
 - Both families have metrics but no reviewed promotion metadata and no human checkpoint approval. Every finding is `EvidenceOnly`. Forged `Blocking` fails report validation.
 
@@ -42,6 +45,7 @@ The repository lead owns the one independent Plan 07-09 review. This feature lea
 
 - The declaration test first failed because `inferenceRecords` was unknown to the existing parser.
 - Access and testpoint production tests were added before family integration; the initial access filter failed because the family coverage did not exist.
+- Remediation tests cover top and bottom opposite-side controls, concave and cutout profile membership, outside placement, atomic output limits, and analyzer-derived corpus labels and mutation status.
 - The final corpus reports:
 
 | Family | TP | FP | FN | TN | Precision | Recall | Mutations | Gate |
@@ -65,20 +69,17 @@ The DFM-03 matrix covers population, side/rotation, paste availability, native c
 - `.planning/phases/07-decision-grade-dfm-and-assembly-analysis/07-VALIDATION.md`
 - `.planning/phases/07-decision-grade-dfm-and-assembly-analysis/07-09-SUMMARY.md`
 
-Accepted Plan 07-01 through 07-08 dirty work remains unstaged in the same worktree.
-
 ## Verification
 
-- Exact Plan 07-09 CLI declaration filter passed.
-- Exact declaration, access, testpoint, and DFM-03 matrix filters passed.
-- Full DFM release passed 42/42.
-- Full workspace passed 299 Rust tests with `CARGO_PROFILE_TEST_OPT_LEVEL=1`.
+- Exact Plan 07-09 CLI declaration filter passed at `5d26a8a47003bb83f7faf139e0358b990833b582`.
+- Exact declaration, access, testpoint, corpus, metrics, mutation, profile, limit, DFM-03 matrix, and forged-impact filters passed.
+- Full DFM release passed 46/46.
+- Full workspace passed 305 Rust tests with `CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_OPT_LEVEL=1`.
 - Node report/viewer tests passed 31/31.
 - `cargo fmt --all -- --check` passed.
-- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- `CARGO_BUILD_JOBS=1 cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
 - Authoritative schema generation remained byte-equal to `schemas/report-2.0.json`.
-- JSON validation passed for 54 valid files; the checked-in truncated hostile native fixture remained the sole expected invalid JSON.
-- `git diff --check` passed.
+- `git diff --check origin/phase7-dfm-assembly...HEAD` passed.
 
 The plan references `~/.codex/gsd-core/workflows/execute-plan.md` and `templates/summary.md`; neither file is installed. Repository planning state, validation, and summary conventions were used directly.
 
@@ -92,9 +93,8 @@ The plan references `~/.codex/gsd-core/workflows/execute-plan.md` and `templates
 
 ## Handoff
 
-- Workspace: `wks_4c340b66223c27bd`
-- Worktree: `/Users/mattiafiumara/.paseo/worktrees/3s4r2ob6/phase7-dfm-assembly`
-- Pi session: `01a05d2c-1fa0-77e2-8ee8-82553601e537`
-- HEAD: `5e0fa62a5865cdea1a7755c6bedcedab3a64ba07`
-- Git boundary: unstaged only, no commit or push
+- Worktree: `/home/mattia/RateMyPCB/worktrees/phase7-07-09-remediation`
+- Verification HEAD: `5d26a8a47003bb83f7faf139e0358b990833b582`
+- Base: `8eafaea078a492ed19d3e7dd0a02be3764bad59f`
+- Git boundary: remediation and base integration are committed; review status remains pending
 - Next action: repository lead runs one independent Plan 07-09 review. Plan 07-10 remains untouched.

@@ -4,10 +4,10 @@ current_phase: 7
 current_phase_name: Decision-Grade DFM and Assembly Analysis
 status: in_progress
 stopped_at: Plan 07-09 implementation gates green; repository-lead independent review pending; Plan 07-10 not started
-last_updated: "2026-09-03T00:30:44Z"
-last_activity: 2026-09-03
-last_activity_desc: Reconciled the closed Phase 6 public no-go with a separate deferred private ODB++ lane; Phase 7 remains unchanged
-state_head: 5e0fa62a5865cdea1a7755c6bedcedab3a64ba07
+last_updated: "2026-09-04T03:25:26Z"
+last_activity: 2026-09-04
+last_activity_desc: Revalidated the Plan 07-09 remediation and full repository gates at 5d26a8a; independent review remains pending
+state_head: 5d26a8a47003bb83f7faf139e0358b990833b582
 progress:
   total_phases: 8
   completed_phases: 5
@@ -30,7 +30,7 @@ See: `.planning/PROJECT.md` (updated 2026-08-26)
 Phase: 7 — Decision-Grade DFM and Assembly Analysis
 Plan: 07-09 implementation complete; independent review pending; Plan 07-10 not started
 Status: The sole `--dfm-declarations` path now carries exact named/versioned inference records with strict units, ranges, IDs, counts, freshness, completeness, and duplicate checks. `assembly.access.v1` compares complete source-linked placement/profile/component-copper geometry only to an explicit process/tool envelope. `assembly.testpoint-access.v1` also requires complete connectivity/component/pin geometry, a named probe/process envelope, and explicit canonical target-net IDs. Names never establish intent. Both families and every finding remain EvidenceOnly because the human checkpoint has no approval.
-Last activity: 2026-09-01 — Plan 07-09 focused filters, 42 DFM tests, 299 workspace Rust tests, all 31 Node tests, fmt, strict workspace Clippy, schema equality, JSON, and diff checks passed. No independent review ran in this feature-lead run; the repository lead owns that one pending review.
+Last activity: 2026-09-04. Plan 07-09 focused declaration, access, testpoint, corpus, metrics, mutation, profile, limit, matrix, and forged-impact filters passed at `5d26a8a`. All 46 DFM tests, 305 workspace Rust tests, 31 Node tests, formatting, strict workspace Clippy, and the branch diff check passed. No independent review ran in this recovery run. The repository lead owns that pending review.
 
 Exact external decision receipts: `/Users/mattiafiumara/.paseo/worktrees/3s4r2ob6/phase6-interchange-decision/.planning/phases/06-intelligent-interchange-decision-gate/06-01-SUMMARY.md` and `06-08-SUMMARY.md`. PRIVATE SHA `a4216f6909754155555e9290c2ec84e0eb16d267` remains quarantined research only and is not a Phase 7 input.
 
@@ -75,7 +75,7 @@ Progress: [███████░░░] 67%
 | Phase 07 P06 | not-measured | 2 tasks | exact negative-mask sliver, fitted-SMD paste/mask, and DFM-01 matrix |
 | Phase 07 P07 | complete; one review remediated | 3 tasks | represented construction comparisons, deferred confirmation gaps, and DFM-02 matrix |
 | Phase 07 P08 | complete; reviewed and remediated | 3 tasks | native assembly facts and four deterministic assembly families |
-| Phase 07 P09 | implementation gates green; review pending | 3 tasks | bounded inference declarations, assembly access, testpoint access, and DFM-03 matrix |
+| Phase 07 P09 | implementation and remediation gates green; review pending | 3 tasks | bounded inference declarations, side-aware access, exact profile membership, bounded output, analyzer-measured qualification, and DFM-03 matrix |
 
 ## Accumulated Context
 
