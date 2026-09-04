@@ -73,8 +73,8 @@ The DFM-03 matrix covers population, side/rotation, paste availability, native c
 
 - Exact Plan 07-09 CLI declaration filter passed at `5d26a8a47003bb83f7faf139e0358b990833b582`.
 - Exact declaration, access, testpoint, corpus, metrics, mutation, profile, limit, DFM-03 matrix, and forged-impact filters passed.
-- Full DFM release passed 46/46.
-- Full workspace passed 305 Rust tests with `CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_OPT_LEVEL=1`.
+- Full DFM release passed 48/48.
+- Full workspace passed 307 Rust tests with `CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_OPT_LEVEL=1`.
 - Node report/viewer tests passed 31/31.
 - `cargo fmt --all -- --check` passed.
 - `CARGO_BUILD_JOBS=1 cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
