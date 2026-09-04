@@ -608,6 +608,14 @@ struct Mutation {
     detail: String,
 }
 
+#[derive(Clone, Debug)]
+struct MutationMeasurement {
+    case_id: String,
+    kind: String,
+    input_changed: bool,
+    status: String,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Metrics {
     tp: usize,
@@ -932,19 +940,28 @@ fn validate_targets(targets: &PopulationTargets) -> Result<Metrics, String> {
 
 fn validate_mutation_rows(
     mutations: &[Mutation],
-    measured_statuses: Option<&BTreeMap<String, String>>,
+    measurements: Option<&[MutationMeasurement]>,
 ) -> Result<usize, String> {
     let mut ids = BTreeSet::new();
     let mut kinds = BTreeSet::new();
-    for mutation in mutations {
-        let actual_status = match measured_statuses {
-            Some(statuses) => statuses.get(&mutation.id).map(String::as_str),
+    if measurements.is_some_and(|measurements| measurements.len() != mutations.len()) {
+        return Err("mutation measurements changed row count".into());
+    }
+    for (index, mutation) in mutations.iter().enumerate() {
+        let measurement = measurements.map(|measurements| &measurements[index]);
+        let actual_status = match measurement {
+            Some(measurement) => Some(measurement.status.as_str()),
             None => Some("not_checked"),
         };
         let expected_status = "not_checked";
         if mutation.id.trim().is_empty()
             || !ids.insert(mutation.id.as_str())
             || !kinds.insert(mutation.kind.as_str())
+            || measurement.is_some_and(|measurement| {
+                measurement.case_id != mutation.id
+                    || measurement.kind != mutation.kind
+                    || !measurement.input_changed
+            })
             || mutation.expected_status != expected_status
             || actual_status != Some(expected_status)
             || mutation.contributes_to_confusion_matrix
@@ -1210,7 +1227,7 @@ fn validate_construction_corpus(
 fn validate_assembly_corpus(
     corpus: &GeometryCorpus,
     measured_labels: &BTreeMap<String, BTreeMap<String, String>>,
-    measured_mutations: &BTreeMap<String, BTreeMap<String, String>>,
+    measured_mutations: &BTreeMap<String, Vec<MutationMeasurement>>,
 ) -> Result<BTreeMap<String, Metrics>, String> {
     if corpus.schema_version != 1
         || corpus.origin != "project-authored"
@@ -1265,7 +1282,7 @@ fn validate_assembly_corpus(
             unsupported_targets: family.unsupported_targets.clone(),
         };
         let labels = measured_labels.get(&key);
-        let mutation_statuses = measured_mutations.get(&key);
+        let mutation_statuses = measured_mutations.get(&key).map(Vec::as_slice);
         if INFERENCE_FAMILIES.contains(&key.as_str())
             && (labels.is_none() || mutation_statuses.is_none())
         {
@@ -3082,12 +3099,11 @@ fn many_component_access_project(count: usize) -> PathBuf {
     root
 }
 
-fn inference_declarations(records: Vec<Value>) -> DfmDeclarations {
-    let mut records = records;
+fn inference_declaration_value(mut records: Vec<Value>) -> Value {
     for (index, record) in records.iter_mut().enumerate() {
         record["record"] = Value::from(index + 1);
     }
-    declarations_from(&serde_json::json!({
+    serde_json::json!({
         "schemaVersion": "1",
         "producer": "ratemypcb-project-authority",
         "producerVersion": "2026.08",
@@ -3097,8 +3113,11 @@ fn inference_declarations(records: Vec<Value>) -> DfmDeclarations {
         "rules": [],
         "orderAcknowledgements": [],
         "inferenceRecords": records
-    }))
-    .unwrap()
+    })
+}
+
+fn inference_declarations(records: Vec<Value>) -> DfmDeclarations {
+    declarations_from(&inference_declaration_value(records)).unwrap()
 }
 
 fn inference_limit(id: &str, value: &str, unit: &str) -> Value {
@@ -3650,7 +3669,7 @@ fn findings_for<'a>(report: &'a Report, family: &str) -> Vec<&'a Finding> {
 
 struct InferenceMeasurements {
     labels: BTreeMap<String, BTreeMap<String, String>>,
-    mutations: BTreeMap<String, BTreeMap<String, String>>,
+    mutations: BTreeMap<String, Vec<MutationMeasurement>>,
 }
 
 fn measured_inference_corpus(corpus: &GeometryCorpus) -> InferenceMeasurements {
@@ -3747,64 +3766,138 @@ fn measured_inference_corpus(corpus: &GeometryCorpus) -> InferenceMeasurements {
         let root = access_project("5");
         let baseline = review(&root, authority_options(None)).unwrap();
         let target = canonical_net_id(&baseline, "TP_TEST");
-        let mut statuses = BTreeMap::new();
+        let records = vec![
+            process_envelope("1.00", "0.10", "0.10"),
+            probe_envelope("0.40", "0.10", "0.10"),
+            target_net_authority(vec![target]),
+        ];
+        let baseline_input = inference_declaration_value(records.clone());
+        let baseline_report = review(
+            &root,
+            authority_options(Some(declarations_from(&baseline_input).unwrap())),
+        )
+        .unwrap();
+        validate_report(&baseline_report).unwrap();
+        let snapshot = |report: &Report| {
+            let coverage = coverage_for(report, &key);
+            let findings = findings_for(report, &key)
+                .into_iter()
+                .map(|finding| {
+                    (
+                        occurrence_check_id(report, &finding.id).unwrap().to_owned(),
+                        finding.severity,
+                        finding.title.clone(),
+                        finding.location.clone(),
+                        finding.gate_impact.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (coverage.status.clone(), findings)
+        };
+        let record_id = match key.as_str() {
+            "assembly.access.v1" => "assembly_process_envelope",
+            "assembly.testpoint-access.v1" => "probe_envelope",
+            _ => unreachable!(),
+        };
+        let mut measurements = Vec::new();
         for mutation in &family.mutations {
-            if mutation.kind == "reordered_facts" {
-                let mut records = vec![
-                    process_envelope("1.00", "0.10", "0.10"),
-                    probe_envelope("0.40", "0.10", "0.10"),
-                    target_net_authority(vec![target.clone()]),
-                ];
-                let first = review(
-                    &root,
-                    authority_options(Some(inference_declarations(records.clone()))),
-                )
+            let mut transformed_records = records.clone();
+            let record_index = transformed_records
+                .iter()
+                .position(|record| record["id"] == record_id)
                 .unwrap();
-                records.reverse();
-                let reordered = review(
-                    &root,
-                    authority_options(Some(inference_declarations(records))),
-                )
-                .unwrap();
-                let snapshot = |report: &Report| {
-                    let coverage = coverage_for(report, &key);
-                    let findings = findings_for(report, &key)
-                        .into_iter()
-                        .map(|finding| {
-                            (
-                                occurrence_check_id(report, &finding.id).unwrap().to_owned(),
-                                finding.severity,
-                                finding.title.clone(),
-                                finding.location.clone(),
-                                finding.gate_impact.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    (coverage.status.clone(), findings)
-                };
-                statuses.insert(
-                    mutation.id.clone(),
-                    if snapshot(&first) == snapshot(&reordered) {
+            match mutation.kind.as_str() {
+                "affected_conflict" => {
+                    let mut conflicting = transformed_records[record_index].clone();
+                    conflicting["limits"][0]["value"] = Value::String("9.00".into());
+                    transformed_records.push(conflicting);
+                }
+                "affected_omission" => {
+                    transformed_records[record_index]["limits"]
+                        .as_array_mut()
+                        .unwrap()
+                        .remove(0);
+                }
+                "dangling_identity" => {
+                    let index = if key == "assembly.testpoint-access.v1" {
+                        transformed_records
+                            .iter()
+                            .position(|record| record["id"] == "target_net_authority")
+                            .unwrap()
+                    } else {
+                        record_index
+                    };
+                    transformed_records[index]["targetIds"] =
+                        serde_json::json!([format!("net-v1-{}", "0".repeat(64))]);
+                }
+                "duplicate_capability" => {
+                    transformed_records.push(transformed_records[record_index].clone());
+                }
+                "missing_prerequisite" => {
+                    transformed_records.remove(record_index);
+                }
+                "reordered_facts" => transformed_records.reverse(),
+                "resolution_changed" => {
+                    transformed_records[record_index]["limits"][0]["value"] =
+                        Value::String("0.0000001".into());
+                }
+                "state_failed" => {
+                    transformed_records[record_index]["state"] = Value::String("failed".into());
+                }
+                "state_not_provided" => {
+                    transformed_records[record_index]["state"] =
+                        Value::String("not_provided".into());
+                }
+                "state_omitted" => {
+                    transformed_records[record_index]["state"] = Value::String("omitted".into());
+                }
+                "state_partial" => {
+                    transformed_records[record_index]["state"] = Value::String("partial".into());
+                }
+                "state_stale" => {
+                    transformed_records[record_index]["state"] = Value::String("stale".into());
+                }
+                "state_unsupported" => {
+                    transformed_records[record_index]["state"] =
+                        Value::String("unsupported".into());
+                }
+                "unit_changed" => {
+                    transformed_records[record_index]["limits"][0]["unit"] =
+                        Value::String("mil".into());
+                }
+                _ => unreachable!(),
+            }
+            let transformed_input = inference_declaration_value(transformed_records);
+            let input_changed = transformed_input != baseline_input;
+            let status = match declarations_from(&transformed_input) {
+                Ok(declarations) => {
+                    let report = review(&root, authority_options(Some(declarations))).unwrap();
+                    validate_report(&report).unwrap();
+                    if mutation.kind == "reordered_facts" {
+                        if snapshot(&baseline_report) == snapshot(&report) {
+                            "not_checked"
+                        } else {
+                            "changed"
+                        }
+                    } else if coverage_for(&report, &key).status == CoverageStatus::NotRun
+                        && findings_for(&report, &key).is_empty()
+                    {
                         "not_checked"
                     } else {
-                        "changed"
+                        "partial_pass"
                     }
-                    .into(),
-                );
-            } else {
-                let measured = review(&root, authority_options(None)).unwrap();
-                let status = if coverage_for(&measured, &key).status == CoverageStatus::NotRun
-                    && findings_for(&measured, &key).is_empty()
-                {
-                    "not_checked"
-                } else {
-                    "partial_pass"
-                };
-                statuses.insert(mutation.id.clone(), status.into());
-            }
+                }
+                Err(_) => "not_checked",
+            };
+            measurements.push(MutationMeasurement {
+                case_id: mutation.id.clone(),
+                kind: mutation.kind.clone(),
+                input_changed,
+                status: status.into(),
+            });
         }
         fs::remove_dir_all(root).unwrap();
-        mutations.insert(key, statuses);
+        mutations.insert(key, measurements);
     }
     InferenceMeasurements { labels, mutations }
 }
@@ -3837,7 +3930,10 @@ fn assembly_corpus_metrics_use_production_measurements() {
         .mutations
         .get_mut("assembly.access.v1")
         .unwrap()
-        .insert("assembly-access-reordered-facts".into(), "changed".into());
+        .iter_mut()
+        .find(|measurement| measurement.kind == "reordered_facts")
+        .unwrap()
+        .status = "changed".into();
     assert!(validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).is_err());
 }
 
@@ -3845,19 +3941,30 @@ fn assembly_corpus_metrics_use_production_measurements() {
 fn inference_mutation_measurements_are_sensitive_to_non_reordering_transformations() {
     let corpus: GeometryCorpus = serde_json::from_str(ASSEMBLY_TARGETS_JSON).unwrap();
     let mut measured = measured_inference_corpus(&corpus);
-    let access = measured.mutations.get_mut("assembly.access.v1").unwrap();
-    let state_failed = access
-        .iter_mut()
-        .find(|measurement| measurement.kind == "state_failed")
+    let state_failed_index = measured.mutations["assembly.access.v1"]
+        .iter()
+        .position(|measurement| measurement.kind == "state_failed")
         .unwrap();
-    assert!(state_failed.input_changed);
-    assert_eq!(state_failed.status, "not_checked");
+    assert!(measured.mutations["assembly.access.v1"][state_failed_index].input_changed);
+    assert_eq!(
+        measured.mutations["assembly.access.v1"][state_failed_index].status,
+        "not_checked"
+    );
 
-    state_failed.input_changed = false;
+    measured.mutations.get_mut("assembly.access.v1").unwrap()[state_failed_index].input_changed =
+        false;
     assert!(validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).is_err());
 
+    let state_failed =
+        &mut measured.mutations.get_mut("assembly.access.v1").unwrap()[state_failed_index];
     state_failed.input_changed = true;
     state_failed.kind = "state_partial".into();
+    assert!(validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).is_err());
+
+    let state_failed =
+        &mut measured.mutations.get_mut("assembly.access.v1").unwrap()[state_failed_index];
+    state_failed.kind = "state_failed".into();
+    state_failed.status = "partial_pass".into();
     assert!(validate_assembly_corpus(&corpus, &measured.labels, &measured.mutations).is_err());
 }
 
